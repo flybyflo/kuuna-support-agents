@@ -42,6 +42,7 @@ def persist_inbound_event(db: Session, event: GatewayInboundEvent) -> InboundPer
         event_type=MessageEventType(event.event_type),
         is_deleted=event.event_type == MessageEventType.DELETED.value,
         text_content=event.message.text,
+        raw_event=event.model_dump(mode="json"),
         occurred_at=event.occurred_at,
     )
     db.add(message_version)

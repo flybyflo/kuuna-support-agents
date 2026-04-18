@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from kuuna_backend.db.models import MessageVersion
 
 
 def _inbound_payload(*, message_id: str, event_type: str = "message_created") -> dict[str, object]:
@@ -24,7 +28,10 @@ def _inbound_payload(*, message_id: str, event_type: str = "message_created") ->
     }
 
 
-def test_gateway_inbound_contract_accepts_event(client: TestClient) -> None:
+def test_gateway_inbound_contract_accepts_event(
+    client: TestClient,
+    test_session_factory: sessionmaker[Session],
+) -> None:
     payload = _inbound_payload(message_id="msg-123")
 
     response = client.post("/gateway/inbound", json=payload)
@@ -33,6 +40,12 @@ def test_gateway_inbound_contract_accepts_event(client: TestClient) -> None:
     assert response.json()["accepted"] is True
     assert response.json()["trace_id"] == payload["trace_id"]
     assert response.json()["deduped"] is False
+
+    with test_session_factory() as db:
+        stored_version = db.execute(select(MessageVersion)).scalar_one()
+
+    assert stored_version.raw_event["provider_group_id"] == payload["provider_group_id"]
+    assert stored_version.raw_event["provider_message_id"] == payload["provider_message_id"]
 
 
 def test_gateway_inbound_dedupes_created_event(client: TestClient) -> None:
