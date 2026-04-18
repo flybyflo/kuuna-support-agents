@@ -461,3 +461,9 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,python,linux,visualstudiocode,vim,dotenv,node,nextjs,redis
+
+# Track repository env templates under infra/env
+!infra/env/
+!infra/env/.gitkeep
+!infra/env/.env.example
+!infra/env/*.env.example

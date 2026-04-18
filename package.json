@@ -1,0 +1,11 @@
+{
+  "name": "kuuna-support-agents",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "docker compose -f infra/compose/docker-compose.dev.yml up --build",
+    "dev:down": "docker compose -f infra/compose/docker-compose.dev.yml down",
+    "dev:logs": "docker compose -f infra/compose/docker-compose.dev.yml logs -f",
+    "dev:ps": "docker compose -f infra/compose/docker-compose.dev.yml ps"
+  }
+}

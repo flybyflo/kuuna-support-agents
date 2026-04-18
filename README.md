@@ -3,11 +3,13 @@
 Staff-operated WhatsApp group agents with sandboxed runtimes, deterministic routing, and dashboard-based governance.
 
 ## Status
-This repository currently contains the **MVP product specification** and initial project definition.
+This repository now contains the **MVP planning docs plus an initial implementation scaffold**.
 
 - PRD: `plan/mvp/PRD.md`
+- Project structure plan: `plan/mvp/PROJECT_STRUCTURE_PLAN.md`
+- Agent guides: `AGENTS.md`, `apps/dashboard/AGENTS.md`, `backend/AGENTS.md`
 
-Implementation is planned around a single dev environment first.
+Implementation is still targeting a single dev environment first.
 
 ## MVP Overview
 - One agent instance per WhatsApp group (strict 1:1 active binding)
@@ -49,9 +51,41 @@ Implementation is planned around a single dev environment first.
 - Error monitoring via Sentry
 - Ops alerts via WhatsApp operations group
 
+## Repository Layout (Scaffold)
+- `apps/dashboard` — Next.js 15 + TypeScript dashboard scaffold
+- `backend` — FastAPI + domain/worker scaffold (managed with `uv`)
+- `services/gateway` — WhatsApp gateway adapter scaffold
+- `services/runtime-agent` — base runtime image scaffold
+- `packages/api-client-ts` — OpenAPI-generated TS client package scaffold
+- `packages/contracts` — shared cross-service contracts scaffold
+- `infra` — compose/env/scripts placeholders
+- `docs` — architecture/runbooks/ADR placeholders
+
+## Local Setup (Docker-only)
+Run everything through Docker Compose:
+
+```bash
+npm run dev
+```
+
+Services:
+- Dashboard: http://localhost:3000
+- Backend API: http://localhost:8000
+- MinIO: http://localhost:9001
+
+Stop all services:
+
+```bash
+npm run dev:down
+```
+
+## Hot Reload
+- Frontend hot reload is enabled via Next.js dev server in container.
+- Backend hot reload is enabled via `uvicorn --reload` in container.
+- Source code is mounted into containers with bind volumes.
+
 ## Next Step
-Use the PRD to bootstrap implementation:
-1. Compose stack and service skeletons
-2. Core data model + migrations
-3. OpenAPI contract and typed dashboard client
-4. Ingestion/queue/agent execution pipeline
+1. Data model + first Alembic migrations
+2. Auth + RBAC baseline
+3. OpenAPI contract + TS client generation flow
+4. Ingest -> process -> retrieve -> reply pipeline
