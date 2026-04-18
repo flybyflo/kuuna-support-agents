@@ -87,7 +87,7 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
 2. Gateway maps provider payload -> internal inbound envelope.
 3. Gateway attaches `trace_id` if missing.
 4. Gateway forwards envelope to backend ingest endpoint/queue.
-5. Backend persists message event and returns accepted status.
+5. Backend persists message event and stores full event payload in `message_versions.raw_event` (JSONB).
 6. Backend decides trigger eligibility and, if eligible, enqueues execution.
 7. Backend emits outbound intent.
 8. Gateway sends outbound intent to provider using `outbound_intent_id` idempotency key.

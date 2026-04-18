@@ -61,7 +61,8 @@ ID policy:
   - `id`, `provider_group_id`, `provider_message_id`, `sender_provider_user_id`, `latest_version_no`, timestamps
   - unique (`provider_group_id`, `provider_message_id`)
 - `message_versions`
-  - `id`, `message_id`, `version_no`, `event_type`, `is_deleted`, `text`, timestamps
+  - `id`, `message_id`, `version_no`, `event_type`, `is_deleted`, `text`, `raw_event` (JSONB), timestamps
+  - `raw_event` stores the full normalized inbound event payload for audit/debug/replay
   - unique (`message_id`, `version_no`)
 - `media_assets`
   - `id`, `message_id`, `provider_media_id`, `mime_type`, `s3_key`, `status`, metadata
