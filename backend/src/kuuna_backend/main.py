@@ -4,6 +4,7 @@ from kuuna_backend.api.routers import (
     audit,
     auth,
     bindings,
+    gateway,
     knowledge,
     messages,
     templates,
@@ -21,6 +22,7 @@ def create_app() -> FastAPI:
     app.include_router(messages.router)
     app.include_router(knowledge.router)
     app.include_router(audit.router)
+    app.include_router(gateway.router)
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:
