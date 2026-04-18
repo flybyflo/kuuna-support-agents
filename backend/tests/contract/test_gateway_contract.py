@@ -25,6 +25,10 @@ def _inbound_payload(*, message_id: str, event_type: str = "message_created") ->
             "mentions": [],
             "media": [],
         },
+        "raw_event": {
+            "provider_payload": {"kind": "MessageEv", "message_id": message_id},
+            "raw_flags": {"from_me": False},
+        },
     }
 
 
@@ -44,8 +48,8 @@ def test_gateway_inbound_contract_accepts_event(
     with test_session_factory() as db:
         stored_version = db.execute(select(MessageVersion)).scalar_one()
 
-    assert stored_version.raw_event["provider_group_id"] == payload["provider_group_id"]
-    assert stored_version.raw_event["provider_message_id"] == payload["provider_message_id"]
+    assert stored_version.raw_event["provider_payload"]["kind"] == "MessageEv"
+    assert stored_version.raw_event["provider_payload"]["message_id"] == payload["provider_message_id"]
 
 
 def test_gateway_inbound_dedupes_created_event(client: TestClient) -> None:

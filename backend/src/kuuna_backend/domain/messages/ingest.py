@@ -36,13 +36,15 @@ def persist_inbound_event(db: Session, event: GatewayInboundEvent) -> InboundPer
         version_no = message.latest_version_no + 1
         message.latest_version_no = version_no
 
+    raw_event_payload = event.raw_event or event.model_dump(mode="json")
+
     message_version = MessageVersion(
         message_id=message.id,
         version_no=version_no,
         event_type=MessageEventType(event.event_type),
         is_deleted=event.event_type == MessageEventType.DELETED.value,
         text_content=event.message.text,
-        raw_event=event.model_dump(mode="json"),
+        raw_event=raw_event_payload,
         occurred_at=event.occurred_at,
     )
     db.add(message_version)

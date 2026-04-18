@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -36,6 +36,7 @@ class GatewayInboundEvent(BaseModel):
     event_type: GatewayEventType
     occurred_at: datetime
     message: InboundMessage
+    raw_event: dict[str, Any] | None = None
 
 
 class GatewayInboundAccepted(BaseModel):

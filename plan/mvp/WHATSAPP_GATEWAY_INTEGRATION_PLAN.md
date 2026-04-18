@@ -59,6 +59,9 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
         "download_url": "string|null"
       }
     ]
+  },
+  "raw_event": {
+    "...": "full provider event payload"
   }
 }
 ```

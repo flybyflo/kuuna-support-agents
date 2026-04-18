@@ -27,6 +27,7 @@ export interface GatewayInboundEvent {
   event_type: GatewayEventType;
   occurred_at: string;
   message: GatewayInboundMessage;
+  raw_event?: Record<string, unknown> | null;
 }
 
 export interface GatewayOutboundIntent {
