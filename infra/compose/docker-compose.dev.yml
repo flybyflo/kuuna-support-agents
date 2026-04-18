@@ -26,6 +26,7 @@ services:
     command: sh -c "uv sync && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - ../env/backend.env.example
+      - ../env/backend.env.local
     environment:
       WATCHFILES_FORCE_POLLING: "true"
     ports:
@@ -40,6 +41,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      runtime-agent:
+        condition: service_started
 
   worker:
     build:
@@ -49,6 +52,7 @@ services:
     command: sh -c 'uv sync && uv run watchfiles --filter python "uv run rq worker default" src'
     env_file:
       - ../env/backend.env.example
+      - ../env/backend.env.local
     environment:
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
@@ -59,6 +63,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      runtime-agent:
+        condition: service_started
+
+  runtime-agent:
+    build:
+      context: ../../services/runtime-agent
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: sh -c "uv sync && uv run uvicorn app:app --app-dir src --host 0.0.0.0 --port 8100 --reload"
+    env_file:
+      - ../env/backend.env.example
+      - ../env/backend.env.local
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8100:8100"
+    volumes:
+      - ../../services/runtime-agent:/app
 
   gateway:
     build:

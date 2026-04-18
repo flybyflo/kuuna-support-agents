@@ -12,6 +12,7 @@ dependencies = [
     "psycopg[binary]>=3.3.3",
     "pydantic-ai>=1.84.1",
     "pydantic-settings>=2.13.1",
+    "pypdf>=6.10.2",
     "redis>=7.4.0",
     "rq>=2.8.0",
     "sentry-sdk>=2.58.0",

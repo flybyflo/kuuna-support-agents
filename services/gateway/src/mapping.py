@@ -115,39 +115,218 @@ def _extract_reply_and_mentions(message_obj: Any) -> tuple[str | None, list[str]
     return (str(reply_to) if reply_to else None), mentions
 
 
+def _get_present_field(obj: Any, *keys: str) -> Any:
+    if obj is None:
+        return None
+
+    if isinstance(obj, dict):
+        for key in keys:
+            if key in obj and obj[key] is not None:
+                return obj[key]
+        lowered = {str(key).lower(): value for key, value in obj.items()}
+        for key in keys:
+            candidate = lowered.get(key.lower())
+            if candidate is not None:
+                return candidate
+        return None
+
+    if _is_protobuf_message(obj):
+        descriptor = getattr(obj, "DESCRIPTOR", None)
+        field_names = {field.name for field in getattr(descriptor, "fields", [])}
+        for key in keys:
+            if key not in field_names:
+                continue
+            try:
+                if obj.HasField(key):
+                    return getattr(obj, key)
+            except ValueError:
+                value = getattr(obj, key, None)
+                if value is not None:
+                    return value
+        return None
+
+    for key in keys:
+        value = getattr(obj, key, None)
+        if value is not None:
+            return value
+
+    return None
+
+
+def _protocol_type_name(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.upper()
+
+    name = getattr(value, "name", None)
+    if isinstance(name, str):
+        return name.upper()
+
+    rendered = str(value)
+    return rendered.upper() if rendered else None
+
+
+def _is_deleted_indication(message_obj: Any) -> bool:
+    protocol_message = _get_present_field(message_obj, "protocolMessage")
+    if protocol_message is None:
+        return False
+
+    protocol_type = _get_present_field(protocol_message, "type")
+    if isinstance(protocol_type, int):
+        return protocol_type == 0
+
+    protocol_type_name = _protocol_type_name(protocol_type)
+    if protocol_type_name is None:
+        return False
+
+    return "REVOKE" in protocol_type_name or (
+        "DELETE" in protocol_type_name and "EDIT" not in protocol_type_name
+    )
+
+
+def _is_edited_indication(message_obj: Any) -> bool:
+    if _get_present_field(message_obj, "editedMessage") is not None:
+        return True
+
+    protocol_message = _get_present_field(message_obj, "protocolMessage")
+    if protocol_message is None:
+        return False
+
+    if _get_present_field(protocol_message, "editedMessage") is not None:
+        return True
+
+    protocol_type = _get_present_field(protocol_message, "type")
+    if isinstance(protocol_type, int):
+        return protocol_type == 14
+
+    protocol_type_name = _protocol_type_name(protocol_type)
+    return protocol_type_name is not None and "EDIT" in protocol_type_name
+
+
+def _classify_event_type(message_obj: Any) -> str:
+    if _is_deleted_indication(message_obj):
+        return "message_deleted"
+    if _is_edited_indication(message_obj):
+        return "message_edited"
+    return "message_created"
+
+
+def _resolve_message_content(message_obj: Any) -> Any:
+    direct_edited_message = _get_present_field(message_obj, "editedMessage")
+    if direct_edited_message is not None:
+        nested_message = _get_present_field(direct_edited_message, "message")
+        if nested_message is not None:
+            return nested_message
+
+    protocol_message = _get_present_field(message_obj, "protocolMessage")
+    if protocol_message is not None:
+        nested_message = _get_present_field(protocol_message, "editedMessage")
+        if nested_message is not None:
+            return nested_message
+
+    return message_obj
+
+
 def _extract_media(message_obj: Any, provider_message_id: str) -> list[dict[str, Any]]:
-    media_fields: list[tuple[str, str]] = [
-        ("imageMessage", "image"),
-        ("videoMessage", "video"),
-        ("audioMessage", "audio"),
-        ("documentMessage", "document"),
-        ("stickerMessage", "sticker"),
+    media_fields: list[tuple[list[str], str]] = [
+        (["imageMessage", "ImageMessage"], "image"),
+        (["videoMessage", "VideoMessage"], "video"),
+        (["audioMessage", "AudioMessage"], "audio"),
+        (["documentMessage", "DocumentMessage"], "document"),
+        (["stickerMessage", "StickerMessage"], "sticker"),
     ]
 
-    media_items: list[dict[str, Any]] = []
-    for field_name, kind in media_fields:
-        media_obj = _get_path(message_obj, field_name)
+    def _field_value(media_obj: Any, *keys: str) -> Any:
+        if isinstance(media_obj, dict):
+            for key in keys:
+                if key in media_obj:
+                    return media_obj[key]
+            lowered = {str(key).lower(): value for key, value in media_obj.items()}
+            for key in keys:
+                candidate = lowered.get(key.lower())
+                if candidate is not None:
+                    return candidate
+            return None
+
+        for key in keys:
+            value = _get_path(media_obj, key)
+            if value is not None:
+                return value
+        return None
+
+    def _is_empty_value(value: Any) -> bool:
+        if value in (None, "", b""):
+            return True
+        if isinstance(value, str) and value.strip() in {"0", "0.0", "b''", "[]", "{}"}:
+            return True
+        if isinstance(value, (int, float)) and value <= 0:
+            return True
+        return False
+
+    def _has_media_payload(media_obj: Any) -> bool:
         if media_obj is None:
+            return False
+
+        if isinstance(media_obj, dict) and not media_obj:
+            return False
+
+        def _signal_present(value: Any) -> bool:
+            return not _is_empty_value(value)
+
+        payload_signals = [
+            _field_value(media_obj, "url", "URL"),
+            _field_value(media_obj, "directPath", "DirectPath"),
+            _field_value(media_obj, "mediaKey", "MediaKey"),
+            _field_value(media_obj, "fileLength", "FileLength"),
+            _field_value(media_obj, "mimetype", "mimeType", "Mimetype", "MimeType"),
+            _field_value(media_obj, "fileSha256", "FileSha256", "fileSHA256", "FileSHA256"),
+            _field_value(media_obj, "fileEncSha256", "FileEncSha256", "fileEncSHA256", "FileEncSHA256"),
+            _field_value(media_obj, "jpegThumbnail", "JPEGThumbnail"),
+            _field_value(media_obj, "fileName", "FileName"),
+            _field_value(media_obj, "caption", "Caption"),
+        ]
+        return any(_signal_present(signal) for signal in payload_signals)
+
+    def _parse_byte_size(value: Any) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    media_items: list[dict[str, Any]] = []
+    for field_names, kind in media_fields:
+        media_obj = None
+        for field_name in field_names:
+            candidate = _get_path(message_obj, field_name)
+            if candidate is not None:
+                media_obj = candidate
+                break
+
+        normalized_media_obj = _to_jsonable(media_obj)
+
+        if not _has_media_payload(normalized_media_obj):
             continue
 
-        mime_type = _get_path(media_obj, "mimetype") or _get_path(media_obj, "mimeType")
-        file_name = _get_path(media_obj, "fileName")
-        size = _get_path(media_obj, "fileLength")
-        url = _get_path(media_obj, "url")
-        media_key = _get_path(media_obj, "mediaKey")
+        mime_type = _field_value(normalized_media_obj, "mimetype", "mimeType", "Mimetype", "MimeType")
+        file_name = _field_value(normalized_media_obj, "fileName", "FileName")
+        size = _field_value(normalized_media_obj, "fileLength", "FileLength")
+        url = _field_value(normalized_media_obj, "url", "URL")
+        media_key = _field_value(normalized_media_obj, "mediaKey", "MediaKey")
 
-        provider_media_id = None
-        if media_key is not None:
-            provider_media_id = str(media_key)
-        if provider_media_id is None:
-            provider_media_id = f"{provider_message_id}:{kind}"
+        provider_media_id = (
+            str(media_key) if not _is_empty_value(media_key) else f"{provider_message_id}:{kind}"
+        )
 
         media_items.append(
             {
                 "provider_media_id": provider_media_id,
                 "mime_type": str(mime_type) if mime_type else f"application/{kind}",
                 "file_name": str(file_name) if file_name else None,
-                "byte_size": int(size) if isinstance(size, (int, float, str)) and str(size).isdigit() else None,
+                "byte_size": _parse_byte_size(size),
                 "download_url": str(url) if url else None,
             }
         )
@@ -177,7 +356,9 @@ def map_neonize_message_event(event: Any) -> dict[str, Any]:
     else:
         occurred_at = datetime.now(UTC).isoformat()
 
-    reply_to, mentions = _extract_reply_and_mentions(message)
+    event_type = _classify_event_type(message)
+    content_message = _resolve_message_content(message)
+    reply_to, mentions = _extract_reply_and_mentions(content_message)
 
     payload = {
         "trace_id": str(uuid4()),
@@ -185,13 +366,13 @@ def map_neonize_message_event(event: Any) -> dict[str, Any]:
         "provider_group_id": provider_group_id,
         "provider_message_id": str(provider_message_id),
         "sender_provider_user_id": sender_provider_user_id,
-        "event_type": "message_created",
+        "event_type": event_type,
         "occurred_at": occurred_at,
         "message": {
-            "text": _extract_text(message),
+            "text": _extract_text(content_message),
             "reply_to_provider_message_id": reply_to,
             "mentions": mentions,
-            "media": _extract_media(message, str(provider_message_id)),
+            "media": _extract_media(content_message, str(provider_message_id)),
         },
         "raw_event": _to_jsonable(event),
     }

@@ -18,6 +18,7 @@ class InboundMedia(BaseModel):
     file_name: str | None = None
     byte_size: int | None = None
     download_url: str | None = None
+    inline_data_base64: str | None = None
 
 
 class InboundMessage(BaseModel):

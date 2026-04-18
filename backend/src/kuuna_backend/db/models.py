@@ -83,6 +83,12 @@ class OutboundStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ToolRiskClass(str, enum.Enum):
+    READ = "read"
+    WRITE = "write"
+    ADMIN = "admin"
+
+
 def db_enum(enum_cls: type[enum.Enum], *, name: str) -> Enum:
     return Enum(
         enum_cls,
@@ -99,6 +105,9 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Role(Base):
@@ -144,6 +153,22 @@ class GroupTemplate(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class ToolCatalogEntry(Base, TimestampMixin):
+    __tablename__ = "tool_catalog_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tool_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_class: Mapped[ToolRiskClass] = mapped_column(
+        db_enum(ToolRiskClass, name="tool_risk_class"),
+        nullable=False,
+        default=ToolRiskClass.READ,
+    )
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="runtime")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class TemplateVersion(Base, TimestampMixin):

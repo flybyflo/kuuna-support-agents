@@ -9,7 +9,26 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from kuuna_backend.api.deps import get_db
-from kuuna_backend.db.models import MediaAsset, Message, MessageVersion
+from kuuna_backend.db.models import (
+    AgentInstance,
+    AuditEvent,
+    GroupAssignment,
+    GroupBinding,
+    GroupTemplate,
+    KnowledgeCommonDoc,
+    ToolCatalogEntry,
+    KnowledgeGroupDoc,
+    KnowledgeVersion,
+    MediaAsset,
+    Message,
+    MessageVersion,
+    OutboundIntent,
+    Role,
+    TemplateVersion,
+    Transcript,
+    User,
+    UserRole,
+)
 from kuuna_backend.main import create_app
 
 
@@ -21,9 +40,26 @@ def test_session_factory() -> sessionmaker[Session]:
         poolclass=StaticPool,
     )
 
+    User.__table__.create(bind=engine)
+    Role.__table__.create(bind=engine)
+    UserRole.__table__.create(bind=engine)
+    GroupAssignment.__table__.create(bind=engine)
+    AuditEvent.__table__.create(bind=engine)
+
+    GroupTemplate.__table__.create(bind=engine)
+    ToolCatalogEntry.__table__.create(bind=engine)
+    TemplateVersion.__table__.create(bind=engine)
+    GroupBinding.__table__.create(bind=engine)
+    AgentInstance.__table__.create(bind=engine)
+
     Message.__table__.create(bind=engine)
     MessageVersion.__table__.create(bind=engine)
     MediaAsset.__table__.create(bind=engine)
+    Transcript.__table__.create(bind=engine)
+    KnowledgeCommonDoc.__table__.create(bind=engine)
+    KnowledgeGroupDoc.__table__.create(bind=engine)
+    KnowledgeVersion.__table__.create(bind=engine)
+    OutboundIntent.__table__.create(bind=engine)
 
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
 

@@ -21,4 +21,10 @@ Environment variables:
 - `GATEWAY_SERVICE_TOKEN` (optional)
 - `NEONIZE_DATABASE_PATH` (default `/data/neonize.db` in Docker)
 
+## Sentry
+
+- Sentry project: `kuuna-gateway`
+- Default CLI config in `services/gateway/.sentryclirc`
+- DSN env var in `infra/env/gateway.env.example` (`SENTRY_DSN`)
+
 For Docker dev, bind-mount source code and keep Neonize auth/session DB on a persistent named volume (`gateway_session` -> `/data`).
