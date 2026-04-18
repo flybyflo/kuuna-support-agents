@@ -3,9 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "docker compose -f infra/compose/docker-compose.dev.yml up --build",
-    "dev:down": "docker compose -f infra/compose/docker-compose.dev.yml down",
-    "dev:logs": "docker compose -f infra/compose/docker-compose.dev.yml logs -f",
-    "dev:ps": "docker compose -f infra/compose/docker-compose.dev.yml ps"
+    "dev": "just up",
+    "dev:down": "just down",
+    "dev:logs": "just logs",
+    "dev:ps": "just ps",
+    "dev:migrate": "just migrate",
+    "dev:restart:gateway": "just restart gateway",
+    "dev:restart:worker": "just restart worker"
   }
 }

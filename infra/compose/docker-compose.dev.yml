@@ -26,6 +26,8 @@ services:
     command: sh -c "uv sync && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - ../env/backend.env.example
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     volumes:
@@ -39,14 +41,35 @@ services:
       minio:
         condition: service_started
 
+  worker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    command: sh -c 'uv sync && uv run watchfiles --filter python "uv run rq worker default" src'
+    env_file:
+      - ../env/backend.env.example
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ../../backend:/app
+      - worker_venv:/app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   gateway:
     build:
       context: ../../services/gateway
       dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c "uv sync && uv run python src/app.py"
+    command: sh -c 'uv sync && uv run watchfiles --filter python "uv run python src/app.py" src'
     env_file:
       - ../env/gateway.env.example
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ../../services/gateway:/app
       - gateway_venv:/app/.venv
@@ -96,6 +119,7 @@ services:
 volumes:
   dashboard_node_modules:
   backend_venv:
+  worker_venv:
   gateway_venv:
   gateway_session:
   postgres_data:

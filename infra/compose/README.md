@@ -4,18 +4,19 @@ Use Docker for all local runs (frontend + backend + gateway + infra dependencies
 
 ## Start
 ```bash
-docker compose -f infra/compose/docker-compose.dev.yml up --build
+just up
 ```
 
 ## Stop
 ```bash
-docker compose -f infra/compose/docker-compose.dev.yml down
+just down
 ```
 
 ## Hot Reload
 - Dashboard: Next.js dev server runs with bind mount (`apps/dashboard:/app`).
-- Backend: `uvicorn --reload` runs with bind mount (`backend:/app`).
-- Gateway: source is bind-mounted (`services/gateway:/app`); restart service to pick up code changes.
+- Backend API: `uvicorn --reload` runs with bind mount (`backend:/app`).
+- Worker: `watchfiles` restarts `rq worker` on Python file changes.
+- Gateway: `watchfiles` restarts Neonize bridge on Python file changes.
 
 ## WhatsApp Session Persistence (Gateway)
 The gateway stores Neonize session state in the named Docker volume `gateway_session` at `/data`.

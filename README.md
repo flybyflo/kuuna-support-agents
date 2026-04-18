@@ -61,30 +61,34 @@ Implementation is still targeting a single dev environment first.
 - `infra` — compose/env/scripts placeholders
 - `docs` — architecture/runbooks/ADR placeholders
 
-## Local Setup (Docker-only)
-Run everything through Docker Compose:
+## Local Setup (Docker-only via Just)
+Run everything through the dev stack:
 
 ```bash
-npm run dev
+just up
 ```
+
+(or via npm wrapper: `npm run dev`)
 
 Services:
 - Dashboard: http://localhost:3000
 - Backend API: http://localhost:8000
+- Worker: background service (RQ)
 - Gateway: background service (Neonize)
 - MinIO: http://localhost:9001
 
 Stop all services:
 
 ```bash
-npm run dev:down
+just down
 ```
 
 ## Hot Reload
-- Frontend hot reload is enabled via Next.js dev server in container.
-- Backend hot reload is enabled via `uvicorn --reload` in container.
-- Gateway source is bind-mounted; restart gateway container when changing gateway code.
-- Source code is mounted into containers with bind volumes.
+- Frontend: Next.js HMR (`next dev`) in container.
+- Backend API: `uvicorn --reload` in container.
+- Worker: `watchfiles` restarts `rq worker` on Python changes.
+- Gateway: `watchfiles` restarts Neonize bridge on Python changes.
+- Source code is bind-mounted into containers.
 
 ## WhatsApp Session Persistence
 - Gateway stores Neonize auth/session state in Docker volume `gateway_session`.
