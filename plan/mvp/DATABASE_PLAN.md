@@ -155,10 +155,10 @@ If RLS rollout risks schedule, ship with ownership-ready schema + policies in di
 ## 9) Task Breakdown
 
 - [ ] 1.0 Finalize ERD and table contracts in docs
-- [ ] 2.0 Create Alembic migration chain `0001..0008`
-- [ ] 3.0 Implement SQLAlchemy models aligned to constraints
+- [x] 2.0 Create Alembic migration chain `0001..0008`
+- [x] 3.0 Implement SQLAlchemy models aligned to constraints
 - [ ] 4.0 Add repository-level idempotency checks for messages/intents
-- [ ] 5.0 Add append-only audit enforcement
+- [x] 5.0 Add append-only audit enforcement
 - [ ] 6.0 Add migration smoke tests in Docker dev
 
 ---

@@ -1,0 +1,22 @@
+{
+  "name": "kuuna-intro-remotion",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Hackathon demo intro video (Remotion)",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts IntroCouncil out/intro-council.mp4 --codec=h264",
+    "render:gif": "remotion render src/index.ts IntroCouncil out/intro-council.gif",
+    "build": "remotion bundle src/index.ts"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.340"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.340",
+    "@types/react": "18.3.12",
+    "typescript": "5.8.3"
+  }
+}

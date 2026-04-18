@@ -142,9 +142,9 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
 
 ## 8) Task Breakdown
 
-- [ ] 1.0 Define and freeze inbound/outbound JSON contracts in `packages/contracts`
+- [x] 1.0 Define and freeze inbound/outbound JSON contracts in `packages/contracts`
 - [ ] 2.0 Implement gateway mapping layer for supported WhatsApp event types
-- [ ] 3.0 Add backend ingest endpoint for gateway submissions
+- [x] 3.0 Add backend ingest endpoint for gateway submissions
 - [ ] 4.0 Add outbound dispatcher path using `outbound_intent_id`
 - [ ] 5.0 Add retry policy + failure status reporting
 - [ ] 6.0 Add gateway integration smoke test (`ingest -> route -> reply`)

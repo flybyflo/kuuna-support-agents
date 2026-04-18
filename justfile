@@ -40,3 +40,13 @@ shell-dashboard:
 
 reset-whatsapp-session:
     docker volume rm kuuna-dev_gateway_session
+
+smoke-docker:
+    bash infra/compose/smoke/docker-smoke.sh
+
+smoke-dr-restore:
+    bash infra/compose/smoke/dr-backup-restore.sh
+
+smoke-all:
+    just smoke-docker
+    just smoke-dr-restore

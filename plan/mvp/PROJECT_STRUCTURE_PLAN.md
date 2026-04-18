@@ -196,38 +196,38 @@ apps/dashboard/
 ### 5.1 Parent tasks
 
 - [ ] 1.0 Scaffold repository structure
-- [ ] 2.0 Define backend structure + domain boundaries
-- [ ] 3.0 Scaffold gateway and runtime service structure
+- [x] 2.0 Define backend structure + domain boundaries
+- [x] 3.0 Scaffold gateway and runtime service structure
 - [ ] 4.0 Structure shared packages (OpenAPI client + contracts)
 - [ ] 5.0 Set up infra and runbook structure
 - [ ] 6.0 Validate structure (health-only smoke on empty scaffold)
 
 ### 5.2 Subtasks
 
-- [ ] 1.1 Create top-level folders (`apps/backend/services/packages/infra/docs/tasks`)
-- [ ] 1.2 Document root conventions (`README` section: repository layout)
+- [x] 1.1 Create top-level folders (`apps/backend/services/packages/infra/docs/tasks`)
+- [x] 1.2 Document root conventions (`README` section: repository layout)
 - [ ] 1.3 Define naming rules (snake_case for Python, kebab-case for TS paths)
 
-- [ ] 2.1 Create `backend/src/kuuna_backend` module tree
-- [ ] 2.2 Add `domain/*` modules by PRD entity boundaries
-- [ ] 2.3 Add `api/routers/*` by role + domain responsibilities
-- [ ] 2.4 Split `jobs/*` by pipeline stage
-- [ ] 2.5 Create base test layout (`unit|integration|contract`)
+- [x] 2.1 Create `backend/src/kuuna_backend` module tree
+- [x] 2.2 Add `domain/*` modules by PRD entity boundaries
+- [x] 2.3 Add `api/routers/*` by role + domain responsibilities
+- [x] 2.4 Split `jobs/*` by pipeline stage
+- [x] 2.5 Create base test layout (`unit|integration|contract`)
 
-- [ ] 3.1 Create `services/gateway` adapter skeleton
-- [ ] 3.2 Create `services/runtime-agent` runner skeleton + Dockerfile
-- [ ] 3.3 Document interface boundaries (input/output payloads)
+- [x] 3.1 Create `services/gateway` adapter skeleton
+- [x] 3.2 Create `services/runtime-agent` runner skeleton + Dockerfile
+- [x] 3.3 Document interface boundaries (input/output payloads)
 
-- [ ] 4.1 Create `packages/contracts` skeleton (shared constants/schemas)
-- [ ] 4.2 Create `packages/api-client-ts` structure for codegen output
+- [x] 4.1 Create `packages/contracts` skeleton (shared constants/schemas)
+- [x] 4.2 Create `packages/api-client-ts` structure for codegen output
 - [ ] 4.3 Document codegen flow (backend spec -> TS client)
 
-- [ ] 5.1 Create `infra/compose` structure for dev stack
-- [ ] 5.2 Create `infra/env/.env.example` with service sections
-- [ ] 5.3 Add runbook placeholders in `docs/runbooks` (smoke/deploy/DR)
+- [x] 5.1 Create `infra/compose` structure for dev stack
+- [x] 5.2 Create `infra/env/.env.example` with service sections
+- [x] 5.3 Add runbook placeholders in `docs/runbooks` (smoke/deploy/DR)
 - [ ] 5.4 Add first ADR in `docs/adr` (“Monorepo + Service Boundaries”)
 
-- [ ] 6.1 Bring up minimal compose smoke (no business logic)
+- [x] 6.1 Bring up minimal compose smoke (no business logic)
 - [ ] 6.2 Add health endpoints per service for structure testing
 - [ ] 6.3 Complete and document “Definition of Done – structure phase”
 

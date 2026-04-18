@@ -51,6 +51,24 @@ Implementation is still targeting a single dev environment first.
 - Error monitoring via Sentry
 - Ops alerts via WhatsApp operations group
 
+## Sentry Setup (Current)
+- Sentry org default is configured in repo root `.sentryclirc`:
+  - org: `calumba`
+- Service-specific Sentry projects are configured:
+  - Backend → `kuuna-backend`
+  - Dashboard → `kuuna-dashboard`
+  - Gateway → `kuuna-gateway`
+- Service-local `.sentryclirc` defaults:
+  - `backend/.sentryclirc`
+  - `apps/dashboard/.sentryclirc`
+  - `services/gateway/.sentryclirc`
+- DSNs are pre-wired in dev env templates:
+  - `infra/env/backend.env.example` (backend project DSN)
+  - `infra/env/dashboard.env.example` (dashboard project DSN)
+  - `infra/env/gateway.env.example` (gateway project DSN)
+- Backend and gateway send scrubbed events (metadata-only intent).
+- Dashboard initializes Sentry for client/server/edge via `@sentry/nextjs`.
+
 ## Repository Layout (Scaffold)
 - `apps/dashboard` — Next.js 15 + TypeScript dashboard scaffold
 - `backend` — FastAPI + domain/worker scaffold (managed with `uv`)
@@ -82,6 +100,28 @@ Stop all services:
 ```bash
 just down
 ```
+
+## Docker Smoke + DR Baseline
+
+Run migration/service smoke:
+
+```bash
+just smoke-docker
+```
+
+Run backup/restore smoke:
+
+```bash
+just smoke-dr-restore
+```
+
+Run both:
+
+```bash
+just smoke-all
+```
+
+See also: `infra/compose/DR_RUNBOOK.md`.
 
 ## Hot Reload
 - Frontend: Next.js HMR (`next dev`) in container.

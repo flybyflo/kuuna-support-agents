@@ -27,3 +27,30 @@ Reset session state intentionally:
 ```bash
 docker volume rm kuuna-dev_gateway_session
 ```
+
+## Smoke Gates
+
+Run Docker smoke checks (services + migrations):
+
+```bash
+just smoke-docker
+```
+
+Run backup/restore DR baseline smoke:
+
+```bash
+just smoke-dr-restore
+```
+
+Run both:
+
+```bash
+just smoke-all
+```
+
+Scripts:
+- `infra/compose/smoke/docker-smoke.sh`
+- `infra/compose/smoke/dr-backup-restore.sh`
+
+Restore runbook:
+- `infra/compose/DR_RUNBOOK.md`
