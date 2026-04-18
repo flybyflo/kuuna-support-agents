@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -240,7 +241,7 @@ class MessageVersion(Base):
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()"), nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
@@ -370,5 +371,5 @@ class AuditEvent(Base):
     entity_id: Mapped[str] = mapped_column(String(255), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()"), nullable=False
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -5,20 +5,15 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from kuuna_backend.main import create_app
 
-
-client = TestClient(create_app())
-
-
-def test_gateway_inbound_contract_accepts_event() -> None:
-    payload = {
+def _inbound_payload(*, message_id: str, event_type: str = "message_created") -> dict[str, object]:
+    return {
         "trace_id": str(uuid4()),
         "provider": "whatsapp-neonize",
         "provider_group_id": "group-123",
-        "provider_message_id": "msg-123",
+        "provider_message_id": message_id,
         "sender_provider_user_id": "user-1",
-        "event_type": "message_created",
+        "event_type": event_type,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "message": {
             "text": "hello",
@@ -28,14 +23,32 @@ def test_gateway_inbound_contract_accepts_event() -> None:
         },
     }
 
+
+def test_gateway_inbound_contract_accepts_event(client: TestClient) -> None:
+    payload = _inbound_payload(message_id="msg-123")
+
     response = client.post("/gateway/inbound", json=payload)
 
     assert response.status_code == 202
     assert response.json()["accepted"] is True
     assert response.json()["trace_id"] == payload["trace_id"]
+    assert response.json()["deduped"] is False
 
 
-def test_gateway_outbound_status_contract_accepts_event() -> None:
+def test_gateway_inbound_dedupes_created_event(client: TestClient) -> None:
+    first = _inbound_payload(message_id="msg-dedupe")
+    second = _inbound_payload(message_id="msg-dedupe")
+
+    first_response = client.post("/gateway/inbound", json=first)
+    second_response = client.post("/gateway/inbound", json=second)
+
+    assert first_response.status_code == 202
+    assert first_response.json()["deduped"] is False
+    assert second_response.status_code == 202
+    assert second_response.json()["deduped"] is True
+
+
+def test_gateway_outbound_status_contract_accepts_event(client: TestClient) -> None:
     payload = {
         "trace_id": str(uuid4()),
         "outbound_intent_id": str(uuid4()),

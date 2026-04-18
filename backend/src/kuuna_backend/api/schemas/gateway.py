@@ -41,6 +41,7 @@ class GatewayInboundEvent(BaseModel):
 class GatewayInboundAccepted(BaseModel):
     accepted: bool
     trace_id: UUID
+    deduped: bool = False
 
 
 class OutboundMetadata(BaseModel):
