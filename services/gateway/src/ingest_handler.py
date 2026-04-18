@@ -4,7 +4,10 @@ from typing import Any
 
 import httpx
 
-from .mapping import map_neonize_message_event
+try:
+    from .mapping import map_neonize_message_event
+except ImportError:  # pragma: no cover - supports direct script imports
+    from mapping import map_neonize_message_event
 
 
 class BackendIngestClient:
@@ -18,11 +21,18 @@ class BackendIngestClient:
             headers["authorization"] = f"Bearer {self.service_token}"
         return headers
 
-    def send_inbound_event(self, neonize_event: Any) -> httpx.Response:
-        payload = map_neonize_message_event(neonize_event)
+    def build_inbound_payload(self, neonize_event: Any) -> dict[str, Any]:
+        return map_neonize_message_event(neonize_event)
+
+    def send_inbound_payload(self, payload: dict[str, Any]) -> httpx.Response:
         return httpx.post(
             f"{self.backend_base_url}/gateway/inbound",
             json=payload,
             headers=self._headers(),
             timeout=10,
         )
+
+    def send_inbound_event(self, neonize_event: Any) -> tuple[dict[str, Any], httpx.Response]:
+        payload = self.build_inbound_payload(neonize_event)
+        response = self.send_inbound_payload(payload)
+        return payload, response
