@@ -1,0 +1,1 @@
+"""Media processing job placeholder."""

@@ -1,0 +1,48 @@
+[project]
+name = "kuuna-backend"
+version = "0.1.0"
+description = "Kuuna support agents control plane scaffold"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "boto3>=1.42.91",
+    "fastapi>=0.136.0",
+    "httpx>=0.28.1",
+    "pgvector>=0.4.2",
+    "psycopg[binary]>=3.3.3",
+    "pydantic-ai>=1.84.1",
+    "pydantic-settings>=2.13.1",
+    "redis>=7.4.0",
+    "rq>=2.8.0",
+    "sentry-sdk>=2.58.0",
+    "sqlalchemy>=2.0.49",
+    "uvicorn[standard]>=0.44.0",
+]
+
+[project.scripts]
+kuuna-api = "kuuna_backend.main:run"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.1",
+    "pytest>=9.0.3",
+    "ruff>=0.15.11",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = ["src"]

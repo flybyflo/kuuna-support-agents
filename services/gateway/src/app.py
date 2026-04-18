@@ -1,0 +1,1 @@
+"""Gateway process entry placeholder."""

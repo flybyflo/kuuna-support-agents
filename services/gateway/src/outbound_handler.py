@@ -1,0 +1,1 @@
+"""Outbound event handler placeholder."""
