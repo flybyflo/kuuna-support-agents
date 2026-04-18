@@ -1,8 +1,16 @@
-export default function HomePage() {
-  return (
-    <main style={{ fontFamily: "Inter, system-ui, sans-serif", padding: 24 }}>
-      <h1>Kuuna Dashboard</h1>
-      <p>Scaffold initialized. Next step: auth + protected route shell.</p>
-    </main>
-  );
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth/session";
+
+export default async function HomePage() {
+  const session = await getSession();
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  if (session.mustChangePassword) {
+    redirect("/first-password-change");
+  }
+
+  redirect("/overview");
 }

@@ -1,0 +1,4 @@
+# Dashboard-specific overrides
+# Root .gitignore contains `lib/`, but this app keeps source helpers in `src/lib`.
+!src/lib/
+!src/lib/**
