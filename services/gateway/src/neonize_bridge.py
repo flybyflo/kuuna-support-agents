@@ -71,11 +71,8 @@ def run_neonize_gateway(
 ) -> None:
     NewClient, ConnectedEv, MessageEv, neonize_wait = _load_neonize_runtime()
 
-    client_kwargs: dict[str, Any] = {"name": session_name}
-    if database_path:
-        client_kwargs["database"] = database_path
-
-    client = NewClient(**client_kwargs)
+    db_name = database_path or "neonize.db"
+    client = NewClient(db_name, uuid=session_name)
     backend_client = BackendIngestClient(
         backend_base_url=backend_base_url,
         service_token=service_token,
