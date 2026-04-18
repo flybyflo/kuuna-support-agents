@@ -21,7 +21,8 @@ def _load_neonize_runtime() -> tuple[Any, Any, Any, Any]:
         from neonize.events import ConnectedEv, MessageEv, event as neonize_wait
     except Exception as exc:  # pragma: no cover - depends on runtime image
         raise NeonizeUnavailableError(
-            "Neonize is not installed. Add `neonize` to gateway runtime dependencies."
+            "Failed to load Neonize runtime. Ensure `neonize` is installed and system libs "
+            f"(e.g. libmagic) are available. Original error: {exc}"
         ) from exc
 
     return NewClient, ConnectedEv, MessageEv, neonize_wait
