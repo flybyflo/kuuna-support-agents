@@ -1,6 +1,6 @@
 """create template binding and instance tables
 
-Revision ID: 0003_templates_bindings_instances
+Revision ID: 0003_tbi
 Revises: 0002_auth_rbac
 Create Date: 2026-04-18
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0003_templates_bindings_instances"
+revision: str = "0003_tbi"
 down_revision: str | Sequence[str] | None = "0002_auth_rbac"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -26,11 +26,6 @@ runtime_status = sa.Enum("provisioning", "healthy", "degraded", "stopped", name=
 
 
 def upgrade() -> None:
-    template_version_status.create(op.get_bind(), checkfirst=True)
-    binding_status.create(op.get_bind(), checkfirst=True)
-    runtime_mode.create(op.get_bind(), checkfirst=True)
-    runtime_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "group_templates",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
@@ -104,8 +99,3 @@ def downgrade() -> None:
     op.drop_table("group_bindings")
     op.drop_table("template_versions")
     op.drop_table("group_templates")
-
-    runtime_status.drop(op.get_bind(), checkfirst=True)
-    runtime_mode.drop(op.get_bind(), checkfirst=True)
-    binding_status.drop(op.get_bind(), checkfirst=True)
-    template_version_status.drop(op.get_bind(), checkfirst=True)

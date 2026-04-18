@@ -1,7 +1,7 @@
 """add baseline row-level-security policies
 
-Revision ID: 0008_rls_baseline
-Revises: 0007_indexes_and_constraints_hardening
+Revision ID: 0008_rls
+Revises: 0007_hardening
 Create Date: 2026-04-18
 
 """
@@ -11,8 +11,8 @@ from collections.abc import Sequence
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0008_rls_baseline"
-down_revision: str | Sequence[str] | None = "0007_indexes_and_constraints_hardening"
+revision: str = "0008_rls"
+down_revision: str | Sequence[str] | None = "0007_hardening"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

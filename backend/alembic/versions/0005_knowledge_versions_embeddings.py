@@ -1,7 +1,7 @@
 """create knowledge and embedding tables
 
-Revision ID: 0005_knowledge_versions_embeddings
-Revises: 0004_messages_media_transcripts
+Revision ID: 0005_kve
+Revises: 0004_mmt
 Create Date: 2026-04-18
 
 """
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0005_knowledge_versions_embeddings"
-down_revision: str | Sequence[str] | None = "0004_messages_media_transcripts"
+revision: str = "0005_kve"
+down_revision: str | Sequence[str] | None = "0004_mmt"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -28,10 +28,6 @@ embedding_scope = sa.Enum("common", "group", name="embedding_scope")
 
 
 def upgrade() -> None:
-    knowledge_scope.create(op.get_bind(), checkfirst=True)
-    knowledge_version_status.create(op.get_bind(), checkfirst=True)
-    embedding_scope.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "knowledge_common_docs",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
@@ -103,7 +99,3 @@ def downgrade() -> None:
     op.drop_table("knowledge_versions")
     op.drop_table("knowledge_group_docs")
     op.drop_table("knowledge_common_docs")
-
-    embedding_scope.drop(op.get_bind(), checkfirst=True)
-    knowledge_version_status.drop(op.get_bind(), checkfirst=True)
-    knowledge_scope.drop(op.get_bind(), checkfirst=True)

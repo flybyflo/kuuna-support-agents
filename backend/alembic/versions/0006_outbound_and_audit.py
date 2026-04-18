@@ -1,7 +1,7 @@
 """create outbound and audit tables
 
-Revision ID: 0006_outbound_and_audit
-Revises: 0005_knowledge_versions_embeddings
+Revision ID: 0006_oa
+Revises: 0005_kve
 Create Date: 2026-04-18
 
 """
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0006_outbound_and_audit"
-down_revision: str | Sequence[str] | None = "0005_knowledge_versions_embeddings"
+revision: str = "0006_oa"
+down_revision: str | Sequence[str] | None = "0005_kve"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -23,8 +23,6 @@ outbound_status = sa.Enum("pending", "sending", "sent", "failed", name="outbound
 
 
 def upgrade() -> None:
-    outbound_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "outbound_intents",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
@@ -62,4 +60,3 @@ def downgrade() -> None:
     op.drop_table("audit_events")
     op.drop_index("ix_outbound_intents_provider_group_id_created_at", table_name="outbound_intents")
     op.drop_table("outbound_intents")
-    outbound_status.drop(op.get_bind(), checkfirst=True)

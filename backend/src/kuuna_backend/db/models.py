@@ -83,6 +83,14 @@ class OutboundStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+def db_enum(enum_cls: type[enum.Enum], *, name: str) -> Enum:
+    return Enum(
+        enum_cls,
+        name=name,
+        values_callable=lambda members: [member.value for member in members],
+    )
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
@@ -97,7 +105,7 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[RoleName] = mapped_column(Enum(RoleName, name="role_name"), nullable=False, unique=True)
+    name: Mapped[RoleName] = mapped_column(db_enum(RoleName, name="role_name"), nullable=False, unique=True)
 
 
 class UserRole(Base):
@@ -154,7 +162,7 @@ class TemplateVersion(Base, TimestampMixin):
     )
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[TemplateVersionStatus] = mapped_column(
-        Enum(TemplateVersionStatus, name="template_version_status"),
+        db_enum(TemplateVersionStatus, name="template_version_status"),
         nullable=False,
         default=TemplateVersionStatus.DRAFT,
     )
@@ -181,7 +189,7 @@ class GroupBinding(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("template_versions.id", ondelete="RESTRICT"), nullable=False
     )
     status: Mapped[BindingStatus] = mapped_column(
-        Enum(BindingStatus, name="binding_status"), nullable=False, default=BindingStatus.DRAFT
+        db_enum(BindingStatus, name="binding_status"), nullable=False, default=BindingStatus.DRAFT
     )
 
 
@@ -193,10 +201,10 @@ class AgentInstance(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("group_bindings.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     runtime_mode: Mapped[RuntimeMode] = mapped_column(
-        Enum(RuntimeMode, name="runtime_mode"), nullable=False, default=RuntimeMode.ON_DEMAND
+        db_enum(RuntimeMode, name="runtime_mode"), nullable=False, default=RuntimeMode.ON_DEMAND
     )
     status: Mapped[RuntimeStatus] = mapped_column(
-        Enum(RuntimeStatus, name="runtime_status"),
+        db_enum(RuntimeStatus, name="runtime_status"),
         nullable=False,
         default=RuntimeStatus.PROVISIONING,
     )
@@ -235,7 +243,7 @@ class MessageVersion(Base):
     )
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[MessageEventType] = mapped_column(
-        Enum(MessageEventType, name="message_event_type"), nullable=False
+        db_enum(MessageEventType, name="message_event_type"), nullable=False
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -263,7 +271,7 @@ class MediaAsset(Base, TimestampMixin):
     byte_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     s3_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[MediaStatus] = mapped_column(
-        Enum(MediaStatus, name="media_status"), nullable=False, default=MediaStatus.PENDING
+        db_enum(MediaStatus, name="media_status"), nullable=False, default=MediaStatus.PENDING
     )
     metadata_json: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -278,7 +286,7 @@ class Transcript(Base, TimestampMixin):
     text_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[MediaStatus] = mapped_column(
-        Enum(MediaStatus, name="transcript_status"), nullable=False, default=MediaStatus.PENDING
+        db_enum(MediaStatus, name="transcript_status"), nullable=False, default=MediaStatus.PENDING
     )
 
 
@@ -318,12 +326,12 @@ class KnowledgeVersion(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     scope: Mapped[KnowledgeScope] = mapped_column(
-        Enum(KnowledgeScope, name="knowledge_scope"), nullable=False
+        db_enum(KnowledgeScope, name="knowledge_scope"), nullable=False
     )
     doc_ref_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[TemplateVersionStatus] = mapped_column(
-        Enum(TemplateVersionStatus, name="knowledge_version_status"),
+        db_enum(TemplateVersionStatus, name="knowledge_version_status"),
         nullable=False,
         default=TemplateVersionStatus.DRAFT,
     )
@@ -336,7 +344,7 @@ class Embedding(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     scope: Mapped[KnowledgeScope] = mapped_column(
-        Enum(KnowledgeScope, name="embedding_scope"), nullable=False
+        db_enum(KnowledgeScope, name="embedding_scope"), nullable=False
     )
     source_version_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("knowledge_versions.id", ondelete="CASCADE"), nullable=False
@@ -358,7 +366,7 @@ class OutboundIntent(Base, TimestampMixin):
     outbound_intent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[OutboundStatus] = mapped_column(
-        Enum(OutboundStatus, name="outbound_status"), nullable=False, default=OutboundStatus.PENDING
+        db_enum(OutboundStatus, name="outbound_status"), nullable=False, default=OutboundStatus.PENDING
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)

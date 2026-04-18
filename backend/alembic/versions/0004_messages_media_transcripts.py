@@ -1,7 +1,7 @@
 """create messaging media and transcript tables
 
-Revision ID: 0004_messages_media_transcripts
-Revises: 0003_templates_bindings_instances
+Revision ID: 0004_mmt
+Revises: 0003_tbi
 Create Date: 2026-04-18
 
 """
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0004_messages_media_transcripts"
-down_revision: str | Sequence[str] | None = "0003_templates_bindings_instances"
+revision: str = "0004_mmt"
+down_revision: str | Sequence[str] | None = "0003_tbi"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -27,10 +27,6 @@ transcript_status = sa.Enum("pending", "ready", "failed", name="transcript_statu
 
 
 def upgrade() -> None:
-    message_event_type.create(op.get_bind(), checkfirst=True)
-    media_status.create(op.get_bind(), checkfirst=True)
-    transcript_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "messages",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
@@ -104,7 +100,3 @@ def downgrade() -> None:
     op.drop_table("message_versions")
     op.drop_index("ix_messages_provider_group_id_created_at", table_name="messages")
     op.drop_table("messages")
-
-    transcript_status.drop(op.get_bind(), checkfirst=True)
-    media_status.drop(op.get_bind(), checkfirst=True)
-    message_event_type.drop(op.get_bind(), checkfirst=True)

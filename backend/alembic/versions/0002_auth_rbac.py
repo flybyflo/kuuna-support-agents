@@ -23,8 +23,6 @@ role_name = sa.Enum("owner", "admin", "operator", "viewer", name="role_name")
 
 
 def upgrade() -> None:
-    role_name.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "users",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
@@ -79,4 +77,3 @@ def downgrade() -> None:
     op.drop_table("user_roles")
     op.drop_table("roles")
     op.drop_table("users")
-    role_name.drop(op.get_bind(), checkfirst=True)

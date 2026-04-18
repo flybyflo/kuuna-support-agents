@@ -1,7 +1,7 @@
 """add raw event json column to message_versions
 
-Revision ID: 0009_add_raw_event_to_message_versions
-Revises: 0008_rls_baseline
+Revision ID: 0009_raw_event
+Revises: 0008_rls
 Create Date: 2026-04-18
 
 """
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0009_add_raw_event_to_message_versions"
-down_revision: str | Sequence[str] | None = "0008_rls_baseline"
+revision: str = "0009_raw_event"
+down_revision: str | Sequence[str] | None = "0008_rls"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
