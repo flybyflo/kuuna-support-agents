@@ -39,6 +39,22 @@ services:
       minio:
         condition: service_started
 
+  gateway:
+    build:
+      context: ../../services/gateway
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    command: sh -c "uv sync && uv run python src/app.py"
+    env_file:
+      - ../env/gateway.env.example
+    volumes:
+      - ../../services/gateway:/app
+      - gateway_venv:/app/.venv
+      - gateway_session:/data
+    depends_on:
+      backend:
+        condition: service_started
+
   postgres:
     image: postgres:16
     environment:
@@ -80,5 +96,7 @@ services:
 volumes:
   dashboard_node_modules:
   backend_venv:
+  gateway_venv:
+  gateway_session:
   postgres_data:
   minio_data:

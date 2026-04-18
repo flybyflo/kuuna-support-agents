@@ -71,6 +71,7 @@ npm run dev
 Services:
 - Dashboard: http://localhost:3000
 - Backend API: http://localhost:8000
+- Gateway: background service (Neonize)
 - MinIO: http://localhost:9001
 
 Stop all services:
@@ -82,7 +83,13 @@ npm run dev:down
 ## Hot Reload
 - Frontend hot reload is enabled via Next.js dev server in container.
 - Backend hot reload is enabled via `uvicorn --reload` in container.
+- Gateway source is bind-mounted; restart gateway container when changing gateway code.
 - Source code is mounted into containers with bind volumes.
+
+## WhatsApp Session Persistence
+- Gateway stores Neonize auth/session state in Docker volume `gateway_session`.
+- Session DB path is `NEONIZE_DATABASE_PATH=/data/neonize.db`.
+- Restarting containers keeps the WhatsApp session; removing the volume resets it.
 
 ## Next Step
 1. Data model + first Alembic migrations

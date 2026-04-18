@@ -20,7 +20,7 @@ def main() -> None:
         session_name=os.getenv("GATEWAY_SESSION_NAME", "kuuna-gateway"),
         backend_base_url=os.getenv("BACKEND_BASE_URL", "http://backend:8000"),
         service_token=os.getenv("GATEWAY_SERVICE_TOKEN"),
-        database_path=os.getenv("NEONIZE_DATABASE_PATH", "./neonize.db"),
+        database_path=os.getenv("NEONIZE_DATABASE_PATH", "/data/neonize.db"),
     )
 
 

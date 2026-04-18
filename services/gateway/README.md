@@ -19,4 +19,6 @@ Environment variables:
 - `GATEWAY_SESSION_NAME` (default `kuuna-gateway`)
 - `BACKEND_BASE_URL` (default `http://backend:8000`)
 - `GATEWAY_SERVICE_TOKEN` (optional)
-- `NEONIZE_DATABASE_PATH` (default `./neonize.db`)
+- `NEONIZE_DATABASE_PATH` (default `/data/neonize.db` in Docker)
+
+For Docker dev, bind-mount source code and keep Neonize auth/session DB on a persistent named volume (`gateway_session` -> `/data`).
