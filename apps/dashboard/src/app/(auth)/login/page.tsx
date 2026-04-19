@@ -1,5 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+
+import { AuthShell } from "@/components/layout/auth-shell";
+import { Button } from "@/components/ui/button";
+import { FormActions, FormRow } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { loginAction } from "@/lib/auth/actions";
 import { getSession } from "@/lib/auth/session";
 
@@ -43,54 +49,80 @@ export default async function LoginPage({
     ? resolvedSearchParams.error[0]
     : resolvedSearchParams.error;
   const loggedOut = resolvedSearchParams.loggedOut === "1";
+  const errorMessage = getMessage(error);
 
   return (
-    <main className="auth-wrap">
-      <section className="auth-card">
-        <h1>Staff Login</h1>
-        <p>Use your staff account. New users must change password at first sign-in.</p>
+    <AuthShell
+      title="Staff sign in"
+      description="Use your staff account. New users must change their password at first sign-in."
+      footer={
+        <p>
+          Account locked?{" "}
+          <Link
+            href="/locked"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            See lockout guidance
+          </Link>
+        </p>
+      }
+    >
+      {loggedOut ? (
+        <div className="mb-5 flex items-start gap-2.5 rounded-md border border-[color:color-mix(in_oklab,var(--success-500)_28%,transparent)] bg-[color:var(--success-50)] px-3 py-2.5 text-sm text-[color:var(--success-700)]">
+          <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>You have been signed out.</span>
+        </div>
+      ) : null}
 
-        {loggedOut ? (
-          <p className="success-text">You have been signed out.</p>
-        ) : null}
-        {getMessage(error) ? <p className="error-text">{getMessage(error)}</p> : null}
+      {errorMessage ? (
+        <div className="mb-5 flex items-start gap-2.5 rounded-md border border-[color:color-mix(in_oklab,var(--danger-500)_30%,transparent)] bg-[color:var(--danger-50)] px-3 py-2.5 text-sm text-[color:var(--danger-700)]">
+          <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      ) : null}
 
-        <form action={loginAction} className="form-grid">
-          <label>
-            Email
-            <input
-              type="email"
-              name="email"
-              placeholder="operator@kuuna.ai"
-              required
-            />
-          </label>
+      <form action={loginAction} className="flex flex-col gap-4">
+        <FormRow label="Email" htmlFor="email">
+          <Input
+            id="email"
+            type="email"
+            name="email"
+            placeholder="operator@kuuna.ai"
+            required
+            autoComplete="email"
+          />
+        </FormRow>
 
-          <label>
-            Password
-            <input
-              type="password"
-              name="password"
-              placeholder="Minimum 8 characters"
-              required
-              minLength={8}
-            />
-          </label>
+        <FormRow label="Password" htmlFor="password">
+          <Input
+            id="password"
+            type="password"
+            name="password"
+            placeholder="Minimum 8 characters"
+            required
+            minLength={8}
+            autoComplete="current-password"
+          />
+        </FormRow>
 
-          <button type="submit" className="button">
+        <FormActions className="flex-col items-stretch gap-2">
+          <Button type="submit" className="w-full">
             Sign in
-          </button>
-        </form>
+          </Button>
+        </FormActions>
+      </form>
 
-        <p className="muted-text" style={{ marginTop: 14 }}>
-          Credentials are validated against the PostgreSQL <span className="inline-code">users</span> table.
-          Required bootstrap admin: <span className="inline-code">admin@kuuna.ai</span>.
-        </p>
-
-        <p className="muted-text" style={{ marginTop: 10 }}>
-          Account locked? <Link href="/locked">See lockout guidance</Link>
-        </p>
-      </section>
-    </main>
+      <p className="mt-6 text-xs text-muted-foreground">
+        Credentials are validated against the PostgreSQL{" "}
+        <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.7rem]">
+          users
+        </code>{" "}
+        table. Required bootstrap admin:{" "}
+        <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.7rem]">
+          admin@kuuna.ai
+        </code>
+        .
+      </p>
+    </AuthShell>
   );
 }

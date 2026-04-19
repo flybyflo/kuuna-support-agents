@@ -1,6 +1,19 @@
 import { AutoRefresh } from "@/components/system/auto-refresh";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { FormActions, FormRow } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   listBindings,
   listKnownProviderGroups,
@@ -21,7 +34,9 @@ import {
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-function getSingleParam(value: string | string[] | undefined): string | undefined {
+function getSingleParam(
+  value: string | string[] | undefined,
+): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
@@ -33,19 +48,22 @@ export default async function CreateBindingPage({
   const session = await requireAuthorized("bindings", "write");
   const params = await searchParams;
 
-  const [bindings, templates, knownGroups, gatewayGroups, gatewayConnection] = await Promise.all([
-    listBindings(),
-    listTemplates(),
-    listKnownProviderGroups(),
-    listWhatsAppGatewayGroups(),
-    getWhatsAppGatewayConnectionStatus(),
-  ]);
+  const [bindings, templates, knownGroups, gatewayGroups, gatewayConnection] =
+    await Promise.all([
+      listBindings(),
+      listTemplates(),
+      listKnownProviderGroups(),
+      listWhatsAppGatewayGroups(),
+      getWhatsAppGatewayConnectionStatus(),
+    ]);
 
   const templateOptions = (
     await Promise.all(
       templates.map(async (template) => {
         const versions = await listTemplateVersions(template.id);
-        const preferred = versions.find((version) => version.status === "published") ?? versions[0];
+        const preferred =
+          versions.find((version) => version.status === "published") ??
+          versions[0];
         if (!preferred) {
           return null;
         }
@@ -99,7 +117,9 @@ export default async function CreateBindingPage({
     }
   }
 
-  const boundGroupIds = new Set(bindings.map((binding) => binding.providerGroupId));
+  const boundGroupIds = new Set(
+    bindings.map((binding) => binding.providerGroupId),
+  );
 
   const selectableGroups = [...mergedGroups.values()]
     .filter((group) => canAccessGroup(session, group.jid))
@@ -112,31 +132,32 @@ export default async function CreateBindingPage({
   const bindStatus = getSingleParam(params.bind);
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <AutoRefresh intervalMs={15000} />
+
       <PageHeader
-        title="Bind WhatsApp Group"
+        title="Bind WhatsApp group"
         description="Select an existing WhatsApp JID or create a new group, then bind a template version."
       />
 
       {createGroupStatus === "ok" ? (
         <Notice title="WhatsApp group created" tone="success">
-          <p className="muted-text">
-            {getSingleParam(params.groupName) ?? "Group"} ·{" "}
-            <span className="inline-code">{getSingleParam(params.providerGroupId)}</span>
-          </p>
+          {getSingleParam(params.groupName) ?? "Group"} ·{" "}
+          <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+            {getSingleParam(params.providerGroupId)}
+          </code>
         </Notice>
       ) : null}
 
       {createGroupStatus === "error" ? (
         <Notice title="Could not create WhatsApp group" tone="warning">
-          <p className="muted-text">{getSingleParam(params.reason) ?? "unknown error"}</p>
+          {getSingleParam(params.reason) ?? "unknown error"}
         </Notice>
       ) : null}
 
       {bindStatus === "error" ? (
         <Notice title="Binding failed" tone="warning">
-          <p className="muted-text">{getSingleParam(params.reason) ?? "unknown error"}</p>
+          {getSingleParam(params.reason) ?? "unknown error"}
         </Notice>
       ) : null}
 
@@ -151,93 +172,176 @@ export default async function CreateBindingPage({
         tone={gatewayConnection?.connected ? "success" : "warning"}
       >
         {gatewayConnection ? (
-          <p className="muted-text">
+          <p>
             Event: {gatewayConnection.lastEvent}
-            {gatewayConnection.lastChangedAt ? ` · changed ${formatDateTime(gatewayConnection.lastChangedAt)}` : ""}
-            {gatewayConnection.checkedAt ? ` · checked ${formatDateTime(gatewayConnection.checkedAt)}` : ""}
-            {gatewayConnection.lastError ? ` · error ${gatewayConnection.lastError}` : ""}
+            {gatewayConnection.lastChangedAt
+              ? ` · changed ${formatDateTime(gatewayConnection.lastChangedAt)}`
+              : ""}
+            {gatewayConnection.checkedAt
+              ? ` · checked ${formatDateTime(gatewayConnection.checkedAt)}`
+              : ""}
+            {gatewayConnection.lastError
+              ? ` · error ${gatewayConnection.lastError}`
+              : ""}
           </p>
         ) : (
-          <p className="muted-text">Could not reach gateway status endpoint.</p>
+          <p>Could not reach gateway status endpoint.</p>
         )}
       </Notice>
 
       <Notice title="Atomic flow" tone="info">
-        Binding operation follows: create records → provision runtime → health check
-        → disclosure message → active state.
+        Binding follows: create records → provision runtime → health check →
+        disclosure message → active state.
       </Notice>
 
-      <section className="panel">
-        <h2>Create WhatsApp group</h2>
-        <p className="muted-text">Creates the group in WhatsApp via gateway and returns the new group JID.</p>
-        <form action={createWhatsAppGroupAction} className="form-grid" style={{ marginTop: 12 }}>
-          <label>
-            Group name
-            <input name="groupName" placeholder="New Support Group" required />
-          </label>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Create WhatsApp group</CardTitle>
+            <CardDescription>
+              Creates the group in WhatsApp via gateway and returns the new
+              group JID.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pb-6">
+            <form
+              action={createWhatsAppGroupAction}
+              className="flex flex-col gap-4"
+            >
+              <FormRow label="Group name" htmlFor="groupName">
+                <Input
+                  id="groupName"
+                  name="groupName"
+                  placeholder="New Support Group"
+                  required
+                />
+              </FormRow>
 
-          <label>
-            Participants (optional)
-            <textarea
-              name="participants"
-              rows={3}
-              placeholder="+43664111222, +43664111333"
-            />
-          </label>
+              <FormRow
+                label="Participants"
+                htmlFor="participants"
+                hint="Optional, comma-separated international format."
+              >
+                <Textarea
+                  id="participants"
+                  name="participants"
+                  rows={3}
+                  placeholder="+43664111222, +43664111333"
+                />
+              </FormRow>
 
-          <button type="submit" className="button">
-            Create WhatsApp group
-          </button>
-        </form>
-      </section>
+              <FormActions>
+                <Button type="submit">Create WhatsApp group</Button>
+              </FormActions>
+            </form>
+          </CardContent>
+        </Card>
 
-      <section className="panel">
-        <h2>Create binding request</h2>
-        <form action={createBindingAction} className="form-grid">
-          <label>
-            WhatsApp group (name + JID)
-            <select name="providerGroupId" defaultValue={selectedGroupId} required>
-              <option value="" disabled>
-                Select existing WhatsApp group
-              </option>
+        <Card>
+          <CardHeader>
+            <CardTitle>Create binding request</CardTitle>
+            <CardDescription>
+              Pair a known WhatsApp group with a published template version.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="pb-6">
+            <form action={createBindingAction} className="flex flex-col gap-4">
+              <FormRow
+                label="WhatsApp group (name + JID)"
+                htmlFor="providerGroupId"
+              >
+                <Select
+                  id="providerGroupId"
+                  name="providerGroupId"
+                  defaultValue={selectedGroupId}
+                  required
+                >
+                  <option value="" disabled>
+                    Select existing WhatsApp group
+                  </option>
+                  {selectableGroups.map((group) => (
+                    <option key={group.jid} value={group.jid}>
+                      {group.name} — {group.jid}
+                    </option>
+                  ))}
+                </Select>
+              </FormRow>
+
+              <FormRow label="Template version" htmlFor="templateVersionId">
+                <Select
+                  id="templateVersionId"
+                  name="templateVersionId"
+                  defaultValue={
+                    templateOptions[0]?.templateVersionId ?? ""
+                  }
+                  required
+                >
+                  {templateOptions.map((template) => (
+                    <option
+                      key={template.templateVersionId}
+                      value={template.templateVersionId}
+                    >
+                      {template.label}
+                    </option>
+                  ))}
+                </Select>
+              </FormRow>
+
+              <FormActions>
+                <Button type="submit">Submit bind request</Button>
+              </FormActions>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Known WhatsApp groups</CardTitle>
+          <CardDescription>
+            Groups visible to your role through bindings, prior messages, or the
+            gateway directory.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pb-6">
+          {selectableGroups.length === 0 ? (
+            <p className="py-4 text-sm text-muted-foreground">
+              No WhatsApp groups visible yet.
+            </p>
+          ) : (
+            <ul className="-mx-6 divide-y divide-border">
               {selectableGroups.map((group) => (
-                <option key={group.jid} value={group.jid}>
-                  {group.name} — {group.jid}
-                </option>
+                <li
+                  key={group.jid}
+                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-3"
+                >
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {group.name}
+                    </p>
+                    <code className="truncate font-mono text-xs text-muted-foreground">
+                      {group.jid}
+                    </code>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    {boundGroupIds.has(group.jid) ? (
+                      <Badge variant="success">bound</Badge>
+                    ) : null}
+                    {group.participantsCount ? (
+                      <span>{group.participantsCount} participants</span>
+                    ) : null}
+                    {group.lastSeenAt ? (
+                      <span>
+                        last seen {formatDateTime(group.lastSeenAt)}
+                      </span>
+                    ) : null}
+                  </div>
+                </li>
               ))}
-            </select>
-          </label>
-
-          <label>
-            Template version
-            <select name="templateVersionId" defaultValue={templateOptions[0]?.templateVersionId ?? ""} required>
-              {templateOptions.map((template) => (
-                <option key={template.templateVersionId} value={template.templateVersionId}>
-                  {template.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button type="submit" className="button">
-            Submit bind request
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2>Known WhatsApp groups</h2>
-        <ul className="inline-list">
-          {selectableGroups.map((group) => (
-            <li key={group.jid}>
-              <strong>{group.name}</strong> — <span className="inline-code">{group.jid}</span>
-              {boundGroupIds.has(group.jid) ? " · bound" : ""}
-              {group.participantsCount ? ` · ${group.participantsCount} participants` : ""}
-              {group.lastSeenAt ? ` · last seen ${formatDateTime(group.lastSeenAt)}` : ""}
-            </li>
-          ))}
-        </ul>
-      </section>
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

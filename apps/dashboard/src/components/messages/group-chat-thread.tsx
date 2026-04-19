@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
+import { X } from "lucide-react";
+
 import { StatusBadge } from "@/components/status/status-badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils/cn";
 import type {
   MediaAsset,
   MessageRecord,
@@ -21,21 +25,7 @@ type GroupChatThreadProps = {
 
 type BubbleSide = "left" | "right";
 
-type BubbleTheme = {
-  bg: string;
-  border: string;
-  text: string;
-  time: string;
-};
-
-const USER_BUBBLE_THEMES: BubbleTheme[] = [
-  { bg: "#ffffff", border: "#dbe2ea", text: "#0f172a", time: "#64748b" },
-  { bg: "#d9fdd3", border: "#a7f3d0", text: "#052e16", time: "#166534" },
-  { bg: "#e0f2fe", border: "#bae6fd", text: "#0c4a6e", time: "#0369a1" },
-  { bg: "#fef3c7", border: "#fde68a", text: "#78350f", time: "#92400e" },
-  { bg: "#ede9fe", border: "#ddd6fe", text: "#4c1d95", time: "#6d28d9" },
-  { bg: "#fee2e2", border: "#fecaca", text: "#7f1d1d", time: "#b91c1c" },
-];
+const ACCENT_COUNT = 6;
 
 function hashSender(sender: string): number {
   let hash = 0;
@@ -49,22 +39,20 @@ function sideForSender(sender: string): BubbleSide {
   if (/kuuna|agent|bot/i.test(sender)) {
     return "right";
   }
-
   return hashSender(sender) % 2 === 0 ? "left" : "right";
 }
 
-function themeForSender(sender: string): BubbleTheme {
-  return USER_BUBBLE_THEMES[hashSender(sender) % USER_BUBBLE_THEMES.length];
+function accentIndexForSender(sender: string): number {
+  return hashSender(sender) % ACCENT_COUNT;
 }
 
 function bubbleStyleForSender(sender: string): CSSProperties {
-  const theme = themeForSender(sender);
-
+  const accent = accentIndexForSender(sender);
   return {
-    "--wa-bubble-bg": theme.bg,
-    "--wa-bubble-border": theme.border,
-    "--wa-bubble-text": theme.text,
-    "--wa-time-color": theme.time,
+    "--bubble-bg": `var(--chat-accent-${accent}-bg)`,
+    "--bubble-border": `var(--chat-accent-${accent}-border)`,
+    "--bubble-text": `var(--chat-accent-${accent}-text)`,
+    "--bubble-time": `var(--chat-accent-${accent}-time)`,
   } as CSSProperties;
 }
 
@@ -74,7 +62,9 @@ function messageText(value: string): string {
 }
 
 export function GroupChatThread({ items }: GroupChatThreadProps) {
-  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
+    null,
+  );
 
   const selectedEntry = useMemo(
     () => items.find((item) => item.message.id === selectedMessageId),
@@ -82,39 +72,66 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
   );
 
   if (!items.length) {
-    return <p className="muted-text">No messages found for this group.</p>;
+    return (
+      <p className="px-6 py-8 text-center text-sm text-muted-foreground">
+        No messages found for this group.
+      </p>
+    );
   }
 
   return (
     <>
-      <div className="wa-thread">
+      <div className="flex flex-col gap-2.5 bg-chat-surface p-4 sm:p-5">
         {items.map((item) => {
           const side = sideForSender(item.message.sender);
-          const imageAssets = item.media.filter((asset) => asset.kind === "image");
+          const imageAssets = item.media.filter(
+            (asset) => asset.kind === "image",
+          );
 
           return (
             <div
-              className={side === "right" ? "wa-row wa-row-outgoing" : "wa-row wa-row-incoming"}
               key={item.message.id}
+              className={cn(
+                "flex",
+                side === "right" ? "justify-end" : "justify-start",
+              )}
             >
               <button
                 type="button"
-                className={side === "right" ? "wa-bubble wa-bubble-right" : "wa-bubble wa-bubble-left"}
-                style={bubbleStyleForSender(item.message.sender)}
                 onClick={() => setSelectedMessageId(item.message.id)}
+                style={bubbleStyleForSender(item.message.sender)}
+                className={cn(
+                  "flex w-[min(760px,85%)] flex-col gap-1 rounded-md border px-3 py-2 text-left shadow-xs transition-[filter]",
+                  "bg-[color:var(--bubble-bg)] border-[color:var(--bubble-border)] text-[color:var(--bubble-text)]",
+                  "hover:brightness-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                  side === "right" ? "rounded-tr-sm" : "rounded-tl-sm",
+                )}
               >
-                <p className="wa-time">{formatDateTime(item.message.createdAt)}</p>
-                <p className="wa-text">{messageText(item.message.preview)}</p>
+                <p className="self-end text-[10.5px] text-[color:var(--bubble-time)]">
+                  {formatDateTime(item.message.createdAt)}
+                </p>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {messageText(item.message.preview)}
+                </p>
 
                 {imageAssets.length ? (
-                  <div className="wa-image-grid">
+                  <div className="mt-1.5 grid gap-2">
                     {imageAssets.map((asset) => (
-                      <div className="wa-image-frame" key={asset.id}>
+                      <div
+                        key={asset.id}
+                        className="overflow-hidden rounded-md border border-border bg-muted"
+                      >
                         {asset.previewUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={asset.previewUrl} alt={asset.filename} className="wa-image" />
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            src={asset.previewUrl}
+                            alt={asset.filename}
+                            className="block max-h-80 w-full object-contain"
+                          />
                         ) : (
-                          <div className="wa-image-fallback">Image preview unavailable</div>
+                          <div className="grid min-h-[140px] place-items-center bg-muted text-xs text-muted-foreground">
+                            Image preview unavailable
+                          </div>
                         )}
                       </div>
                     ))}
@@ -127,87 +144,154 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
       </div>
 
       <div
-        className={selectedEntry ? "wa-drawer-overlay wa-drawer-overlay-open" : "wa-drawer-overlay"}
+        className={cn(
+          "fixed inset-0 z-40 bg-foreground/30 transition-opacity duration-200",
+          selectedEntry
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0",
+        )}
         onClick={() => setSelectedMessageId(null)}
         aria-hidden={!selectedEntry}
       />
 
-      <aside className={selectedEntry ? "wa-drawer wa-drawer-open" : "wa-drawer"}>
+      <aside
+        className={cn(
+          "fixed right-0 top-0 z-50 grid h-screen w-[min(520px,96vw)] grid-rows-[auto_1fr] border-l border-border bg-background shadow-lg transition-transform duration-200",
+          selectedEntry ? "translate-x-0" : "translate-x-full",
+        )}
+        aria-hidden={!selectedEntry}
+      >
         {selectedEntry ? (
           <>
-            <header className="wa-drawer-header">
-              <div>
-                <h2>Message details</h2>
-                <p className="muted-text">{selectedEntry.message.id}</p>
+            <header className="flex items-start justify-between gap-3 border-b border-border bg-card px-5 py-4">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <h2 className="text-base font-semibold tracking-tight text-foreground">
+                  Message details
+                </h2>
+                <code className="truncate font-mono text-xs text-muted-foreground">
+                  {selectedEntry.message.id}
+                </code>
               </div>
-              <button
+              <Button
                 type="button"
-                className="button button-secondary"
+                variant="outline"
+                size="sm"
                 onClick={() => setSelectedMessageId(null)}
               >
-                Close
-              </button>
+                <X aria-hidden />
+                <span>Close</span>
+              </Button>
             </header>
 
-            <div className="wa-drawer-content">
-              <section className="panel stack">
-                <p>
-                  <strong>Sender:</strong> {selectedEntry.message.sender}
-                </p>
-                <p>
-                  <strong>Timestamp:</strong> {formatDateTime(selectedEntry.message.createdAt)}
-                </p>
-                <p>
-                  <strong>Latest version:</strong> v{selectedEntry.message.latestVersionNo}
-                </p>
-                <p>
-                  <strong>Deleted:</strong> {selectedEntry.message.isDeleted ? "yes" : "no"}
-                </p>
+            <div className="flex flex-col gap-4 overflow-y-auto p-5">
+              <section className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Sender
+                  </span>
+                  <span className="text-sm text-foreground">
+                    {selectedEntry.message.sender}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Timestamp
+                  </span>
+                  <span className="text-sm text-foreground">
+                    {formatDateTime(selectedEntry.message.createdAt)}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Latest version
+                  </span>
+                  <span className="text-sm text-foreground">
+                    v{selectedEntry.message.latestVersionNo}
+                  </span>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    Deleted
+                  </span>
+                  <span className="text-sm text-foreground">
+                    {selectedEntry.message.isDeleted ? "yes" : "no"}
+                  </span>
+                </div>
               </section>
 
-              <section className="panel stack">
-                <h3>Lifecycle events</h3>
-                <ul className="inline-list">
-                  {selectedEntry.versions.map((version) => (
-                    <li key={version.id}>
-                      v{version.versionNo} · {version.eventType} · {formatDateTime(version.occurredAt)}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="panel stack">
-                <h3>Media assets</h3>
-                {selectedEntry.media.length ? (
-                  selectedEntry.media.map((asset) => (
-                    <article className="timeline-item" key={asset.id}>
-                      <div className="timeline-item-head">
-                        <span>
-                          {asset.kind}: {asset.filename}
-                        </span>
-                        <StatusBadge status={asset.status} />
-                      </div>
-
-                      {asset.kind === "image" ? (
-                        <div className="wa-drawer-image-frame">
-                          {asset.previewUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={asset.previewUrl} alt={asset.filename} className="wa-drawer-image" />
-                          ) : (
-                            <div className="wa-image-fallback">Image preview unavailable</div>
-                          )}
-                        </div>
-                      ) : null}
-
-                      {asset.transcript ? (
-                        <p className="muted-text">Transcript: {asset.transcript}</p>
-                      ) : (
-                        <p className="muted-text">No transcript available.</p>
-                      )}
-                    </article>
-                  ))
+              <section className="rounded-lg border border-border bg-card p-4">
+                <h3 className="mb-2 text-sm font-semibold text-foreground">
+                  Lifecycle events
+                </h3>
+                {selectedEntry.versions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No lifecycle events recorded.
+                  </p>
                 ) : (
-                  <p className="muted-text">No media assets attached.</p>
+                  <ul className="flex flex-col gap-1.5">
+                    {selectedEntry.versions.map((version) => (
+                      <li
+                        key={version.id}
+                        className="text-sm text-muted-foreground"
+                      >
+                        <span className="font-mono text-xs text-foreground">
+                          v{version.versionNo}
+                        </span>{" "}
+                        · {version.eventType} ·{" "}
+                        {formatDateTime(version.occurredAt)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-border bg-card p-4">
+                <h3 className="mb-2 text-sm font-semibold text-foreground">
+                  Media assets
+                </h3>
+                {selectedEntry.media.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No media assets attached.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-3">
+                    {selectedEntry.media.map((asset) => (
+                      <li
+                        key={asset.id}
+                        className="rounded-md border border-border bg-muted/40 p-3"
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="text-sm text-foreground">
+                            {asset.kind}: {asset.filename}
+                          </span>
+                          <StatusBadge status={asset.status} />
+                        </div>
+
+                        {asset.kind === "image" ? (
+                          <div className="overflow-hidden rounded-md border border-border bg-card">
+                            {asset.previewUrl ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={asset.previewUrl}
+                                alt={asset.filename}
+                                className="block max-h-64 w-full object-contain"
+                              />
+                            ) : (
+                              <div className="grid min-h-[120px] place-items-center text-xs text-muted-foreground">
+                                Image preview unavailable
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {asset.transcript
+                            ? `Transcript: ${asset.transcript}`
+                            : "No transcript available."}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </section>
             </div>

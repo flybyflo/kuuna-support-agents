@@ -1,3 +1,9 @@
+import { AlertCircle } from "lucide-react";
+
+import { AuthShell } from "@/components/layout/auth-shell";
+import { Button } from "@/components/ui/button";
+import { FormActions, FormRow } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { completePasswordChangeAction } from "@/lib/auth/actions";
 import { requireSession } from "@/lib/auth/session";
 
@@ -27,46 +33,54 @@ export default async function FirstPasswordChangePage({
   const error = Array.isArray(resolvedSearchParams.error)
     ? resolvedSearchParams.error[0]
     : resolvedSearchParams.error;
+  const errorMessage = getMessage(error);
 
   return (
-    <main className="auth-wrap">
-      <section className="auth-card">
-        <h1>Change Your Password</h1>
-        <p>
-          Hi {session.displayName}, your first sign-in requires setting a new
-          password before dashboard access is granted.
-        </p>
+    <AuthShell
+      title="Change your password"
+      description={`Hi ${session.displayName}, your first sign-in requires a new password before dashboard access is granted.`}
+    >
+      {errorMessage ? (
+        <div className="mb-5 flex items-start gap-2.5 rounded-md border border-[color:color-mix(in_oklab,var(--danger-500)_30%,transparent)] bg-[color:var(--danger-50)] px-3 py-2.5 text-sm text-[color:var(--danger-700)]">
+          <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      ) : null}
 
-        {getMessage(error) ? <p className="error-text">{getMessage(error)}</p> : null}
+      <form
+        action={completePasswordChangeAction}
+        className="flex flex-col gap-4"
+      >
+        <FormRow label="New password" htmlFor="password">
+          <Input
+            id="password"
+            type="password"
+            name="password"
+            minLength={12}
+            required
+            placeholder="At least 12 characters"
+            autoComplete="new-password"
+          />
+        </FormRow>
 
-        <form action={completePasswordChangeAction} className="form-grid">
-          <label>
-            New password
-            <input
-              type="password"
-              name="password"
-              minLength={12}
-              required
-              placeholder="At least 12 characters"
-            />
-          </label>
+        <FormRow label="Confirm new password" htmlFor="confirmPassword">
+          <Input
+            id="confirmPassword"
+            type="password"
+            name="confirmPassword"
+            minLength={12}
+            required
+            placeholder="Repeat password"
+            autoComplete="new-password"
+          />
+        </FormRow>
 
-          <label>
-            Confirm new password
-            <input
-              type="password"
-              name="confirmPassword"
-              minLength={12}
-              required
-              placeholder="Repeat password"
-            />
-          </label>
-
-          <button type="submit" className="button">
+        <FormActions className="flex-col items-stretch gap-2">
+          <Button type="submit" className="w-full">
             Save password
-          </button>
-        </form>
-      </section>
-    </main>
+          </Button>
+        </FormActions>
+      </form>
+    </AuthShell>
   );
 }

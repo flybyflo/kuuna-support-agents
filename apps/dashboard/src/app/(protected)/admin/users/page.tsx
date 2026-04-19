@@ -1,4 +1,19 @@
+import { UserPlus } from "lucide-react";
+
 import { SimpleTable } from "@/components/data-table/simple-table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FormActions, FormRow } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { listUsers } from "@/lib/api-client";
@@ -46,24 +61,34 @@ export default async function AdminUsersPage({
   const privilegedUsers = activePrivilegedUserCount(users);
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
-        title="User Administration"
+        title="User administration"
         description="Create and manage staff users, roles, and active state."
-        actions={<button className="button">Create user</button>}
+        actions={
+          <Button>
+            <UserPlus aria-hidden />
+            <span>Create user</span>
+          </Button>
+        }
       />
 
       {reconcileStatus === "ok" ? (
         <Notice title="Media reconcile finished" tone="success">
-          <p className="muted-text">{reconcileMessage ?? "done"}</p>
-          <p className="muted-text" style={{ marginTop: 6 }}>
-            cleaned={getSingleParam(params.cleaned) ?? "0"} · enqueued={getSingleParam(params.enqueued) ?? "0"} ·
-            retried={getSingleParam(params.retried) ?? "0"} · pending_after={getSingleParam(params.pendingAfter) ?? "0"} ·
-            failed_after={getSingleParam(params.failedAfter) ?? "0"}
+          <p>{reconcileMessage ?? "done"}</p>
+          <p className="mt-1.5 text-xs">
+            cleaned={getSingleParam(params.cleaned) ?? "0"} · enqueued=
+            {getSingleParam(params.enqueued) ?? "0"} · retried=
+            {getSingleParam(params.retried) ?? "0"} · pending_after=
+            {getSingleParam(params.pendingAfter) ?? "0"} · failed_after=
+            {getSingleParam(params.failedAfter) ?? "0"}
           </p>
           {getSingleParam(params.group) ? (
-            <p className="muted-text" style={{ marginTop: 6 }}>
-              Group scope: <span className="inline-code">{getSingleParam(params.group)}</span>
+            <p className="mt-1.5 text-xs">
+              Group scope:{" "}
+              <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.7rem]">
+                {getSingleParam(params.group)}
+              </code>
             </p>
           ) : null}
         </Notice>
@@ -71,7 +96,7 @@ export default async function AdminUsersPage({
 
       {reconcileStatus === "error" ? (
         <Notice title="Media reconcile failed" tone="warning">
-          <p className="muted-text">{reconcileReason ?? "unknown error"}</p>
+          {reconcileReason ?? "unknown error"}
         </Notice>
       ) : null}
 
@@ -79,130 +104,188 @@ export default async function AdminUsersPage({
         title="Admin account invariant"
         tone={requiredAdminHealthy ? "success" : "warning"}
       >
-        <p className="muted-text">
-          Required account: <span className="inline-code">{REQUIRED_ADMIN_EMAIL}</span>
+        <p>
+          Required account:{" "}
+          <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+            {REQUIRED_ADMIN_EMAIL}
+          </code>
         </p>
-        <p className="muted-text" style={{ marginTop: 6 }}>
+        <p className="mt-1">
           Active privileged users (owner/admin): {privilegedUsers}
         </p>
         {!requiredAdminHealthy ? (
-          <p className="error-text">
-            Critical: the required admin account is missing, inactive, or no longer
-            has admin role.
+          <p className="mt-2 font-semibold text-[color:var(--danger-700)]">
+            Critical: the required admin account is missing, inactive, or no
+            longer has admin role.
           </p>
         ) : null}
       </Notice>
 
-      <section className="panel stack">
-        <h2>Media reconcile</h2>
-        <p className="muted-text">
-          Runs backend maintenance for media assets (cleanup + requeue worker jobs).
-        </p>
+      <Card>
+        <CardHeader>
+          <CardTitle>Media reconcile</CardTitle>
+          <CardDescription>
+            Runs backend maintenance for media assets (cleanup + requeue worker
+            jobs).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pb-6">
+          <form
+            action={runMediaReconcileAction}
+            className="flex flex-col gap-4"
+          >
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormRow
+                label="Provider group scope"
+                htmlFor="providerGroupId"
+                hint="Optional — leave blank for all groups."
+              >
+                <Input
+                  id="providerGroupId"
+                  name="providerGroupId"
+                  placeholder="151655379144747@lid"
+                />
+              </FormRow>
 
-        <form action={runMediaReconcileAction} className="form-grid" style={{ marginTop: 0 }}>
-          <label>
-            Optional provider group scope
-            <input name="providerGroupId" placeholder="151655379144747@lid" />
-          </label>
+              <FormRow label="Limit" htmlFor="limit">
+                <Input
+                  id="limit"
+                  name="limit"
+                  type="number"
+                  min={1}
+                  max={10000}
+                  defaultValue={500}
+                />
+              </FormRow>
+            </div>
 
-          <label>
-            Limit
-            <input name="limit" type="number" min={1} max={10000} defaultValue={500} />
-          </label>
+            <fieldset className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <legend className="sr-only">Reconcile flags</legend>
+              {[
+                {
+                  name: "cleanupBogus",
+                  label: "Cleanup bogus failed rows",
+                  defaultChecked: true,
+                },
+                {
+                  name: "enqueuePending",
+                  label: "Enqueue pending assets",
+                  defaultChecked: true,
+                },
+                {
+                  name: "retryFailed",
+                  label: "Retry failed assets",
+                  defaultChecked: true,
+                },
+                {
+                  name: "dryRun",
+                  label: "Dry run only",
+                  defaultChecked: false,
+                },
+              ].map((flag) => (
+                <label
+                  key={flag.name}
+                  className="flex items-center gap-2.5 rounded-md border border-border bg-muted/30 px-3 py-2"
+                >
+                  <Checkbox
+                    name={flag.name}
+                    defaultChecked={flag.defaultChecked}
+                  />
+                  <Label className="cursor-pointer">{flag.label}</Label>
+                </label>
+              ))}
+            </fieldset>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input name="cleanupBogus" type="checkbox" defaultChecked style={{ width: "auto" }} />
-            Cleanup bogus failed rows
-          </label>
+            <FormActions>
+              <Button type="submit">Run reconcile</Button>
+            </FormActions>
+          </form>
+        </CardContent>
+      </Card>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input name="enqueuePending" type="checkbox" defaultChecked style={{ width: "auto" }} />
-            Enqueue pending assets
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input name="retryFailed" type="checkbox" defaultChecked style={{ width: "auto" }} />
-            Retry failed assets
-          </label>
-
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input name="dryRun" type="checkbox" style={{ width: "auto" }} />
-            Dry run only
-          </label>
-
-          <button className="button" type="submit">
-            Run reconcile
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <SimpleTable
-          data={users}
-          columns={[
-            {
-              header: "User",
-              cell: (user) => (
-                <div>
-                  <strong>{user.displayName}</strong>
-                  <p className="muted-text">{user.email}</p>
-                </div>
-              ),
-            },
-            {
-              header: "Role",
-              cell: (user) => (
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span className="badge">{user.role}</span>
-                  {isRequiredAdminAccount(user) ? (
-                    <span className="status status-active">required</span>
-                  ) : null}
-                </div>
-              ),
-            },
-            {
-              header: "Status",
-              cell: (user) => (user.active ? "Active" : "Inactive"),
-            },
-            {
-              header: "Actions",
-              cell: (user) => {
-                const deactivateAllowed = canDeactivateUser(users, user);
-                const deleteAllowed = canDeleteUser(users, user);
-
-                return (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      disabled={!deactivateAllowed}
-                      title={
-                        deactivateAllowed
-                          ? "Deactivate user"
-                          : "Blocked by admin-account invariant"
-                      }
-                    >
-                      {user.active ? "Deactivate" : "Activate"}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button-danger"
-                      disabled={!deleteAllowed}
-                      title={
-                        deleteAllowed
-                          ? "Delete user"
-                          : "Blocked by admin-account invariant"
-                      }
-                    >
-                      Delete
-                    </button>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0 pt-0">
+          <SimpleTable
+            data={users}
+            emptyMessage="No staff users yet."
+            columns={[
+              {
+                header: "User",
+                cell: (user) => (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-foreground">
+                      {user.displayName}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {user.email}
+                    </span>
                   </div>
-                );
+                ),
               },
-            },
-          ]}
-        />
-      </section>
+              {
+                header: "Role",
+                cell: (user) => (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{user.role}</Badge>
+                    {isRequiredAdminAccount(user) ? (
+                      <Badge variant="success">required</Badge>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                header: "Status",
+                cell: (user) =>
+                  user.active ? (
+                    <Badge variant="success">Active</Badge>
+                  ) : (
+                    <Badge variant="secondary">Inactive</Badge>
+                  ),
+              },
+              {
+                header: "Actions",
+                cell: (user) => {
+                  const deactivateAllowed = canDeactivateUser(users, user);
+                  const deleteAllowed = canDeleteUser(users, user);
+
+                  return (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!deactivateAllowed}
+                        title={
+                          deactivateAllowed
+                            ? user.active
+                              ? "Deactivate user"
+                              : "Activate user"
+                            : "Blocked by admin-account invariant"
+                        }
+                      >
+                        {user.active ? "Deactivate" : "Activate"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        disabled={!deleteAllowed}
+                        title={
+                          deleteAllowed
+                            ? "Delete user"
+                            : "Blocked by admin-account invariant"
+                        }
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  );
+                },
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

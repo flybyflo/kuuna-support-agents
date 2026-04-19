@@ -1,9 +1,23 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+
 import { SimpleTable } from "@/components/data-table/simple-table";
 import { StatusBadge } from "@/components/status/status-badge";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { FormActions, FormRow } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { getTemplate, listTemplateVersions } from "@/lib/api-client";
 import {
   createTemplateDraftVersionAction,
@@ -14,12 +28,18 @@ import { formatDateTime } from "@/lib/utils/format";
 type Params = Promise<{ templateId: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-function getSingleParam(value: string | string[] | undefined): string | undefined {
+function getSingleParam(
+  value: string | string[] | undefined,
+): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function defaultModelChain(versions: Array<{ modelChain: string[] }>): string {
-  const latestWithChain = versions.find((version) => version.modelChain.length > 0);
+function defaultModelChain(
+  versions: Array<{ modelChain: string[] }>,
+): string {
+  const latestWithChain = versions.find(
+    (version) => version.modelChain.length > 0,
+  );
   if (!latestWithChain) {
     return "gpt-4.1-mini";
   }
@@ -53,157 +73,234 @@ export default async function TemplateDetailPage({
   const modelChainDefault = defaultModelChain(versions);
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title={template.displayName}
         description={`Template key: ${template.key}`}
         actions={
-          <Link href="/bindings/create" className="button button-secondary">
-            Go to binding
-          </Link>
+          <Button variant="outline" asChild>
+            <Link href="/bindings/create">
+              <span>Go to binding</span>
+            </Link>
+          </Button>
         }
       />
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          Next step: create a draft version, then publish it before binding groups.
+          Next step: create a draft version, then publish it before binding
+          groups.
         </Notice>
       ) : null}
 
       {draftCreated === "1" ? (
         <Notice title="Draft version created" tone="success">
           {versionId ? (
-            <p className="muted-text">
-              Version ID: <span className="inline-code">{versionId}</span>
+            <p>
+              Version ID:{" "}
+              <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                {versionId}
+              </code>
             </p>
           ) : null}
-          <p className="muted-text">Publish it so staff can bind WhatsApp groups with this template.</p>
+          <p>Publish it so staff can bind WhatsApp groups with this template.</p>
         </Notice>
       ) : null}
 
       {published === "1" ? (
         <Notice title="Template version published" tone="success">
           {versionId ? (
-            <p className="muted-text">
-              Active version: <span className="inline-code">{versionId}</span>
+            <p>
+              Active version:{" "}
+              <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                {versionId}
+              </code>
             </p>
           ) : null}
-          <p className="muted-text">You can now bind a group using this version.</p>
+          <p>You can now bind a group using this version.</p>
         </Notice>
       ) : null}
 
       {error ? (
         <Notice title="Template workflow failed" tone="warning">
-          <p className="muted-text">{error}</p>
+          {error}
         </Notice>
       ) : null}
 
-      <section className="panel stack">
-        <h2>Configuration summary</h2>
-        <p className="muted-text">{template.description}</p>
-        <p className="muted-text">
-          Published version ID: <span className="inline-code">{template.publishedVersionId || "n/a"}</span>
-        </p>
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Configuration summary</CardTitle>
+          <CardDescription>{template.description}</CardDescription>
+        </CardHeader>
+        <CardContent className="pb-6">
+          <p className="text-sm text-muted-foreground">
+            Published version ID:{" "}
+            <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+              {template.publishedVersionId || "n/a"}
+            </code>
+          </p>
+        </CardContent>
+      </Card>
 
-      <section className="panel">
-        <h2>Create draft version</h2>
-        <p className="muted-text">
-          Staff-ready defaults are prefilled. You can publish the draft directly from the timeline below.
-        </p>
+      <Card>
+        <CardHeader>
+          <CardTitle>Create draft version</CardTitle>
+          <CardDescription>
+            Staff-ready defaults are prefilled. You can publish the draft
+            directly from the timeline below.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pb-6">
+          <form
+            action={createTemplateDraftVersionAction}
+            className="flex flex-col gap-4"
+          >
+            <input type="hidden" name="templateId" value={template.id} />
 
-        <form action={createTemplateDraftVersionAction} className="form-grid" style={{ marginTop: 12 }}>
-          <input type="hidden" name="templateId" value={template.id} />
+            <FormRow label="System prompt" htmlFor="systemPrompt">
+              <Textarea
+                id="systemPrompt"
+                name="systemPrompt"
+                defaultValue="You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps."
+                rows={6}
+              />
+            </FormRow>
 
-          <label>
-            System prompt
-            <textarea
-              name="systemPrompt"
-              defaultValue="You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps."
-              rows={6}
-            />
-          </label>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormRow
+                label="Model chain"
+                htmlFor="modelChain"
+                hint="Comma-separated, in failover order."
+              >
+                <Input
+                  id="modelChain"
+                  name="modelChain"
+                  defaultValue={modelChainDefault}
+                  placeholder="gpt-4.1-mini, gpt-4.1"
+                />
+              </FormRow>
 
-          <label>
-            Model chain (comma-separated)
-            <input name="modelChain" defaultValue={modelChainDefault} placeholder="gpt-4.1-mini, gpt-4.1" />
-          </label>
+              <FormRow
+                label="Allowed tools"
+                htmlFor="allowedTools"
+                hint="Comma-separated tool keys."
+              >
+                <Input
+                  id="allowedTools"
+                  name="allowedTools"
+                  defaultValue="echo, uppercase"
+                  placeholder="echo, uppercase"
+                />
+              </FormRow>
+            </div>
 
-          <label>
-            Allowed tools (comma-separated)
-            <input name="allowedTools" defaultValue="echo, uppercase" placeholder="echo, uppercase" />
-          </label>
+            <FormRow label="Egress mode" htmlFor="egressMode">
+              <Select
+                id="egressMode"
+                name="egressMode"
+                defaultValue="restricted"
+              >
+                <option value="restricted">restricted</option>
+                <option value="strict">strict</option>
+                <option value="allow-all">allow-all</option>
+              </Select>
+            </FormRow>
 
-          <label>
-            Egress mode
-            <select name="egressMode" defaultValue="restricted">
-              <option value="restricted">restricted</option>
-              <option value="strict">strict</option>
-              <option value="allow-all">allow-all</option>
-            </select>
-          </label>
+            <FormActions>
+              <Button type="submit">Create draft</Button>
+            </FormActions>
+          </form>
+        </CardContent>
+      </Card>
 
-          <button type="submit" className="button">
-            Create draft
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2>Version timeline</h2>
-        <SimpleTable
-          data={versions}
-          columns={[
-            {
-              header: "Version",
-              cell: (version) => <span className="badge">v{version.versionNo}</span>,
-            },
-            {
-              header: "Status",
-              cell: (version) => <StatusBadge status={version.status} />,
-            },
-            {
-              header: "Model failover",
-              cell: (version) =>
-                version.modelChain.length ? version.modelChain.join(" → ") : <span className="muted-text">n/a</span>,
-            },
-            {
-              header: "Tool profile",
-              cell: (version) => version.toolProfile || "default",
-            },
-            {
-              header: "Egress",
-              cell: (version) => version.egressPolicy || "default",
-            },
-            {
-              header: "Updated",
-              cell: (version) => (
-                <span className="muted-text">
-                  {formatDateTime(version.updatedAt)} by {version.updatedBy}
-                </span>
-              ),
-            },
-            {
-              header: "Actions",
-              cell: (version) => {
-                if (version.status !== "draft" && version.status !== "ready") {
-                  return <span className="muted-text">—</span>;
-                }
-
-                return (
-                  <form action={publishTemplateVersionAction}>
-                    <input type="hidden" name="templateId" value={template.id} />
-                    <input type="hidden" name="versionId" value={version.id} />
-                    <button type="submit" className="button button-secondary">
-                      Publish
-                    </button>
-                  </form>
-                );
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle>Version timeline</CardTitle>
+          <CardDescription>
+            All template versions with their model and egress configuration.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0 pt-4">
+          <SimpleTable
+            data={versions}
+            emptyMessage="No versions yet."
+            columns={[
+              {
+                header: "Version",
+                cell: (version) => (
+                  <Badge variant="outline">v{version.versionNo}</Badge>
+                ),
               },
-            },
-          ]}
-        />
-      </section>
+              {
+                header: "Status",
+                cell: (version) => <StatusBadge status={version.status} />,
+              },
+              {
+                header: "Model failover",
+                cell: (version) =>
+                  version.modelChain.length ? (
+                    <span className="font-mono text-xs text-foreground">
+                      {version.modelChain.join(" → ")}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">n/a</span>
+                  ),
+              },
+              {
+                header: "Tool profile",
+                cell: (version) => (
+                  <span className="text-sm text-foreground">
+                    {version.toolProfile || "default"}
+                  </span>
+                ),
+              },
+              {
+                header: "Egress",
+                cell: (version) => (
+                  <span className="text-sm text-foreground">
+                    {version.egressPolicy || "default"}
+                  </span>
+                ),
+              },
+              {
+                header: "Updated",
+                cell: (version) => (
+                  <span className="text-xs text-muted-foreground">
+                    {formatDateTime(version.updatedAt)} by {version.updatedBy}
+                  </span>
+                ),
+              },
+              {
+                header: "Actions",
+                cell: (version) => {
+                  if (
+                    version.status !== "draft" &&
+                    version.status !== "ready"
+                  ) {
+                    return (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    );
+                  }
+
+                  return (
+                    <form action={publishTemplateVersionAction}>
+                      <input
+                        type="hidden"
+                        name="templateId"
+                        value={template.id}
+                      />
+                      <input type="hidden" name="versionId" value={version.id} />
+                      <Button type="submit" variant="outline" size="sm">
+                        Publish
+                      </Button>
+                    </form>
+                  );
+                },
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
