@@ -933,6 +933,9 @@ export async function fetchPromptAssets(instanceId?: string): Promise<PromptAsse
   const rows = await dbQuery<
     {
       binding_id: string;
+      provider_group_id: string;
+      template_id: string;
+      template_name: string;
       template_version_id: string;
       version_no: number;
       status: string;
@@ -943,6 +946,9 @@ export async function fetchPromptAssets(instanceId?: string): Promise<PromptAsse
     `
     select
       gb.id::text as binding_id,
+      gb.provider_group_id,
+      gt.id::text as template_id,
+      gt.display_name as template_name,
       tv.id::text as template_version_id,
       tv.version_no,
       tv.status::text,
@@ -950,8 +956,9 @@ export async function fetchPromptAssets(instanceId?: string): Promise<PromptAsse
       tv.system_prompt
     from group_bindings gb
     join template_versions tv on tv.id = gb.template_version_id
+    join group_templates gt on gt.id = tv.template_id
     where ($1::text is null or gb.id::text = $1::text)
-    order by tv.updated_at desc
+    order by gt.display_name asc, gb.updated_at desc
     `,
     [instanceId ?? null],
   );
@@ -960,7 +967,11 @@ export async function fetchPromptAssets(instanceId?: string): Promise<PromptAsse
     const base: PromptAsset[] = [
       {
         id: `system-${row.template_version_id}`,
+        templateId: row.template_id,
+        templateName: row.template_name,
+        templateVersionId: row.template_version_id,
         instanceId: row.binding_id,
+        instanceName: titleFromGroupId(row.provider_group_id),
         type: "system",
         title: "System Prompt",
         status: toWorkflowStatus(row.status),
@@ -970,7 +981,11 @@ export async function fetchPromptAssets(instanceId?: string): Promise<PromptAsse
       },
       {
         id: `user-${row.template_version_id}`,
+        templateId: row.template_id,
+        templateName: row.template_name,
+        templateVersionId: row.template_version_id,
         instanceId: row.binding_id,
+        instanceName: titleFromGroupId(row.provider_group_id),
         type: "user",
         title: "USER.md",
         status: toWorkflowStatus(row.status),

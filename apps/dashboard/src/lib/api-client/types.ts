@@ -70,7 +70,11 @@ export type BindingTimelineEvent = {
 
 export type PromptAsset = {
   id: string;
+  templateId: string;
+  templateName: string;
+  templateVersionId: string;
   instanceId: string;
+  instanceName: string;
   type: "system" | "user";
   title: string;
   status: WorkflowStatus;

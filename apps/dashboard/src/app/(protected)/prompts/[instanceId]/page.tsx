@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
+
 import { StatusBadge } from "@/components/status/status-badge";
-import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { listPromptAssets } from "@/lib/api-client";
 
 type Params = Promise<{ instanceId: string }>;
@@ -18,11 +19,13 @@ export default async function PromptInstancePage({
     notFound();
   }
 
+  const primaryAsset = assets[0];
+
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
-        title={`Prompt Assets · ${instanceId}`}
-        description="Edit draft content. Publish/rollback requires admin or owner role."
+        title={`Prompt assets · ${primaryAsset.instanceName}`}
+        description={`${primaryAsset.templateName} template · ${instanceId}`}
       />
 
       <section className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
