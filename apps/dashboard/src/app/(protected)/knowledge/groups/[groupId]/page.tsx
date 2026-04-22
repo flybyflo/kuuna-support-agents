@@ -1,8 +1,10 @@
 import { notFound } from "next/navigation";
+
 import { SimpleTable } from "@/components/data-table/simple-table";
 import { StatusBadge } from "@/components/status/status-badge";
-import { PageHeader } from "@/components/ui/page-header";
+import { Card, CardContent } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import { listBindings, listKnowledgeDocs } from "@/lib/api-client";
 import { canAccessGroup, requireSession } from "@/lib/auth/session";
 import { formatDateTime, titleFromGroupId } from "@/lib/utils/format";
@@ -27,49 +29,68 @@ export default async function GroupKnowledgeDetailPage({
     listKnowledgeDocs("group", providerGroupId),
   ]);
 
-  const binding = bindings.find((item) => item.providerGroupId === providerGroupId);
+  const binding = bindings.find(
+    (item) => item.providerGroupId === providerGroupId,
+  );
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title={binding?.groupTitle ?? titleFromGroupId(providerGroupId)}
         description={`Knowledge derived from ingested chat/media for ${providerGroupId}`}
       />
 
       <Notice title="Readiness" tone="info">
-        Status reflects ingest pipeline health: <span className="inline-code">processing</span>,{" "}
-        <span className="inline-code">ready</span>, or <span className="inline-code">failed</span>.
+        Status reflects ingest pipeline health:{" "}
+        <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+          processing
+        </code>
+        ,{" "}
+        <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+          ready
+        </code>
+        , or{" "}
+        <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+          failed
+        </code>
+        .
       </Notice>
 
-      <section className="panel">
-        <SimpleTable
-          data={docs}
-          emptyMessage="No group knowledge docs yet."
-          columns={[
-            {
-              header: "Document",
-              cell: (doc) => (
-                <div>
-                  <strong>{doc.title}</strong>
-                  <p className="muted-text">{doc.chunkCount} chunks from ingested data</p>
-                </div>
-              ),
-            },
-            {
-              header: "Status",
-              cell: (doc) => <StatusBadge status={doc.status} />,
-            },
-            {
-              header: "Updated",
-              cell: (doc) => (
-                <span className="muted-text">
-                  {formatDateTime(doc.updatedAt)} by {doc.updatedBy}
-                </span>
-              ),
-            },
-          ]}
-        />
-      </section>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0 pt-0">
+          <SimpleTable
+            data={docs}
+            emptyMessage="No group knowledge docs yet."
+            columns={[
+              {
+                header: "Document",
+                cell: (doc) => (
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium text-foreground">
+                      {doc.title}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {doc.chunkCount} chunks from ingested data
+                    </span>
+                  </div>
+                ),
+              },
+              {
+                header: "Status",
+                cell: (doc) => <StatusBadge status={doc.status} />,
+              },
+              {
+                header: "Updated",
+                cell: (doc) => (
+                  <span className="text-sm text-muted-foreground">
+                    {formatDateTime(doc.updatedAt)} by {doc.updatedBy}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

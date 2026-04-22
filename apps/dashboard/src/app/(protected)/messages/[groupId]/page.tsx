@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
+
 import { GroupChatThread } from "@/components/messages/group-chat-thread";
-import { PageHeader } from "@/components/ui/page-header";
+import { Card } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   listBindings,
   listMediaAssets,
@@ -22,7 +24,6 @@ function normalizePhone(phone: string): string {
   if (!trimmed) {
     return trimmed;
   }
-
   return trimmed.startsWith("+") ? trimmed : `+${trimmed}`;
 }
 
@@ -46,9 +47,15 @@ export default async function GroupMessagesPage({
     getWhatsAppGatewayConnectionStatus(),
   ]);
 
-  const binding = bindings.find((item) => item.providerGroupId === providerGroupId);
-  const gatewayGroup = gatewayGroups.find((item) => item.providerGroupId === providerGroupId);
-  const contactMessage = scopedMessages.find((item) => item.senderPushName || item.senderPhone);
+  const binding = bindings.find(
+    (item) => item.providerGroupId === providerGroupId,
+  );
+  const gatewayGroup = gatewayGroups.find(
+    (item) => item.providerGroupId === providerGroupId,
+  );
+  const contactMessage = scopedMessages.find(
+    (item) => item.senderPushName || item.senderPhone,
+  );
   const contactPhone = contactMessage?.senderPhone?.trim();
 
   const messagesWithDetails = await Promise.all(
@@ -69,7 +76,7 @@ export default async function GroupMessagesPage({
   );
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title={
           gatewayGroup?.groupTitle ??
@@ -89,7 +96,7 @@ export default async function GroupMessagesPage({
           }
           tone="warning"
         >
-          <p className="muted-text">
+          <p className="text-sm text-muted-foreground">
             Live group metadata may be unavailable until the WhatsApp session is
             connected (QR/login) in the gateway container.
           </p>
@@ -101,9 +108,9 @@ export default async function GroupMessagesPage({
         details.
       </Notice>
 
-      <section className="panel wa-chat-panel">
+      <Card className="overflow-hidden p-0">
         <GroupChatThread items={orderedConversation} />
-      </section>
+      </Card>
     </div>
   );
 }

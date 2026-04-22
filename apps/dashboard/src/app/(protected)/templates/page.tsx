@@ -1,6 +1,11 @@
 import Link from "next/link";
+import { Plus } from "lucide-react";
+
 import { SimpleTable } from "@/components/data-table/simple-table";
 import { StatusBadge } from "@/components/status/status-badge";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { listTemplateVersions, listTemplates } from "@/lib/api-client";
@@ -8,7 +13,9 @@ import { formatDateTime } from "@/lib/utils/format";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-function getSingleParam(value: string | string[] | undefined): string | undefined {
+function getSingleParam(
+  value: string | string[] | undefined,
+): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
@@ -25,108 +32,140 @@ export default async function TemplatesPage({
       const versions = await listTemplateVersions(template.id);
       return {
         templateId: template.id,
+        publishedVersion: versions.find(
+          (version) => version.id === template.publishedVersionId,
+        ),
         versions,
-        publishedVersion: versions.find((version) => version.id === template.publishedVersionId),
       };
     }),
   );
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
         title="Templates"
         description="Manage template versions, model failover chains, tools, and egress policy."
         actions={
-          <Link href="/templates/new" className="button">
-            New template
-          </Link>
+          <Button asChild>
+            <Link href="/templates/new">
+              <Plus aria-hidden />
+              <span>New template</span>
+            </Link>
+          </Button>
         }
       />
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          You can now create a draft version, publish it, and bind a WhatsApp group.
+          You can now create a draft version, publish it, and bind a WhatsApp
+          group.
         </Notice>
       ) : null}
 
-      <section className="panel">
-        <SimpleTable
-          data={templates}
-          columns={[
-            {
-              header: "Template",
-              cell: (row) => (
-                <div>
-                  <Link href={`/templates/${row.id}`} style={{ fontWeight: 600 }}>
-                    {row.displayName}
-                  </Link>
-                  <p className="muted-text">{row.key}</p>
-                </div>
-              ),
-            },
-            {
-              header: "Description",
-              cell: (row) => <span className="muted-text">{row.description}</span>,
-            },
-            {
-              header: "Published",
-              cell: (row) => {
-                const version = versionsByTemplate.find(
-                  (item) => item.templateId === row.id,
-                )?.publishedVersion;
+      <Card className="overflow-hidden">
+        <CardContent className="p-0 pt-0">
+          <SimpleTable
+            data={templates}
+            emptyMessage="No templates yet. Create one to get started."
+            columns={[
+              {
+                header: "Template",
+                cell: (row) => (
+                  <div className="flex flex-col gap-0.5">
+                    <Link
+                      href={`/templates/${row.id}`}
+                      className="font-medium text-foreground hover:underline"
+                    >
+                      {row.displayName}
+                    </Link>
+                    <span className="text-xs text-muted-foreground">
+                      {row.key}
+                    </span>
+                  </div>
+                ),
+              },
+              {
+                header: "Description",
+                cell: (row) => (
+                  <span className="text-sm text-muted-foreground">
+                    {row.description}
+                  </span>
+                ),
+              },
+              {
+                header: "Published",
+                cell: (row) => {
+                  const version = versionsByTemplate.find(
+                    (item) => item.templateId === row.id,
+                  )?.publishedVersion;
 
-                if (!version) return <span className="muted-text">n/a</span>;
+                  if (!version) {
+                    return (
+                      <span className="text-sm text-muted-foreground">
+                        —
+                      </span>
+                    );
+                  }
 
-                return (
-                  <div>
-                    <span className="badge">v{version.versionNo}</span>
-                    <div style={{ marginTop: 6 }}>
+                  return (
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">v{version.versionNo}</Badge>
                       <StatusBadge status={version.status} />
                     </div>
-                  </div>
-                );
-              },
-            },
-            {
-              header: "Next step",
-              cell: (row) => {
-                const templateMeta = versionsByTemplate.find((item) => item.templateId === row.id);
-                if (!templateMeta) {
-                  return <span className="muted-text">—</span>;
-                }
-
-                if (!templateMeta.versions.length) {
-                  return (
-                    <Link href={`/templates/${row.id}#create-draft`} className="button button-secondary">
-                      Create draft
-                    </Link>
                   );
-                }
-
-                if (!templateMeta.publishedVersion) {
-                  return (
-                    <Link href={`/templates/${row.id}#timeline`} className="button button-secondary">
-                      Publish a version
-                    </Link>
-                  );
-                }
-
-                return (
-                  <Link href="/bindings/create" className="button button-secondary">
-                    Bind a group
-                  </Link>
-                );
+                },
               },
-            },
-            {
-              header: "Updated",
-              cell: (row) => (
-                <span className="muted-text">{formatDateTime(row.updatedAt)}</span>
-              ),
-            },
-          ]}
-        />
-      </section>
+              {
+                header: "Next step",
+                cell: (row) => {
+                  const templateMeta = versionsByTemplate.find(
+                    (item) => item.templateId === row.id,
+                  );
+                  if (!templateMeta) {
+                    return (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    );
+                  }
+
+                  if (!templateMeta.versions.length) {
+                    return (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/templates/${row.id}#create-draft`}>
+                          Create draft
+                        </Link>
+                      </Button>
+                    );
+                  }
+
+                  if (!templateMeta.publishedVersion) {
+                    return (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/templates/${row.id}#timeline`}>
+                          Publish a version
+                        </Link>
+                      </Button>
+                    );
+                  }
+
+                  return (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href="/bindings/create">Bind a group</Link>
+                    </Button>
+                  );
+                },
+              },
+              {
+                header: "Updated",
+                cell: (row) => (
+                  <span className="text-sm text-muted-foreground">
+                    {formatDateTime(row.updatedAt)}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

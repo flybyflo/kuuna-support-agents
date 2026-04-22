@@ -1,4 +1,8 @@
+import { Plus } from "lucide-react";
+
 import { SimpleTable } from "@/components/data-table/simple-table";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { listGroupAssignments } from "@/lib/api-client";
@@ -10,38 +14,57 @@ export default async function AdminAssignmentsPage() {
   const assignments = await listGroupAssignments();
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
-        title="Group Assignments"
-        description="Assign operators/viewers to specific provider groups."
-        actions={<button className="button">Create assignment</button>}
+        title="Group assignments"
+        description="Assign operators and viewers to specific provider groups."
+        actions={
+          <Button>
+            <Plus aria-hidden />
+            <span>Create assignment</span>
+          </Button>
+        }
       />
 
       <Notice title="Scope enforcement" tone="info">
-        Non-admin roles can only view and act on groups listed in their assignments.
+        Non-admin roles can only view and act on groups listed in their
+        assignments.
       </Notice>
 
-      <section className="panel">
-        <SimpleTable
-          data={assignments}
-          columns={[
-            {
-              header: "User",
-              cell: (item) => item.user,
-            },
-            {
-              header: "Provider group",
-              cell: (item) => (
-                <span className="inline-code">{item.providerGroupId}</span>
-              ),
-            },
-            {
-              header: "Group title",
-              cell: (item) => item.groupTitle,
-            },
-          ]}
-        />
-      </section>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0 pt-0">
+          <SimpleTable
+            data={assignments}
+            emptyMessage="No assignments yet."
+            columns={[
+              {
+                header: "User",
+                cell: (item) => (
+                  <span className="font-medium text-foreground">
+                    {item.user}
+                  </span>
+                ),
+              },
+              {
+                header: "Provider group",
+                cell: (item) => (
+                  <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    {item.providerGroupId}
+                  </code>
+                ),
+              },
+              {
+                header: "Group title",
+                cell: (item) => (
+                  <span className="text-sm text-foreground">
+                    {item.groupTitle}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

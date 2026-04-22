@@ -1,4 +1,13 @@
 import type { ReactNode } from "react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils/cn";
 
 export type TableColumn<T> = {
   header: string;
@@ -18,33 +27,36 @@ export function SimpleTable<T>({
   emptyMessage = "No records found.",
 }: SimpleTableProps<T>) {
   if (!data.length) {
-    return <p className="muted-text">{emptyMessage}</p>;
+    return (
+      <p className="px-4 py-6 text-sm text-muted-foreground">{emptyMessage}</p>
+    );
   }
 
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column.header} className={column.className}>
-                {column.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, index) => (
-            <tr key={index}>
-              {columns.map((column) => (
-                <td key={column.header} className={column.className}>
-                  {column.cell(row)}
-                </td>
-              ))}
-            </tr>
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          {columns.map((column) => (
+            <TableHead
+              key={column.header}
+              className={cn("bg-muted/40", column.className)}
+            >
+              {column.header}
+            </TableHead>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data.map((row, index) => (
+          <TableRow key={index}>
+            {columns.map((column) => (
+              <TableCell key={column.header} className={column.className}>
+                {column.cell(row)}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

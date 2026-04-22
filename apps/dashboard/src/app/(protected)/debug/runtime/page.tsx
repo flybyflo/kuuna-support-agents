@@ -1,12 +1,43 @@
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { getRuntimeDebugStatus } from "@/lib/api-client";
 import { formatDateTime } from "@/lib/utils/format";
 
+function StatRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      {mono ? (
+        <code className="rounded-sm border border-border bg-muted px-2 py-0.5 font-mono text-xs text-foreground">
+          {value}
+        </code>
+      ) : (
+        <span className="text-sm font-medium text-foreground">{value}</span>
+      )}
+    </div>
+  );
+}
+
 export default async function RuntimeDebugPage() {
   const status = await getRuntimeDebugStatus();
 
-  const healthTone = status.runtimeHealth === "ok" ? "success" : "warning";
+  const healthTone =
+    status.runtimeHealth === "ok" ? ("success" as const) : ("warning" as const);
   const healthTitle =
     status.runtimeHealth === "ok"
       ? "Runtime agent reachable"
@@ -15,56 +46,96 @@ export default async function RuntimeDebugPage() {
         : "Runtime agent unreachable";
 
   return (
-    <div className="grid">
+    <div className="flex flex-col gap-8">
       <PageHeader
-        title="Runtime Debug"
-        description="Quick health and model wiring checks for runtime-agent and OpenAI settings."
+        title="Runtime debug"
+        description="Quick health and model wiring checks for the runtime agent and OpenAI settings."
       />
 
       <Notice title={healthTitle} tone={healthTone}>
-        <p className="muted-text">
+        <p>
           Health: <strong>{status.runtimeHealth}</strong>
         </p>
         {status.runtimeUrl ? (
-          <p className="muted-text">
-            Runtime URL: <span className="inline-code">{status.runtimeUrl}</span>
+          <p>
+            Runtime URL:{" "}
+            <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+              {status.runtimeUrl}
+            </code>
           </p>
         ) : null}
-        {status.error ? <p className="muted-text">Error: {status.error}</p> : null}
+        {status.error ? <p>Error: {status.error}</p> : null}
       </Notice>
 
-      <section className="panel stack">
-        <h2>OpenAI wiring</h2>
-        <p className="muted-text">
-          OPENAI configured: <strong>{status.openaiConfigured === null ? "unknown" : status.openaiConfigured ? "yes" : "no"}</strong>
-        </p>
-        <p className="muted-text">
-          Base URL: <span className="inline-code">{status.openaiBaseUrl ?? "n/a"}</span>
-        </p>
-        <p className="muted-text">
-          Timeout: <span className="inline-code">{status.openaiTimeoutSeconds ?? "n/a"}</span>
-        </p>
-      </section>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>OpenAI wiring</CardTitle>
+            <CardDescription>
+              Configuration in effect for outbound model calls.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 pb-6">
+            <StatRow
+              label="Configured"
+              value={
+                status.openaiConfigured === null
+                  ? "unknown"
+                  : status.openaiConfigured
+                    ? "yes"
+                    : "no"
+              }
+            />
+            <StatRow
+              label="Base URL"
+              value={status.openaiBaseUrl ?? "n/a"}
+              mono
+            />
+            <StatRow
+              label="Timeout (s)"
+              value={status.openaiTimeoutSeconds ?? "n/a"}
+              mono
+            />
+          </CardContent>
+        </Card>
 
-      <section className="panel stack">
-        <h2>Latest outbound model path</h2>
-        <p className="muted-text">
-          Last model used: <strong>{status.lastModelUsed ?? "n/a"}</strong>
-        </p>
-        <p className="muted-text">
-          Model path:{" "}
-          <span className="inline-code">
-            {status.lastModelPath.length ? status.lastModelPath.join(" -> ") : "n/a"}
-          </span>
-        </p>
-        <p className="muted-text">
-          Last outbound intent:{" "}
-          <span className="inline-code">{status.lastOutboundIntentId ?? "n/a"}</span>
-        </p>
-        <p className="muted-text">
-          Last outbound at: {status.lastOutboundAt ? formatDateTime(status.lastOutboundAt) : "n/a"}
-        </p>
-      </section>
+        <Card>
+          <CardHeader>
+            <CardTitle>Latest outbound model path</CardTitle>
+            <CardDescription>
+              Most recent model failover trace from the runtime.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 pb-6">
+            <StatRow
+              label="Last model used"
+              value={status.lastModelUsed ?? "n/a"}
+            />
+            <StatRow
+              label="Model path"
+              value={
+                status.lastModelPath.length
+                  ? status.lastModelPath.join(" → ")
+                  : "n/a"
+              }
+              mono
+            />
+            <StatRow
+              label="Last outbound intent"
+              value={status.lastOutboundIntentId ?? "n/a"}
+              mono
+            />
+            <StatRow
+              label="Last outbound at"
+              value={
+                status.lastOutboundAt
+                  ? formatDateTime(status.lastOutboundAt)
+                  : "n/a"
+              }
+            />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
