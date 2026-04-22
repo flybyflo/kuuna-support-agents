@@ -20,8 +20,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    tool_risk_class = postgresql.ENUM("read", "write", "admin", name="tool_risk_class")
-    tool_risk_class.create(op.get_bind(), checkfirst=True)
+    # Create the enum type separately (idempotent), then reference it from the table
+    # without triggering SQLAlchemy's implicit CREATE TYPE during table creation.
+    postgresql.ENUM("read", "write", "admin", name="tool_risk_class").create(
+        op.get_bind(),
+        checkfirst=True,
+    )
+    tool_risk_class = postgresql.ENUM(
+        "read",
+        "write",
+        "admin",
+        name="tool_risk_class",
+        create_type=False,
+    )
 
     op.create_table(
         "tool_catalog_entries",

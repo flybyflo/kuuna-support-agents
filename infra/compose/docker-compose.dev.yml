@@ -6,7 +6,7 @@ services:
       context: ../../apps/dashboard
       dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    command: sh -c "npm install && rm -rf .next && npm run dev -- --hostname 0.0.0.0 --port 3000"
     env_file:
       - ../env/dashboard.env.example
     ports:
@@ -23,7 +23,7 @@ services:
       context: ../../backend
       dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c "uv sync && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "uv sync && uv run alembic upgrade head && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
       - ../env/backend.env.example
       - ../env/backend.env.local
@@ -49,7 +49,7 @@ services:
       context: ../../backend
       dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c 'uv sync && uv run watchfiles --filter python "uv run rq worker default" src'
+    command: sh -c 'uv sync && uv run alembic upgrade head && uv run watchfiles --filter python "uv run rq worker default" src'
     env_file:
       - ../env/backend.env.example
       - ../env/backend.env.local
