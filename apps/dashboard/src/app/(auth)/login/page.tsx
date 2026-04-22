@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { loginAction } from "@/lib/auth/actions";
 import { getSession } from "@/lib/auth/session";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -55,7 +54,7 @@ export default async function LoginPage({
         ) : null}
         {getMessage(error) ? <p className="error-text">{getMessage(error)}</p> : null}
 
-        <form action={loginAction} className="form-grid">
+        <form action="/login/action" method="post" className="form-grid">
           <label>
             Email
             <input
