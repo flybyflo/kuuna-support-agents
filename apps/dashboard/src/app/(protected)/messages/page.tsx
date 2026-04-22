@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { SimpleTable } from "@/components/data-table/simple-table";
 import { PageHeader } from "@/components/ui/page-header";
+import { Notice } from "@/components/ui/notice";
 import { listBindings, listMessages } from "@/lib/api-client";
 import { canAccessGroup, requireSession } from "@/lib/auth/session";
 import { titleFromGroupId } from "@/lib/utils/format";
-import { listWhatsAppGatewayGroups } from "@/lib/whatsapp/ops";
+import {
+  getWhatsAppGatewayConnectionStatus,
+  listWhatsAppGatewayGroups,
+} from "@/lib/whatsapp/ops";
 
 function isDirectChat(groupId: string): boolean {
   return groupId.endsWith("@lid") || groupId.endsWith("@s.whatsapp.net");
@@ -21,10 +25,11 @@ function normalizePhone(phone: string): string {
 
 export default async function MessagesPage() {
   const session = await requireSession();
-  const [bindings, allMessages, gatewayGroups] = await Promise.all([
+  const [bindings, allMessages, gatewayGroups, gatewayConnection] = await Promise.all([
     listBindings(),
     listMessages(),
     listWhatsAppGatewayGroups(),
+    getWhatsAppGatewayConnectionStatus(),
   ]);
 
   const accessibleBindings = bindings.filter((binding) =>
@@ -87,6 +92,22 @@ export default async function MessagesPage() {
         title="Messages & Media"
         description="Inspect persisted inbound events, edits/deletes, and media processing states."
       />
+
+      {!gatewayConnection?.connected ? (
+        <Notice
+          title={
+            gatewayConnection
+              ? "WhatsApp gateway not connected"
+              : "WhatsApp gateway status unavailable"
+          }
+          tone="warning"
+        >
+          <p className="muted-text">
+            Group discovery via the gateway may be unavailable until the WhatsApp
+            session is connected (QR/login) in the gateway container.
+          </p>
+        </Notice>
+      ) : null}
 
       <section className="panel">
         <SimpleTable
