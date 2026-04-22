@@ -26,6 +26,10 @@ function defaultModelChain(versions: Array<{ modelChain: string[] }>): string {
   return latestWithChain.modelChain.join(", ");
 }
 
+function csvOrEmpty(values: string[] | undefined): string {
+  return values?.length ? values.join(", ") : "";
+}
+
 export default async function TemplateDetailPage({
   params,
   searchParams,
@@ -39,6 +43,7 @@ export default async function TemplateDetailPage({
   const draftCreated = getSingleParam(search.draft);
   const published = getSingleParam(search.published);
   const versionId = getSingleParam(search.versionId);
+  const cloneFromVersionId = getSingleParam(search.cloneFromVersionId);
   const error = getSingleParam(search.error);
 
   const [template, versions] = await Promise.all([
@@ -51,6 +56,19 @@ export default async function TemplateDetailPage({
   }
 
   const modelChainDefault = defaultModelChain(versions);
+  const cloneSource = cloneFromVersionId
+    ? versions.find((version) => version.id === cloneFromVersionId)
+    : undefined;
+  const systemPromptDefault =
+    cloneSource?.systemPrompt ??
+    "You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps.";
+  const modelChainPrefill = cloneSource?.modelChain?.length
+    ? csvOrEmpty(cloneSource.modelChain)
+    : modelChainDefault;
+  const allowedToolsPrefill = cloneSource?.allowedTools?.length
+    ? csvOrEmpty(cloneSource.allowedTools)
+    : "echo, uppercase";
+  const egressModePrefill = cloneSource?.egressPolicy ?? "restricted";
 
   return (
     <div className="grid">
@@ -104,12 +122,15 @@ export default async function TemplateDetailPage({
         <p className="muted-text">
           Published version ID: <span className="inline-code">{template.publishedVersionId || "n/a"}</span>
         </p>
+        <p className="muted-text">
+          Flow: create draft → (optionally clone/edit) → publish → bind group.
+        </p>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="create-draft">
         <h2>Create draft version</h2>
         <p className="muted-text">
-          Staff-ready defaults are prefilled. You can publish the draft directly from the timeline below.
+          Start from defaults or clone an existing version using the timeline actions below.
         </p>
 
         <form action={createTemplateDraftVersionAction} className="form-grid" style={{ marginTop: 12 }}>
@@ -119,24 +140,24 @@ export default async function TemplateDetailPage({
             System prompt
             <textarea
               name="systemPrompt"
-              defaultValue="You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps."
+              defaultValue={systemPromptDefault}
               rows={6}
             />
           </label>
 
           <label>
             Model chain (comma-separated)
-            <input name="modelChain" defaultValue={modelChainDefault} placeholder="gpt-4.1-mini, gpt-4.1" />
+            <input name="modelChain" defaultValue={modelChainPrefill} placeholder="gpt-4.1-mini, gpt-4.1" />
           </label>
 
           <label>
             Allowed tools (comma-separated)
-            <input name="allowedTools" defaultValue="echo, uppercase" placeholder="echo, uppercase" />
+            <input name="allowedTools" defaultValue={allowedToolsPrefill} placeholder="echo, uppercase" />
           </label>
 
           <label>
             Egress mode
-            <select name="egressMode" defaultValue="restricted">
+            <select name="egressMode" defaultValue={egressModePrefill}>
               <option value="restricted">restricted</option>
               <option value="strict">strict</option>
               <option value="allow-all">allow-all</option>
@@ -149,7 +170,7 @@ export default async function TemplateDetailPage({
         </form>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="timeline">
         <h2>Version timeline</h2>
         <SimpleTable
           data={versions}
@@ -187,17 +208,32 @@ export default async function TemplateDetailPage({
               header: "Actions",
               cell: (version) => {
                 if (version.status !== "draft" && version.status !== "ready") {
-                  return <span className="muted-text">—</span>;
+                  return (
+                    <Link
+                      className="button button-secondary"
+                      href={`/templates/${encodeURIComponent(template.id)}?cloneFromVersionId=${encodeURIComponent(version.id)}#create-draft`}
+                    >
+                      Clone to draft
+                    </Link>
+                  );
                 }
 
                 return (
-                  <form action={publishTemplateVersionAction}>
-                    <input type="hidden" name="templateId" value={template.id} />
-                    <input type="hidden" name="versionId" value={version.id} />
-                    <button type="submit" className="button button-secondary">
-                      Publish
-                    </button>
-                  </form>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <Link
+                      className="button button-secondary"
+                      href={`/templates/${encodeURIComponent(template.id)}?cloneFromVersionId=${encodeURIComponent(version.id)}#create-draft`}
+                    >
+                      Clone
+                    </Link>
+                    <form action={publishTemplateVersionAction}>
+                      <input type="hidden" name="templateId" value={template.id} />
+                      <input type="hidden" name="versionId" value={version.id} />
+                      <button type="submit" className="button button-secondary">
+                        Publish
+                      </button>
+                    </form>
+                  </div>
                 );
               },
             },

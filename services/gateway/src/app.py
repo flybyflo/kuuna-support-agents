@@ -148,8 +148,10 @@ def main() -> None:
     from connection_status import GatewayConnectionStatus  # noqa: PLC0415
     from neonize_bridge import initialize_neonize_gateway  # noqa: PLC0415
     from ops_api import create_ops_app  # noqa: PLC0415
+    from qr_status import GatewayQrStatus  # noqa: PLC0415
 
     connection_status = GatewayConnectionStatus()
+    qr_status = GatewayQrStatus()
 
     client, neonize_wait = initialize_neonize_gateway(
         connection_status=connection_status,
@@ -157,6 +159,7 @@ def main() -> None:
         backend_base_url=os.getenv("BACKEND_BASE_URL", "http://backend:8000"),
         service_token=os.getenv("GATEWAY_SERVICE_TOKEN"),
         database_path=os.getenv("NEONIZE_DATABASE_PATH", "/data/neonize.db"),
+        qr_status=qr_status,
     )
 
     def _connect_gateway_client() -> None:
@@ -177,6 +180,7 @@ def main() -> None:
         ops_token=os.getenv("GATEWAY_OPS_TOKEN"),
         service_token=os.getenv("GATEWAY_SERVICE_TOKEN"),
         connection_status_provider=connection_status.snapshot,
+        qr_status_provider=qr_status.snapshot,
     )
     host = os.getenv("GATEWAY_OPS_HOST", "0.0.0.0")
     port = int(os.getenv("GATEWAY_OPS_PORT", "8090"))

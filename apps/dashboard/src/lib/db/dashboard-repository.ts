@@ -663,7 +663,7 @@ export async function fetchMessages(providerGroupId?: string): Promise<MessageRe
       m.sender_provider_user_id,
       m.latest_version_no,
       m.created_at::text,
-      mv.text_content as preview,
+      mv.preview_text as preview,
       mv.is_deleted,
       coalesce(
         mv.raw_event #>> '{Info,MessageSource,SenderAlt,User}',
@@ -675,13 +675,32 @@ export async function fetchMessages(providerGroupId?: string): Promise<MessageRe
       ) as has_media
     from messages m
     left join lateral (
-      select text_content, is_deleted, raw_event
+      select
+        text_content,
+        is_deleted,
+        raw_event,
+        case
+          when text_content is not null and btrim(text_content) <> '' then text_content
+          when raw_event #>> '{Info,Type}' = 'reaction' then '[reaction]'
+          when raw_event #>> '{Info,Type}' = 'media' then '[media]'
+          else null
+        end as preview_text
       from message_versions
       where message_id = m.id
       order by version_no desc
       limit 1
     ) mv on true
     where ($1::text is null or m.provider_group_id = $1::text)
+      and not (
+        -- Hide WhatsApp system/internal messages that carry no user-visible text
+        -- (e.g. sender key distribution, protocol/app-state sync) unless they have media.
+        mv.preview_text is null
+        and not exists (select 1 from media_assets ma2 where ma2.message_id = m.id)
+        and (
+          (mv.raw_event->'Message') ? 'senderKeyDistributionMessage'
+          or (mv.raw_event->'Message') ? 'protocolMessage'
+        )
+      )
     order by m.created_at desc
     `,
     [providerGroupId ?? null],

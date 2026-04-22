@@ -25,6 +25,7 @@ export default async function TemplatesPage({
       const versions = await listTemplateVersions(template.id);
       return {
         templateId: template.id,
+        versions,
         publishedVersion: versions.find((version) => version.id === template.publishedVersionId),
       };
     }),
@@ -83,6 +84,37 @@ export default async function TemplatesPage({
                       <StatusBadge status={version.status} />
                     </div>
                   </div>
+                );
+              },
+            },
+            {
+              header: "Next step",
+              cell: (row) => {
+                const templateMeta = versionsByTemplate.find((item) => item.templateId === row.id);
+                if (!templateMeta) {
+                  return <span className="muted-text">—</span>;
+                }
+
+                if (!templateMeta.versions.length) {
+                  return (
+                    <Link href={`/templates/${row.id}#create-draft`} className="button button-secondary">
+                      Create draft
+                    </Link>
+                  );
+                }
+
+                if (!templateMeta.publishedVersion) {
+                  return (
+                    <Link href={`/templates/${row.id}#timeline`} className="button button-secondary">
+                      Publish a version
+                    </Link>
+                  );
+                }
+
+                return (
+                  <Link href="/bindings/create" className="button button-secondary">
+                    Bind a group
+                  </Link>
                 );
               },
             },

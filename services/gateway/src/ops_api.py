@@ -66,6 +66,11 @@ class WhatsAppConnectionStatusResponse(BaseModel):
     last_error: str | None = None
 
 
+class WhatsAppQrStatusResponse(BaseModel):
+    qr: str | None = None
+    updated_at: str
+
+
 def _group_name(group_info: Any, fallback: str) -> str:
     group_name_obj = getattr(group_info, "GroupName", None)
     maybe_name = getattr(group_name_obj, "Name", None)
@@ -177,6 +182,7 @@ def create_ops_app(
     ops_token: str | None,
     service_token: str | None = None,
     connection_status_provider: Callable[[], dict[str, Any]] | None = None,
+    qr_status_provider: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Kuuna Gateway Ops", version="0.1.0")
     lock = threading.Lock()
@@ -257,6 +263,21 @@ def create_ops_app(
             last_changed_at="",
             checked_at="",
             last_error=None,
+        )
+
+    @app.get("/ops/qr", response_model=WhatsAppQrStatusResponse)
+    def qr_status(
+        x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+    ) -> WhatsAppQrStatusResponse:
+        require_token(x_internal_token)
+
+        if qr_status_provider is None:
+            return WhatsAppQrStatusResponse(qr=None, updated_at="")
+
+        snapshot = qr_status_provider()
+        return WhatsAppQrStatusResponse(
+            qr=str(snapshot.get("qr")) if snapshot.get("qr") is not None else None,
+            updated_at=str(snapshot.get("updated_at") or ""),
         )
 
     @app.post("/ops/groups", response_model=WhatsAppGroupCreateResponse)
