@@ -9,6 +9,11 @@ from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 try:
+    from neonize.exc import GetJoinedGroupsError
+except Exception:  # pragma: no cover - depends on runtime image
+    GetJoinedGroupsError = None
+
+try:
     from neonize.utils.jid import JID, Jid2String, build_jid
 except Exception:  # pragma: no cover - depends on runtime image
     JID = None
@@ -210,8 +215,20 @@ def create_ops_app(
     ) -> WhatsAppGroupListResponse:
         require_token(x_internal_token)
 
-        with lock:
-            groups = client.get_joined_groups()
+        try:
+            with lock:
+                groups = client.get_joined_groups()
+        except Exception as exc:
+            # Neonize raises a specific error when the websocket session isn't connected yet.
+            if GetJoinedGroupsError is not None and isinstance(exc, GetJoinedGroupsError):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="whatsapp websocket not connected (scan QR / finish login in gateway first)",
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"failed to list whatsapp groups: {exc}",
+            ) from exc
 
         items = [_group_to_item(group_info) for group_info in groups]
         items.sort(key=lambda item: (item.name.lower(), item.jid.lower()))
