@@ -78,7 +78,7 @@ def resolve_runtime_target(
             TemplateBuild.template_version_id == template_version.id,
             TemplateBuild.status == TemplateBuildStatus.SUCCEEDED,
         )
-        .order_by(TemplateBuild.created_at.desc())
+        .order_by(TemplateBuild.created_at.desc(), TemplateBuild.id.desc())
         .limit(1)
     ).scalar_one_or_none()
 

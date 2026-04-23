@@ -207,15 +207,6 @@ class TemplateVersion(Base, TimestampMixin):
 
 class TemplateBuild(Base, TimestampMixin):
     __tablename__ = "template_builds"
-    __table_args__ = (
-        Index("ix_template_builds_template_version_id_created_at", "template_version_id", "created_at"),
-        Index(
-            "ix_template_builds_latest_succeeded",
-            "template_version_id",
-            "created_at",
-            postgresql_where=text("status = 'succeeded'"),
-        ),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     template_id: Mapped[uuid.UUID] = mapped_column(

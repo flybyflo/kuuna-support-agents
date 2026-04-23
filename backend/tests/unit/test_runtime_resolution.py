@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -103,6 +105,7 @@ def test_resolve_runtime_target_picks_latest_succeeded_build(
         db.add(AgentInstance(group_binding_id=binding.id))
 
         # Older succeeded
+        t0 = datetime.now(UTC)
         older = TemplateBuild(
             template_id=version.template_id,
             template_version_id=version.id,
@@ -111,6 +114,8 @@ def test_resolve_runtime_target_picks_latest_succeeded_build(
             image_tag="v1",
             build_inputs={},
             logs_ref=None,
+            created_at=t0,
+            updated_at=t0,
         )
         db.add(older)
         db.flush()
@@ -125,6 +130,8 @@ def test_resolve_runtime_target_picks_latest_succeeded_build(
                 image_tag=None,
                 build_inputs={},
                 logs_ref=None,
+                created_at=t0 + timedelta(seconds=1),
+                updated_at=t0 + timedelta(seconds=1),
             )
         )
         db.flush()
@@ -138,6 +145,8 @@ def test_resolve_runtime_target_picks_latest_succeeded_build(
             image_tag="v2",
             build_inputs={},
             logs_ref=None,
+            created_at=t0 + timedelta(seconds=2),
+            updated_at=t0 + timedelta(seconds=2),
         )
         db.add(newer)
         db.commit()
