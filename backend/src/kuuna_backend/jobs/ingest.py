@@ -19,6 +19,7 @@ from kuuna_backend.db.models import (
     RuntimeStatus,
     TemplateVersion,
 )
+from kuuna_backend.domain.runtime.resolve import NoBindingError, resolve_runtime_target
 from kuuna_backend.domain.outbound.service import create_outbound_intent, mark_outbound_intent_failed
 from kuuna_backend.domain.retrieval import RetrievalHit, retrieve_context
 from kuuna_backend.integrations.openai import (
@@ -111,17 +112,9 @@ def process_inbound_message_job(
             )
             return
 
-        binding_row = db.execute(
-            select(GroupBinding, AgentInstance, TemplateVersion)
-            .join(TemplateVersion, TemplateVersion.id == GroupBinding.template_version_id)
-            .outerjoin(AgentInstance, AgentInstance.group_binding_id == GroupBinding.id)
-            .where(
-                GroupBinding.provider_group_id == provider_group_id,
-                GroupBinding.status == BindingStatus.ACTIVE,
-            )
-            .limit(1)
-        ).one_or_none()
-        if binding_row is None:
+        try:
+            resolved = resolve_runtime_target(db, provider_group_id=provider_group_id)
+        except NoBindingError:
             logger.info(
                 "inbound_execution_skipped_unbound_group",
                 extra={
@@ -133,7 +126,27 @@ def process_inbound_message_job(
             )
             return
 
-        binding, agent_instance, template_version = binding_row
+        binding = db.get(GroupBinding, resolved.binding_id)
+        template_version = db.get(TemplateVersion, resolved.template_version_id)
+        agent_instance = (
+            db.get(AgentInstance, resolved.agent_instance_id)
+            if resolved.agent_instance_id is not None
+            else None
+        )
+        if binding is None or template_version is None:
+            logger.error(
+                "inbound_execution_resolution_inconsistent",
+                extra={
+                    "trace_id": trace_id,
+                    "message_id": message_id,
+                    "provider_group_id": provider_group_id,
+                    "binding_id": str(resolved.binding_id),
+                    "template_version_id": str(resolved.template_version_id),
+                    "reason": reason,
+                },
+            )
+            return
+
         if agent_instance is None:
             logger.error(
                 "inbound_execution_missing_agent_instance",
@@ -189,6 +202,14 @@ def process_inbound_message_job(
                 "text": agent_reply.text,
                 "metadata": {
                     "agent_instance_id": agent_instance.id,
+                    "binding_id": str(binding.id),
+                    "template_version_id": str(template_version.id),
+                    "template_build_id": (
+                        str(resolved.template_build_id)
+                        if resolved.template_build_id is not None
+                        else None
+                    ),
+                    "image_ref": resolved.image_ref,
                     "model_path": agent_reply.model_path,
                     "retrieval_refs": agent_reply.retrieval_refs,
                     "allowed_tools": agent_reply.allowed_tools,

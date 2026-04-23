@@ -89,6 +89,14 @@ class ToolRiskClass(str, enum.Enum):
     ADMIN = "admin"
 
 
+class TemplateBuildStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 def db_enum(enum_cls: type[enum.Enum], *, name: str) -> Enum:
     return Enum(
         enum_cls,
@@ -195,6 +203,36 @@ class TemplateVersion(Base, TimestampMixin):
     model_config: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     tools_config: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     egress_policy: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class TemplateBuild(Base, TimestampMixin):
+    __tablename__ = "template_builds"
+    __table_args__ = (
+        Index("ix_template_builds_template_version_id_created_at", "template_version_id", "created_at"),
+        Index(
+            "ix_template_builds_latest_succeeded",
+            "template_version_id",
+            "created_at",
+            postgresql_where=text("status = 'succeeded'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    template_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("group_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    template_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("template_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[TemplateBuildStatus] = mapped_column(
+        db_enum(TemplateBuildStatus, name="template_build_status"),
+        nullable=False,
+        default=TemplateBuildStatus.QUEUED,
+    )
+    image_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    image_tag: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    build_inputs: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    logs_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
 
 class GroupBinding(Base, TimestampMixin):
