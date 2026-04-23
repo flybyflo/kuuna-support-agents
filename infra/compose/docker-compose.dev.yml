@@ -55,9 +55,12 @@ services:
       - ../env/backend.env.local
     environment:
       WATCHFILES_FORCE_POLLING: "true"
+      TEMPLATE_BUILD_CONTEXT_PATH: /template-build-context
     volumes:
       - ../../backend:/app
       - worker_venv:/app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../../infra/runtime/template-agent:/template-build-context:ro
     depends_on:
       postgres:
         condition: service_healthy
