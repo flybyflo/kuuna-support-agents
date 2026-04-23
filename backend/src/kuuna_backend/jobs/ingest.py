@@ -22,6 +22,7 @@ from kuuna_backend.db.models import (
 from kuuna_backend.domain.runtime.resolve import NoBindingError, resolve_runtime_target
 from kuuna_backend.domain.outbound.service import create_outbound_intent, mark_outbound_intent_failed
 from kuuna_backend.domain.retrieval import RetrievalHit, retrieve_context
+from kuuna_backend.domain.templates.tools import extract_allowed_tools
 from kuuna_backend.integrations.openai import (
     OpenAIIntegrationError,
     create_chat_completion,
@@ -284,7 +285,7 @@ def _generate_agent_reply(
     template_version: TemplateVersion,
     trace_id: str | None,
 ) -> AgentReply:
-    allowed_tools = _extract_allowed_tools(template_version.tools_config)
+    allowed_tools = extract_allowed_tools(template_version.tools_config)
     model_candidates = _extract_model_candidates(template_version.model_config)
 
     retrieval_hits: list[RetrievalHit] = []
@@ -372,36 +373,6 @@ def _generate_agent_reply(
         retrieval_refs=retrieval_refs,
         allowed_tools=allowed_tools,
     )
-
-
-def _extract_allowed_tools(tools_config: object) -> list[str]:
-    if not isinstance(tools_config, dict):
-        return []
-
-    candidates: list[str] = []
-
-    for key in ("allowed_tools", "allowedTools"):
-        raw = tools_config.get(key)
-        if isinstance(raw, list):
-            candidates.extend(item for item in raw if isinstance(item, str))
-
-    raw_tools = tools_config.get("tools")
-    if isinstance(raw_tools, list):
-        for item in raw_tools:
-            if isinstance(item, str):
-                candidates.append(item)
-            elif isinstance(item, dict):
-                name = item.get("name")
-                enabled = item.get("enabled", True)
-                if isinstance(name, str) and name and enabled is not False:
-                    candidates.append(name)
-
-    normalized: list[str] = []
-    for candidate in candidates:
-        value = candidate.strip().lower()
-        if value and value not in normalized:
-            normalized.append(value)
-    return normalized
 
 
 def _extract_model_candidates(model_config: object) -> list[str]:
