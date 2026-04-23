@@ -8,7 +8,17 @@ export type WorkflowStatus =
   | "provisioning"
   | "failed"
   | "queued"
-  | "processing";
+  | "processing"
+  | "running"
+  | "succeeded"
+  | "cancelled";
+
+export type TemplateBuildStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 
 export type GroupTemplate = {
   id: string;
@@ -29,6 +39,19 @@ export type TemplateVersion = {
   egressPolicy: string;
   updatedAt: string;
   updatedBy: string;
+};
+
+export type TemplateBuild = {
+  id: string;
+  templateId: string;
+  templateVersionId: string;
+  status: TemplateBuildStatus;
+  imageRef?: string;
+  imageTag?: string;
+  buildInputs: Record<string, unknown>;
+  logsRef?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type GroupBinding = {

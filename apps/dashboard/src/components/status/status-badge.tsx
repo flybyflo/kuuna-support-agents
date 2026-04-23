@@ -12,6 +12,9 @@ const STATUS_LABELS: Record<WorkflowStatus, string> = {
   failed: "Failed",
   queued: "Queued",
   processing: "Processing",
+  running: "Running",
+  succeeded: "Succeeded",
+  cancelled: "Cancelled",
 };
 
 const STATUS_VARIANTS: Record<WorkflowStatus, BadgeProps["variant"]> = {
@@ -24,6 +27,9 @@ const STATUS_VARIANTS: Record<WorkflowStatus, BadgeProps["variant"]> = {
   provisioning: "warning",
   queued: "warning",
   processing: "warning",
+  running: "warning",
+  succeeded: "success",
+  cancelled: "secondary",
   failed: "destructive",
 };
 

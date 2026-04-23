@@ -28,6 +28,8 @@ import type {
   PromptAsset,
   RuntimeDebugStatus,
   StaffUser,
+  TemplateBuild,
+  TemplateBuildStatus,
   WorkflowStatus,
   TemplateVersion,
   ToolCatalogItem,
@@ -195,10 +197,169 @@ function toWorkflowStatus(value: string): WorkflowStatus {
     case "failed":
     case "queued":
     case "processing":
+    case "running":
+    case "succeeded":
+    case "cancelled":
       return value;
     default:
       return "draft";
   }
+}
+
+function getInternalOpsToken(): string | undefined {
+  return process.env.DASHBOARD_INTERNAL_OPS_TOKEN ?? process.env.INTERNAL_OPS_TOKEN;
+}
+
+function toTemplateBuildStatus(value: string): TemplateBuildStatus {
+  switch (value) {
+    case "queued":
+    case "running":
+    case "succeeded":
+    case "failed":
+    case "cancelled":
+      return value;
+    default:
+      return "failed";
+  }
+}
+
+function validateTemplateBuild(value: unknown, options: { path: string; index: number }): TemplateBuild {
+  const { path, index } = options;
+
+  if (!isRecord(value)) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}]: expected object, received ${typeof value}`,
+    );
+  }
+
+  const id = value.id;
+  const templateId = value.template_id;
+  const templateVersionId = value.template_version_id;
+  const status = value.status;
+  const imageRef = value.image_ref;
+  const imageTag = value.image_tag;
+  const buildInputs = value.build_inputs;
+  const logsRef = value.logs_ref;
+  const createdAt = value.created_at;
+  const updatedAt = value.updated_at;
+
+  if (typeof id !== "string" || !id.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].id: expected non-empty string`,
+    );
+  }
+
+  if (typeof templateId !== "string" || !templateId.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].template_id: expected non-empty string`,
+    );
+  }
+
+  if (typeof templateVersionId !== "string" || !templateVersionId.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].template_version_id: expected non-empty string`,
+    );
+  }
+
+  if (typeof status !== "string" || !status.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].status: expected non-empty string`,
+    );
+  }
+
+  if (imageRef !== undefined && imageRef !== null && typeof imageRef !== "string") {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].image_ref: expected string|null`,
+    );
+  }
+
+  if (imageTag !== undefined && imageTag !== null && typeof imageTag !== "string") {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].image_tag: expected string|null`,
+    );
+  }
+
+  if (!isRecord(buildInputs)) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].build_inputs: expected object`,
+    );
+  }
+
+  if (logsRef !== undefined && logsRef !== null && typeof logsRef !== "string") {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].logs_ref: expected string|null`,
+    );
+  }
+
+  if (typeof createdAt !== "string" || !createdAt.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].created_at: expected non-empty string`,
+    );
+  }
+
+  if (typeof updatedAt !== "string" || !updatedAt.trim()) {
+    throw new ApiContractError(
+      `Template build API contract mismatch at ${path}[${index}].updated_at: expected non-empty string`,
+    );
+  }
+
+  return {
+    id,
+    templateId,
+    templateVersionId,
+    status: toTemplateBuildStatus(status),
+    imageRef: typeof imageRef === "string" && imageRef.trim() ? imageRef : undefined,
+    imageTag: typeof imageTag === "string" && imageTag.trim() ? imageTag : undefined,
+    buildInputs,
+    logsRef: typeof logsRef === "string" && logsRef.trim() ? logsRef : undefined,
+    createdAt,
+    updatedAt,
+  };
+}
+
+async function fetchTemplateBuildsFromBackend(
+  templateId: string,
+  versionId: string,
+): Promise<TemplateBuild[]> {
+  const token = getInternalOpsToken();
+  if (!token) {
+    return [];
+  }
+
+  const path = `/internal/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(versionId)}/builds`;
+  const errors: string[] = [];
+
+  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
+    const normalizedBaseUrl = backendBaseUrl.replace(/\/$/, "");
+
+    try {
+      const response = await fetch(`${normalizedBaseUrl}${path}`, {
+        method: "GET",
+        headers: {
+          "X-Internal-Token": token,
+        },
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        errors.push(`${normalizedBaseUrl} -> ${response.status}: ${body}`);
+        continue;
+      }
+
+      const payload = (await response.json()) as unknown;
+      if (!isRecord(payload) || !Array.isArray(payload.items)) {
+        throw new ApiContractError(`Template build API contract mismatch at ${path}: expected { items: [] }`);
+      }
+
+      return payload.items.map((item, index) => validateTemplateBuild(item, { path: `${path}.items`, index }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      errors.push(`${normalizedBaseUrl} -> ${reason}`);
+    }
+  }
+
+  throw new Error(errors.join(" | ") || "no-backend-url");
 }
 
 function mapIngestedKnowledgeDoc(doc: IngestedKnowledgeDocResponse): KnowledgeDoc {
@@ -290,6 +451,18 @@ export async function listTemplateVersions(
           .sort((a, b) => b.versionNo - a.versionNo),
       ),
   );
+}
+
+export async function listTemplateBuilds(
+  templateId: string,
+  versionId: string,
+): Promise<TemplateBuild[]> {
+  try {
+    return await fetchTemplateBuildsFromBackend(templateId, versionId);
+  } catch (error) {
+    console.warn("[dashboard-api] listTemplateBuilds: backend internal endpoint failed", error);
+    return [];
+  }
 }
 
 export async function listBindings(): Promise<GroupBinding[]> {
