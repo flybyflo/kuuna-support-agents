@@ -19,7 +19,11 @@ from kuuna_backend.db.models import (
     RuntimeStatus,
     TemplateVersion,
 )
-from kuuna_backend.domain.runtime.resolve import NoBindingError, resolve_runtime_target
+from kuuna_backend.domain.runtime.resolve import (
+    NoBindingError,
+    NoSuccessfulBuildError,
+    resolve_runtime_target,
+)
 from kuuna_backend.domain.outbound.service import create_outbound_intent, mark_outbound_intent_failed
 from kuuna_backend.domain.retrieval import RetrievalHit, retrieve_context
 from kuuna_backend.domain.templates.tools import extract_allowed_tools
@@ -114,10 +118,25 @@ def process_inbound_message_job(
             return
 
         try:
-            resolved = resolve_runtime_target(db, provider_group_id=provider_group_id)
+            resolved = resolve_runtime_target(
+                db,
+                provider_group_id=provider_group_id,
+                require_successful_build=True,
+            )
         except NoBindingError:
             logger.info(
                 "inbound_execution_skipped_unbound_group",
+                extra={
+                    "trace_id": trace_id,
+                    "message_id": message_id,
+                    "provider_group_id": provider_group_id,
+                    "reason": reason,
+                },
+            )
+            return
+        except NoSuccessfulBuildError:
+            logger.error(
+                "inbound_execution_skipped_no_successful_template_build",
                 extra={
                     "trace_id": trace_id,
                     "message_id": message_id,
@@ -185,12 +204,28 @@ def process_inbound_message_job(
         ).scalar_one_or_none()
         user_text = _extract_user_text(latest_message_version)
 
+        if not resolved.image_ref:
+            logger.error(
+                "inbound_execution_missing_image_ref_after_resolution",
+                extra={
+                    "trace_id": trace_id,
+                    "message_id": message_id,
+                    "provider_group_id": provider_group_id,
+                    "template_build_id": str(resolved.template_build_id)
+                    if resolved.template_build_id
+                    else None,
+                    "reason": reason,
+                },
+            )
+            return
+
         agent_reply = _generate_agent_reply(
             db=db,
             provider_group_id=provider_group_id,
             user_text=user_text,
             template_version=template_version,
             trace_id=trace_id,
+            image_ref=resolved.image_ref,
         )
 
         outbound_intent = create_outbound_intent(
@@ -284,6 +319,7 @@ def _generate_agent_reply(
     user_text: str,
     template_version: TemplateVersion,
     trace_id: str | None,
+    image_ref: str,
 ) -> AgentReply:
     allowed_tools = extract_allowed_tools(template_version.tools_config)
     model_candidates = _extract_model_candidates(template_version.model_config)
@@ -329,6 +365,7 @@ def _generate_agent_reply(
         model_path=model_candidates,
         allowed_tools=allowed_tools,
         retrieval_refs=retrieval_refs,
+        image_ref=image_ref,
     )
     if runtime_result is not None:
         response_text, runtime_model_path = runtime_result
@@ -480,6 +517,7 @@ def _run_via_runtime_agent(
     model_path: list[str],
     allowed_tools: list[str],
     retrieval_refs: list[dict[str, object]],
+    image_ref: str,
 ) -> tuple[str, list[str]] | None:
     payload = {
         "trace_id": trace_id,
@@ -492,6 +530,7 @@ def _run_via_runtime_agent(
         "model_path": model_path,
         "allowed_tools": allowed_tools,
         "tool_requests": [],
+        "image_ref": image_ref,
     }
 
     try:
