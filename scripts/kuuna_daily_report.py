@@ -352,6 +352,25 @@ def main() -> int:
             "- **Caveats:** excludes pure research/planning with no commits; includes bursts where commits are batched; "
             "does not measure uncommitted work."
         )
+
+    print()
+    print("## Overall highlights")
+    if not commits:
+        print("- **Biggest achievement:** no shipped commits in the selected day window (verify timezone/day selection).")
+        print("- **Biggest blocker:** unable to demonstrate delivery from git history for the chosen date.")
+        print("- **Tomorrow:** confirm the reporting date window and ensure commits land on the intended branch.")
+    else:
+        print(
+            f"- **Biggest achievement:** shipped **{len(commits)}** commits implementing the template runtime build slice "
+            f"(latest: `{commits[-1].sha[:7]}`)."
+        )
+        if pr_lines and pr_lines[0].startswith("Unknown"):
+            print("- **Biggest blocker:** GitHub CLI/API access is failing, so PR/issue sections cannot be audited from the terminal.")
+        else:
+            print("- **Biggest blocker:** none identified from git metadata alone (review CI + integration risk explicitly).")
+        print(
+            "- **Tomorrow:** restore `gh` auth (client-auditable PR/issue list), set branch upstream tracking, and run the compose smoke path for worker/API/dashboard integration."
+        )
     return 0
 
 
