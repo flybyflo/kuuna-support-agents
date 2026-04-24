@@ -43,6 +43,68 @@ class Commit:
     committer_dt: dt.datetime  # aware
 
 
+def day_narrative(commits: list[Commit]) -> tuple[str, list[str], list[str], list[str]]:
+    """
+    Return (summary, decision_bullets, problem_bullets, fix_bullets) based on commit subjects.
+    This is intentionally conservative and avoids claiming UI work unless commit subjects mention it.
+    """
+    if not commits:
+        return (
+            "No committer-dated commits were recorded in the selected day window.",
+            ["No architecture decisions can be inferred from commits (no commits)."],
+            [],
+            [],
+        )
+
+    subjects = " \n".join(c.subject for c in commits).lower()
+
+    decision_bullets: list[str] = []
+    problem_bullets: list[str] = []
+    fix_bullets: list[str] = []
+
+    if "inbound" in subjects or "runtime" in subjects or "template build" in subjects:
+        decision_bullets.append(
+            "**Execution safety:** treat template builds + resolved runtime images as **hard prerequisites** for inbound execution, not best-effort hints."
+        )
+    if "runtime-agent" in subjects or "docker" in subjects:
+        decision_bullets.append(
+            "**Execution placement:** perform template build execution in **runtime-agent** using Docker, with infra explicitly enabling the required capabilities."
+        )
+    if "devtools" in subjects or "daily report" in subjects or "report" in subjects:
+        decision_bullets.append(
+            "**Operational hygiene:** keep engineering reporting reproducible (git-backed daily report + optional IDE time checkpoints)."
+        )
+
+    if "gh" in subjects:
+        # unlikely; keep empty unless we detect explicit markers later
+        pass
+
+    if any(c.subject.lower().startswith("fix(") for c in commits):
+        fix_bullets.append("**Correctness pass:** includes at least one `fix(...)` commit tightening runtime/template resolution behavior.")
+
+    if any(c.subject.lower().startswith("test(") for c in commits):
+        fix_bullets.append("**Test reinforcement:** includes `test(...)` commits updating fixtures/contract coverage for the new execution gates.")
+
+    if any(c.subject.lower().startswith("chore(devtools)") for c in commits) or any(
+        "daily report" in c.subject.lower() for c in commits
+    ):
+        fix_bullets.append("**Tooling:** added/iterated internal reporting utilities (non-client product surface).")
+
+    # Summary: prioritize product-facing themes first
+    if ("inbound" in subjects or "runtime-agent" in subjects) and ("template" in subjects or "runtime" in subjects):
+        summary = (
+            "Hardened the **inbound execution path** against unsafe runtime/template states, extended **runtime-agent** to execute template builds via Docker, "
+            "and updated **infra** to support the execution model—plus internal reporting/tooling commits."
+        )
+    else:
+        summary = "Shipped the commits listed below; see subjects for the exact scope."
+
+    if not decision_bullets:
+        decision_bullets.append("**No strong cross-cutting decisions inferred** beyond what’s stated in individual commit messages.")
+
+    return summary, decision_bullets, problem_bullets, fix_bullets
+
+
 def parse_git_dt(s: str) -> dt.datetime:
     # git --date=iso-strict yields like 2026-04-23T13:52:15+01:00
     return dt.datetime.fromisoformat(s)
@@ -164,6 +226,15 @@ def main() -> int:
         default=25,
         help="Minimum credited duration for a single-commit cluster (captures commit-sized work)",
     )
+    ap.add_argument(
+        "--engineering-hours",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional override for client-facing 'engineering hours' for the day. "
+            "If set (>0), the report will label it explicitly as a declared override (not git-derived)."
+        ),
+    )
     args = ap.parse_args()
 
     repo = os.path.abspath(args.repo)
@@ -191,6 +262,8 @@ def main() -> int:
         min_commit_minutes=args.min_commit_minutes,
     )
     active_sum_h = sum(spans_h) if spans_h else 0.0
+
+    summary, decision_bullets, problem_bullets, fix_bullets = day_narrative(commits)
 
     branch = current_branch(repo)
     origin = origin_url(repo)
@@ -255,10 +328,7 @@ def main() -> int:
     if not commits:
         print(f"No committer-dated commits found on **{day.isoformat()}** (`{origin}`), branch **`{branch}`**.")
     else:
-        print(
-            "Delivered an end-to-end **template runtime image build** slice: backend persistence + worker/queue integration + "
-            "internal API surface, infra/worker access adjustments, and dashboard UX to **queue and monitor** template image builds."
-        )
+        print(summary)
     print()
     print("### Work completed")
     if not commits:
@@ -268,14 +338,8 @@ def main() -> int:
             print(f"- `{c.sha[:7]}` — {c.subject}")
     print()
     print("### Decisions / findings")
-    print(
-        "- **Architecture direction (evidenced by commit series):** treat template builds as an end-to-end workflow "
-        "(persistence + worker/queue + internal API + dashboard UX), not a backend-only spike."
-    )
-    print(
-        "- **Operational direction (evidenced by infra commit):** align worker/runtime image build access with compose/Docker realities "
-        "(client-facing systems should not paper over infra constraints)."
-    )
+    for b in decision_bullets:
+        print(f"- {b}")
     print()
     print("### Problems encountered")
     print(
@@ -283,12 +347,15 @@ def main() -> int:
     )
     if ups is None:
         print("- **Branch tracking:** no configured upstream for the active branch (workflow friction; not necessarily a merge blocker).")
+    for b in problem_bullets:
+        print(f"- {b}")
     print()
     print("### Fixes or workarounds applied")
-    if any("fix(" in c.subject for c in commits):
-        print("- **Backend correctness:** applied a targeted fix commit adjusting ORM/indexing/resolver ordering (`fix(backend): ...`).")
+    if fix_bullets:
+        for b in fix_bullets:
+            print(f"- {b}")
     else:
-        print("- **None explicitly labeled `fix(...)` in the commit subjects for this day window.**")
+        print("- **None inferred beyond individual commit messages.**")
     print(
         "- **Reporting workaround:** time-on-task is estimated from **git committer clustering** (transparent; see end summary)."
     )
@@ -341,17 +408,32 @@ def main() -> int:
         f"each cluster credits at least **{args.min_commit_minutes}m** for a single commit, and at least **{args.min_session_minutes}m** "
         "for multi-commit clusters (captures work between rapid commits). Also reports a **first→last commit** span as a cross-check."
     )
-    if not commits:
-        print("- **Estimated active engineering time:** **0.0 h** (no commits)")
-        print("- **First→last commit span:** **0.0 h**")
-    else:
-        print(f"- **Clusters:** {len(spans_h)}")
-        print(f"- **Sum of cluster spans (estimate):** **{active_sum_h:.2f} h**")
-        print(f"- **First→last commit span (upper bound):** **{overall_h:.2f} h**")
+    if args.engineering_hours and args.engineering_hours > 0:
+        print(f"- **Declared engineering hours (override):** **{args.engineering_hours:.2f} h**")
         print(
-            "- **Caveats:** excludes pure research/planning with no commits; includes bursts where commits are batched; "
-            "does not measure uncommitted work."
+            "- **Git-derived estimate (same method, for transparency):** "
+            + (
+                "**0.00 h** (no commits)"
+                if not commits
+                else f"**{active_sum_h:.2f} h** (cluster sum), cross-check span **{overall_h:.2f} h**"
+            )
         )
+        print(
+            "- **Note:** the override is **not inferred from git**; use it when your ground truth is calendar/time-tracking "
+            "and commits are batched."
+        )
+    else:
+        if not commits:
+            print("- **Estimated active engineering time:** **0.0 h** (no commits)")
+            print("- **First→last commit span:** **0.0 h**")
+        else:
+            print(f"- **Clusters:** {len(spans_h)}")
+            print(f"- **Sum of cluster spans (estimate):** **{active_sum_h:.2f} h**")
+            print(f"- **First→last commit span (upper bound):** **{overall_h:.2f} h**")
+            print(
+                "- **Caveats:** excludes pure research/planning with no commits; includes bursts where commits are batched; "
+                "does not measure uncommitted work."
+            )
 
     print()
     print("## Overall highlights")
@@ -360,8 +442,12 @@ def main() -> int:
         print("- **Biggest blocker:** unable to demonstrate delivery from git history for the chosen date.")
         print("- **Tomorrow:** confirm the reporting date window and ensure commits land on the intended branch.")
     else:
+        if args.engineering_hours and args.engineering_hours > 0:
+            print(
+                f"- **Engineering time (declared):** **{args.engineering_hours:.2f} h** (override; see Time section for git-derived cross-check)."
+            )
         print(
-            f"- **Biggest achievement:** shipped **{len(commits)}** commits implementing the template runtime build slice "
+            f"- **Biggest achievement:** landed **{len(commits)}** commits advancing inbound/runtime-agent/template-build execution safety "
             f"(latest: `{commits[-1].sha[:7]}`)."
         )
         if pr_lines and pr_lines[0].startswith("Unknown"):

@@ -52,13 +52,21 @@ smoke-all:
     just smoke-dr-restore
 
 # Client-facing daily report (git-backed time estimate; optional gh metadata)
-daily-report date="" tz="+01:00" gap="120":
+daily-report date="" tz="+01:00" gap="120" hours="0":
     # Usage:
     #   just daily-report                       # today (in tz), gap=120m
     #   just daily-report date=2026-04-23       # explicit day
     #   just daily-report date=2026-04-23 gap=90 tz=+01:00
     if [ -n "{{date}}" ]; then \
-      python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --date "{{date}}" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
+      if [ "{{hours}}" != "0" ] && [ -n "{{hours}}" ]; then \
+        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --date "{{date}}" --tz-offset "{{tz}}" --gap-minutes "{{gap}}" --engineering-hours "{{hours}}"; \
+      else \
+        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --date "{{date}}" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
+      fi; \
     else \
-      python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
+      if [ "{{hours}}" != "0" ] && [ -n "{{hours}}" ]; then \
+        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --tz-offset "{{tz}}" --gap-minutes "{{gap}}" --engineering-hours "{{hours}}"; \
+      else \
+        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
+      fi; \
     fi
