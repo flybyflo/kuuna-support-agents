@@ -155,3 +155,35 @@ def test_resolve_runtime_target_picks_latest_succeeded_build(
         assert resolved.template_build_id == newer.id
         assert resolved.image_ref == "repo/runtime@sha256:new"
 
+
+def test_resolve_runtime_target_requires_non_empty_image_ref(
+    test_session_factory: sessionmaker[Session],
+) -> None:
+    with test_session_factory() as db:
+        version = _create_published_template_version(db, key="rt-empty-image-ref")
+
+        binding = GroupBinding(
+            provider_group_id="group-d@g.us",
+            template_version_id=version.id,
+            status=BindingStatus.ACTIVE,
+        )
+        db.add(binding)
+        db.flush()
+        db.add(AgentInstance(group_binding_id=binding.id))
+
+        db.add(
+            TemplateBuild(
+                template_id=version.template_id,
+                template_version_id=version.id,
+                status=TemplateBuildStatus.SUCCEEDED,
+                image_ref=None,
+                image_tag="only-tag",
+                build_inputs={},
+                logs_ref=None,
+            )
+        )
+        db.commit()
+
+        with pytest.raises(NoSuccessfulBuildError):
+            resolve_runtime_target(db, provider_group_id="group-d@g.us", require_successful_build=True)
+

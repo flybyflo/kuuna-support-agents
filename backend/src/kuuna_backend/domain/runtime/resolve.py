@@ -50,9 +50,9 @@ def resolve_runtime_target(
 ) -> ResolvedRuntimeTarget:
     """Resolve the runtime target for a group.
 
-    Today, inbound execution uses the template version config directly, but
-    future on-demand container execution will require a build artifact (image).
-    This resolver becomes the single source of truth for routing.
+    Inbound execution requires a succeeded ``template_builds`` row with a
+    non-empty ``image_ref`` when ``require_successful_build`` is true (the
+    default path used by the inbound worker).
     """
 
     binding_row = db.execute(
@@ -84,6 +84,11 @@ def resolve_runtime_target(
 
     if require_successful_build and build is None:
         raise NoSuccessfulBuildError
+
+    if require_successful_build and build is not None:
+        ref = (build.image_ref or "").strip()
+        if not ref:
+            raise NoSuccessfulBuildError
 
     return ResolvedRuntimeTarget(
         provider_group_id=provider_group_id,
