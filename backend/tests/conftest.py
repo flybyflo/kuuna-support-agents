@@ -24,6 +24,7 @@ from kuuna_backend.db.models import (
     MessageVersion,
     OutboundIntent,
     Role,
+    RuntimeRun,
     TemplateBuild,
     TemplateVersion,
     Transcript,
@@ -51,6 +52,7 @@ def test_session_factory() -> sessionmaker[Session]:
     ToolCatalogEntry.__table__.create(bind=engine)
     TemplateVersion.__table__.create(bind=engine)
     TemplateBuild.__table__.create(bind=engine)
+    RuntimeRun.__table__.create(bind=engine)
     GroupBinding.__table__.create(bind=engine)
     AgentInstance.__table__.create(bind=engine)
 
