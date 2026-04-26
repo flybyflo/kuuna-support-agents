@@ -73,3 +73,19 @@ class RuntimeAgentResult(BaseModel):
     response_text: str | None = None
     tool_results: list[ToolExecutionResult] = Field(default_factory=list)
     error: str | None = None
+    execution: "ContainerExecution | None" = None
+
+
+class ContainerExecution(BaseModel):
+    """Execution metadata for docker-run based runners."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_ref: str
+    container_name: str
+    exit_code: int | None = None
+    duration_ms: int
+    stdout_tail: str = ""
+    stderr_tail: str = ""
+    timed_out: bool = False
+    limits: dict[str, Any] = Field(default_factory=dict)
