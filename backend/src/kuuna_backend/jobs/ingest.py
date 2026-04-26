@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Callable
 from uuid import UUID, uuid4
 
@@ -17,6 +18,8 @@ from kuuna_backend.db.models import (
     Message,
     MessageVersion,
     RuntimeStatus,
+    RuntimeRun,
+    RuntimeRunStatus,
     TemplateVersion,
 )
 from kuuna_backend.domain.runtime.resolve import (
@@ -229,6 +232,8 @@ def process_inbound_message_job(
             trace_id=trace_id,
             image_ref=resolved.image_ref,
             message_id=message.id,
+            binding_id=binding.id,
+            template_build_id=resolved.template_build_id,
         )
 
         outbound_intent = create_outbound_intent(
@@ -249,6 +254,13 @@ def process_inbound_message_job(
                         else None
                     ),
                     "image_ref": resolved.image_ref,
+                    "runtime_run_id": (
+                        str(agent_reply.runtime_execution.get("runtime_run_id"))
+                        if isinstance(agent_reply.runtime_execution, dict)
+                        and isinstance(agent_reply.runtime_execution.get("runtime_run_id"), str)
+                        and agent_reply.runtime_execution.get("runtime_run_id")
+                        else None
+                    ),
                     "model_path": agent_reply.model_path,
                     "retrieval_refs": agent_reply.retrieval_refs,
                     "allowed_tools": agent_reply.allowed_tools,
@@ -325,6 +337,8 @@ def _generate_agent_reply(
     trace_id: str | None,
     image_ref: str,
     message_id: UUID,
+    binding_id: UUID,
+    template_build_id: UUID | None,
 ) -> AgentReply:
     allowed_tools = extract_allowed_tools(template_version.tools_config)
     model_candidates = _extract_model_candidates(template_version.model_config)
@@ -362,6 +376,25 @@ def _generate_agent_reply(
     )
     assembled_user_prompt = _build_user_prompt(user_text=user_text, retrieval_hits=retrieval_hits)
 
+    run = RuntimeRun(
+        provider_group_id=provider_group_id,
+        message_id=message_id,
+        binding_id=binding_id,
+        template_version_id=template_version.id,
+        template_build_id=template_build_id,
+        image_ref=image_ref,
+        status=RuntimeRunStatus.STARTED,
+        execution={
+            "trace_id": trace_id,
+            "requested": {
+                "model_path": model_candidates,
+                "allowed_tools": allowed_tools,
+            },
+        },
+    )
+    db.add(run)
+    db.flush()
+
     runtime_result = _run_via_runtime_agent(
         trace_id=trace_id,
         provider_group_id=provider_group_id,
@@ -373,24 +406,58 @@ def _generate_agent_reply(
         image_ref=image_ref,
     )
     if runtime_result is not None:
+        execution = runtime_result.get("execution")
+        if isinstance(execution, dict):
+            run.execution = {**(run.execution or {}), **execution}
+
+        run.finished_at = datetime.now(UTC)
+        run.duration_ms = (
+            int(execution.get("duration_ms"))
+            if isinstance(execution, dict) and isinstance(execution.get("duration_ms"), int)
+            else run.duration_ms
+        )
+
+        if runtime_result.get("success") is True:
+            run.status = RuntimeRunStatus.SUCCEEDED
+            run.error = None
+        else:
+            timed_out = bool(execution.get("timed_out")) if isinstance(execution, dict) else False
+            run.status = RuntimeRunStatus.TIMEOUT if timed_out else RuntimeRunStatus.FAILED
+            run.error = str(runtime_result.get("audit_payload", {}).get("error") or runtime_result.get("error") or "")
+
         append_audit_event(
             db,
             actor_user_id=None,
             event_type="runtime.execution",
             entity_type="message",
             entity_id=str(message_id),
-            payload=runtime_result.get("audit_payload", {}),
+            payload={
+                **(runtime_result.get("audit_payload", {}) if isinstance(runtime_result.get("audit_payload"), dict) else {}),
+                "runtime_run_id": str(run.id),
+                "binding_id": str(binding_id),
+                "template_version_id": str(template_version.id),
+                "template_build_id": str(template_build_id) if template_build_id else None,
+                "image_ref": image_ref,
+                "status": run.status.value,
+                "duration_ms": run.duration_ms,
+            },
         )
 
     if runtime_result is not None and runtime_result.get("success") is True:
         response_text = str(runtime_result.get("response_text") or "").strip()
         runtime_model_path = runtime_result.get("model_path") or []
+        execution_out = runtime_result.get("execution")
+        execution_with_id = (
+            {**execution_out, "runtime_run_id": str(run.id)}
+            if isinstance(execution_out, dict)
+            else {"runtime_run_id": str(run.id)}
+        )
         return AgentReply(
             text=response_text,
             model_path=runtime_model_path,
             retrieval_refs=retrieval_refs,
             allowed_tools=allowed_tools,
-            runtime_execution=runtime_result.get("execution"),
+            runtime_execution=execution_with_id,
         )
 
     if is_openai_configured():

@@ -17,6 +17,10 @@ from kuuna_backend.api.schemas.internal_template_builds import (
     InternalTemplateBuildListResponse,
     InternalTemplateBuildResponse,
 )
+from kuuna_backend.api.schemas.internal_runtime_runs import (
+    InternalRuntimeRunListResponse,
+    InternalRuntimeRunResponse,
+)
 from kuuna_backend.config.settings import get_settings
 from kuuna_backend.domain.template_builds.service import (
     QueueTemplateBuildInput,
@@ -27,6 +31,9 @@ from kuuna_backend.domain.template_builds.service import (
     list_template_builds_for_version,
     queue_template_build,
 )
+from sqlalchemy import select
+
+from kuuna_backend.db.models import RuntimeRun
 from kuuna_backend.jobs.media_processing import (
     cleanup_bogus_failed_assets,
     enqueue_failed_media_assets_for_retry,
@@ -197,3 +204,54 @@ def internal_get_template_build(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return InternalTemplateBuildResponse.model_validate(build)
+
+
+@router.get(
+    "/runtime-runs",
+    response_model=InternalRuntimeRunListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def internal_list_runtime_runs(
+    provider_group_id: str | None = None,
+    message_id: UUID | None = None,
+    template_version_id: UUID | None = None,
+    binding_id: UUID | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> InternalRuntimeRunListResponse:
+    _require_internal_token(x_internal_token)
+
+    stmt = select(RuntimeRun).order_by(RuntimeRun.started_at.desc(), RuntimeRun.id.desc())
+    if provider_group_id:
+        stmt = stmt.where(RuntimeRun.provider_group_id == provider_group_id)
+    if message_id:
+        stmt = stmt.where(RuntimeRun.message_id == message_id)
+    if template_version_id:
+        stmt = stmt.where(RuntimeRun.template_version_id == template_version_id)
+    if binding_id:
+        stmt = stmt.where(RuntimeRun.binding_id == binding_id)
+
+    limit = max(1, min(int(limit), 200))
+    runs = list(db.scalars(stmt.limit(limit)))
+
+    return InternalRuntimeRunListResponse(items=[InternalRuntimeRunResponse.model_validate(r) for r in runs])
+
+
+@router.get(
+    "/runtime-runs/{run_id}",
+    response_model=InternalRuntimeRunResponse,
+    status_code=status.HTTP_200_OK,
+)
+def internal_get_runtime_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+) -> InternalRuntimeRunResponse:
+    _require_internal_token(x_internal_token)
+
+    run = db.get(RuntimeRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="runtime run not found")
+
+    return InternalRuntimeRunResponse.model_validate(run)
