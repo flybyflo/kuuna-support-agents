@@ -25,6 +25,7 @@ from kuuna_backend.domain.runtime.resolve import (
     resolve_runtime_target,
 )
 from kuuna_backend.domain.outbound.service import create_outbound_intent, mark_outbound_intent_failed
+from kuuna_backend.domain.audit.service import append_audit_event
 from kuuna_backend.domain.retrieval import RetrievalHit, retrieve_context
 from kuuna_backend.domain.templates.tools import extract_allowed_tools
 from kuuna_backend.integrations.openai import (
@@ -57,6 +58,7 @@ class AgentReply:
     model_path: list[str]
     retrieval_refs: list[dict[str, object]]
     allowed_tools: list[str]
+    runtime_execution: dict[str, object] | None = None
 
 
 def _tool_echo(value: str) -> str:
@@ -226,6 +228,7 @@ def process_inbound_message_job(
             template_version=template_version,
             trace_id=trace_id,
             image_ref=resolved.image_ref,
+            message_id=message.id,
         )
 
         outbound_intent = create_outbound_intent(
@@ -249,6 +252,7 @@ def process_inbound_message_job(
                     "model_path": agent_reply.model_path,
                     "retrieval_refs": agent_reply.retrieval_refs,
                     "allowed_tools": agent_reply.allowed_tools,
+                    "runtime_execution": agent_reply.runtime_execution,
                 },
             },
         )
@@ -320,6 +324,7 @@ def _generate_agent_reply(
     template_version: TemplateVersion,
     trace_id: str | None,
     image_ref: str,
+    message_id: UUID,
 ) -> AgentReply:
     allowed_tools = extract_allowed_tools(template_version.tools_config)
     model_candidates = _extract_model_candidates(template_version.model_config)
@@ -368,12 +373,24 @@ def _generate_agent_reply(
         image_ref=image_ref,
     )
     if runtime_result is not None:
-        response_text, runtime_model_path = runtime_result
+        append_audit_event(
+            db,
+            actor_user_id=None,
+            event_type="runtime.execution",
+            entity_type="message",
+            entity_id=str(message_id),
+            payload=runtime_result.get("audit_payload", {}),
+        )
+
+    if runtime_result is not None and runtime_result.get("success") is True:
+        response_text = str(runtime_result.get("response_text") or "").strip()
+        runtime_model_path = runtime_result.get("model_path") or []
         return AgentReply(
             text=response_text,
             model_path=runtime_model_path,
             retrieval_refs=retrieval_refs,
             allowed_tools=allowed_tools,
+            runtime_execution=runtime_result.get("execution"),
         )
 
     if is_openai_configured():
@@ -518,7 +535,7 @@ def _run_via_runtime_agent(
     allowed_tools: list[str],
     retrieval_refs: list[dict[str, object]],
     image_ref: str,
-) -> tuple[str, list[str]] | None:
+) -> dict[str, object] | None:
     payload = {
         "trace_id": trace_id,
         "system_prompt": system_prompt,
@@ -549,9 +566,24 @@ def _run_via_runtime_agent(
                 "error": str(exc),
             },
         )
-        return None
+        return {
+            "success": False,
+            "response_text": None,
+            "model_path": [],
+            "execution": None,
+            "audit_payload": {
+                "trace_id": trace_id,
+                "provider_group_id": provider_group_id,
+                "image_ref": image_ref,
+                "success": False,
+                "error": str(exc),
+            },
+        }
 
     result_payload = response.json()
+    execution = result_payload.get("execution") if isinstance(result_payload, dict) else None
+    error_value = result_payload.get("error") if isinstance(result_payload, dict) else None
+
     if not bool(result_payload.get("success")):
         logger.warning(
             "runtime_agent_execution_unsuccessful",
@@ -561,11 +593,37 @@ def _run_via_runtime_agent(
                 "error": str(result_payload.get("error")),
             },
         )
-        return None
+        return {
+            "success": False,
+            "response_text": None,
+            "model_path": [],
+            "execution": execution if isinstance(execution, dict) else None,
+            "audit_payload": {
+                "trace_id": trace_id,
+                "provider_group_id": provider_group_id,
+                "image_ref": image_ref,
+                "success": False,
+                "error": str(error_value or "runtime-agent unsuccessful"),
+                "execution": execution if isinstance(execution, dict) else None,
+            },
+        }
 
     response_text = str(result_payload.get("response_text") or "").strip()
     if not response_text:
-        return None
+        return {
+            "success": False,
+            "response_text": None,
+            "model_path": [],
+            "execution": execution if isinstance(execution, dict) else None,
+            "audit_payload": {
+                "trace_id": trace_id,
+                "provider_group_id": provider_group_id,
+                "image_ref": image_ref,
+                "success": False,
+                "error": "runtime-agent returned empty response_text",
+                "execution": execution if isinstance(execution, dict) else None,
+            },
+        }
 
     attempts = result_payload.get("attempts")
     attempt_models: list[str] = []
@@ -581,7 +639,22 @@ def _run_via_runtime_agent(
         if isinstance(model_used, str) and model_used:
             attempt_models = [model_used]
 
-    return response_text, (attempt_models or model_path[:1])
+    normalized_model_path = attempt_models or model_path[:1]
+
+    return {
+        "success": True,
+        "response_text": response_text,
+        "model_path": normalized_model_path,
+        "execution": execution if isinstance(execution, dict) else None,
+        "audit_payload": {
+            "trace_id": trace_id,
+            "provider_group_id": provider_group_id,
+            "image_ref": image_ref,
+            "success": True,
+            "model_path": normalized_model_path,
+            "execution": execution if isinstance(execution, dict) else None,
+        },
+    }
 
 
 def _build_retrieval_refs(retrieval_hits: list[RetrievalHit]) -> list[dict[str, object]]:

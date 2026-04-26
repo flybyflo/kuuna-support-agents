@@ -59,7 +59,13 @@ def test_e2e_smoke_login_bind_ingest_route_reply_trace(
     monkeypatch.setattr(
         ingest_jobs,
         "_run_via_runtime_agent",
-        lambda **kwargs: ("E2E smoke compiled reply", ["gpt-4.1-mini"]),
+        lambda **kwargs: {
+            "success": True,
+            "response_text": "E2E smoke compiled reply",
+            "model_path": ["gpt-4.1-mini"],
+            "execution": {"image_ref": str(kwargs.get("image_ref") or ""), "duration_ms": 1},
+            "audit_payload": {"success": True},
+        },
     )
 
     login_response = client.post(
