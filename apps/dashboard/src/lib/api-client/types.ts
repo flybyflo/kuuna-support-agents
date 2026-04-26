@@ -106,6 +106,24 @@ export type PromptAsset = {
   updatedBy: string;
 };
 
+export type RuntimeRunStatus = "started" | "succeeded" | "failed" | "timeout";
+
+export type RuntimeRun = {
+  id: string;
+  providerGroupId: string;
+  messageId?: string;
+  bindingId: string;
+  templateVersionId: string;
+  templateBuildId?: string;
+  imageRef: string;
+  status: RuntimeRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  error?: string;
+  execution: Record<string, unknown>;
+};
+
 export type KnowledgeDoc = {
   id: string;
   docKey: string;
