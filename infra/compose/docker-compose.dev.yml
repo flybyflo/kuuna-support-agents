@@ -97,6 +97,8 @@ services:
       - ../env/gateway.env.example
     environment:
       WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8090:8090"
     volumes:
       - ../../services/gateway:/app
       - gateway_venv:/app/.venv
