@@ -680,6 +680,19 @@ export async function fetchMessages(providerGroupId?: string): Promise<MessageRe
         is_deleted,
         raw_event,
         case
+          when is_deleted then coalesce(
+            (
+              select mv2.text_content
+              from message_versions mv2
+              where mv2.message_id = m.id
+                and mv2.is_deleted is false
+                and mv2.text_content is not null
+                and btrim(mv2.text_content) <> ''
+              order by mv2.version_no desc
+              limit 1
+            ),
+            '[deleted]'
+          )
           when text_content is not null and btrim(text_content) <> '' then text_content
           when raw_event #>> '{Info,Type}' = 'reaction' then '[reaction]'
           when raw_event #>> '{Info,Type}' = 'media' then '[media]'
@@ -696,6 +709,7 @@ export async function fetchMessages(providerGroupId?: string): Promise<MessageRe
         -- (e.g. sender key distribution, protocol/app-state sync) unless they have media.
         mv.preview_text is null
         and not exists (select 1 from media_assets ma2 where ma2.message_id = m.id)
+        and coalesce(mv.is_deleted, false) = false
         and (
           (mv.raw_event->'Message') ? 'senderKeyDistributionMessage'
           or (mv.raw_event->'Message') ? 'protocolMessage'
