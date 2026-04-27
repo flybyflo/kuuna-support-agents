@@ -6,7 +6,6 @@ import { AuthShell } from "@/components/layout/auth-shell";
 import { Button } from "@/components/ui/button";
 import { FormActions, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { loginAction } from "@/lib/auth/actions";
 import { getSession } from "@/lib/auth/session";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -81,7 +80,7 @@ export default async function LoginPage({
         </div>
       ) : null}
 
-      <form action={loginAction} className="flex flex-col gap-4">
+      <form action="/login/action" method="post" className="flex flex-col gap-4">
         <FormRow label="Email" htmlFor="email">
           <Input
             id="email"

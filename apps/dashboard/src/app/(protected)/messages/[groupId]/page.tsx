@@ -12,7 +12,10 @@ import {
 } from "@/lib/api-client";
 import { canAccessGroup, requireSession } from "@/lib/auth/session";
 import { titleFromGroupId } from "@/lib/utils/format";
-import { listWhatsAppGatewayGroups } from "@/lib/whatsapp/ops";
+import {
+  getWhatsAppGatewayConnectionStatus,
+  listWhatsAppGatewayGroups,
+} from "@/lib/whatsapp/ops";
 
 type Params = Promise<{ groupId: string }>;
 
@@ -37,10 +40,11 @@ export default async function GroupMessagesPage({
     notFound();
   }
 
-  const [bindings, scopedMessages, gatewayGroups] = await Promise.all([
+  const [bindings, scopedMessages, gatewayGroups, gatewayConnection] = await Promise.all([
     listBindings(),
     listMessages(providerGroupId),
     listWhatsAppGatewayGroups(),
+    getWhatsAppGatewayConnectionStatus(),
   ]);
 
   const binding = bindings.find(
@@ -83,9 +87,25 @@ export default async function GroupMessagesPage({
         description={`WhatsApp chat view for ${providerGroupId}${contactPhone ? ` · ${normalizePhone(contactPhone)}` : ""}`}
       />
 
-      <Notice title="Hinweis" tone="info">
-        Im Verlauf werden nur Chat-Inhalte gezeigt. Für Details zu einer
-        Nachricht einfach auf die Bubble klicken.
+      {!gatewayConnection?.connected ? (
+        <Notice
+          title={
+            gatewayConnection
+              ? "WhatsApp gateway not connected"
+              : "WhatsApp gateway status unavailable"
+          }
+          tone="warning"
+        >
+          <p className="text-sm text-muted-foreground">
+            Live group metadata may be unavailable until the WhatsApp session is
+            connected (QR/login) in the gateway container.
+          </p>
+        </Notice>
+      ) : null}
+
+      <Notice title="Note" tone="info">
+        This view focuses on chat content. Click a bubble to inspect message
+        details.
       </Notice>
 
       <Card className="overflow-hidden p-0">

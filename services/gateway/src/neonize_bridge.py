@@ -28,6 +28,7 @@ def _load_neonize_runtime() -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any
             KeepAliveRestoredEv,
             KeepAliveTimeoutEv,
             LoggedOutEv,
+            QREv,
             MessageEv,
             event as neonize_wait,
         )
@@ -40,6 +41,7 @@ def _load_neonize_runtime() -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, Any
     return (
         NewClient,
         ConnectedEv,
+        QREv,
         MessageEv,
         DisconnectedEv,
         ConnectFailureEv,
@@ -56,9 +58,11 @@ class NeonizeEventBridge:
         *,
         backend_client: BackendIngestClient,
         connection_status: GatewayConnectionStatus | None = None,
+        qr_provider: Any | None = None,
     ) -> None:
         self.backend_client = backend_client
         self.connection_status = connection_status
+        self.qr_provider = qr_provider
 
     def on_connected(self) -> None:
         if self.connection_status is not None:
@@ -152,6 +156,7 @@ class NeonizeEventBridge:
         *,
         client: Any,
         connected_event_type: Any,
+        qr_event_type: Any,
         message_event_type: Any,
         disconnected_event_type: Any,
         connect_failure_event_type: Any,
@@ -159,6 +164,17 @@ class NeonizeEventBridge:
         keepalive_timeout_event_type: Any,
         keepalive_restored_event_type: Any,
     ) -> None:
+        @client.event(qr_event_type)
+        def _qr(_: Any, event: Any) -> None:
+            codes = getattr(event, "Codes", None)
+            if isinstance(codes, (list, tuple)) and codes:
+                code = str(codes[0]).strip()
+                if code and self.qr_provider is not None:
+                    try:
+                        self.qr_provider.set_qr(code)
+                    except Exception:
+                        logger.exception("gateway_qr_store_failed")
+
         @client.event(connected_event_type)
         def _connected(_: Any, __: Any) -> None:
             self.on_connected()
@@ -195,10 +211,12 @@ def initialize_neonize_gateway(
     service_token: str | None = None,
     database_path: str | None = None,
     connection_status: GatewayConnectionStatus | None = None,
+    qr_status: Any | None = None,
 ) -> tuple[Any, Any]:
     (
         NewClient,
         ConnectedEv,
+        QREv,
         MessageEv,
         DisconnectedEv,
         ConnectFailureEv,
@@ -218,10 +236,12 @@ def initialize_neonize_gateway(
     bridge = NeonizeEventBridge(
         backend_client=backend_client,
         connection_status=connection_status,
+        qr_provider=qr_status,
     )
     bridge.register(
         client=client,
         connected_event_type=ConnectedEv,
+        qr_event_type=QREv,
         message_event_type=MessageEv,
         disconnected_event_type=DisconnectedEv,
         connect_failure_event_type=ConnectFailureEv,

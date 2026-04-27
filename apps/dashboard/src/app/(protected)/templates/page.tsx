@@ -35,6 +35,7 @@ export default async function TemplatesPage({
         publishedVersion: versions.find(
           (version) => version.id === template.publishedVersionId,
         ),
+        versions,
       };
     }),
   );
@@ -111,6 +112,45 @@ export default async function TemplatesPage({
                       <Badge variant="outline">v{version.versionNo}</Badge>
                       <StatusBadge status={version.status} />
                     </div>
+                  );
+                },
+              },
+              {
+                header: "Next step",
+                cell: (row) => {
+                  const templateMeta = versionsByTemplate.find(
+                    (item) => item.templateId === row.id,
+                  );
+                  if (!templateMeta) {
+                    return (
+                      <span className="text-sm text-muted-foreground">—</span>
+                    );
+                  }
+
+                  if (!templateMeta.versions.length) {
+                    return (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/templates/${row.id}#create-draft`}>
+                          Create draft
+                        </Link>
+                      </Button>
+                    );
+                  }
+
+                  if (!templateMeta.publishedVersion) {
+                    return (
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/templates/${row.id}#timeline`}>
+                          Publish a version
+                        </Link>
+                      </Button>
+                    );
+                  }
+
+                  return (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href="/bindings/create">Bind a group</Link>
+                    </Button>
                   );
                 },
               },

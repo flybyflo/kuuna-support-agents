@@ -9,6 +9,11 @@ from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 try:
+    from neonize.exc import GetJoinedGroupsError
+except Exception:  # pragma: no cover - depends on runtime image
+    GetJoinedGroupsError = None
+
+try:
     from neonize.utils.jid import JID, Jid2String, build_jid
 except Exception:  # pragma: no cover - depends on runtime image
     JID = None
@@ -59,6 +64,11 @@ class WhatsAppConnectionStatusResponse(BaseModel):
     last_changed_at: str
     checked_at: str
     last_error: str | None = None
+
+
+class WhatsAppQrStatusResponse(BaseModel):
+    qr: str | None = None
+    updated_at: str
 
 
 def _group_name(group_info: Any, fallback: str) -> str:
@@ -172,6 +182,7 @@ def create_ops_app(
     ops_token: str | None,
     service_token: str | None = None,
     connection_status_provider: Callable[[], dict[str, Any]] | None = None,
+    qr_status_provider: Callable[[], dict[str, Any]] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Kuuna Gateway Ops", version="0.1.0")
     lock = threading.Lock()
@@ -210,8 +221,20 @@ def create_ops_app(
     ) -> WhatsAppGroupListResponse:
         require_token(x_internal_token)
 
-        with lock:
-            groups = client.get_joined_groups()
+        try:
+            with lock:
+                groups = client.get_joined_groups()
+        except Exception as exc:
+            # Neonize raises a specific error when the websocket session isn't connected yet.
+            if GetJoinedGroupsError is not None and isinstance(exc, GetJoinedGroupsError):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="whatsapp websocket not connected (scan QR / finish login in gateway first)",
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"failed to list whatsapp groups: {exc}",
+            ) from exc
 
         items = [_group_to_item(group_info) for group_info in groups]
         items.sort(key=lambda item: (item.name.lower(), item.jid.lower()))
@@ -240,6 +263,21 @@ def create_ops_app(
             last_changed_at="",
             checked_at="",
             last_error=None,
+        )
+
+    @app.get("/ops/qr", response_model=WhatsAppQrStatusResponse)
+    def qr_status(
+        x_internal_token: str | None = Header(default=None, alias="X-Internal-Token"),
+    ) -> WhatsAppQrStatusResponse:
+        require_token(x_internal_token)
+
+        if qr_status_provider is None:
+            return WhatsAppQrStatusResponse(qr=None, updated_at="")
+
+        snapshot = qr_status_provider()
+        return WhatsAppQrStatusResponse(
+            qr=str(snapshot.get("qr")) if snapshot.get("qr") is not None else None,
+            updated_at=str(snapshot.get("updated_at") or ""),
         )
 
     @app.post("/ops/groups", response_model=WhatsAppGroupCreateResponse)
