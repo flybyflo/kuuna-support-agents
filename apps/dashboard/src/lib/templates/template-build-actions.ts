@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { requireAuthorized } from "@/lib/auth/guards";
 
@@ -115,6 +116,9 @@ export async function queueTemplateBuildAction(formData: FormData): Promise<void
 
       redirect(`/templates/${encodeURIComponent(templateId)}?${params.toString()}`);
     } catch (error) {
+      if (isRedirectError(error)) {
+        throw error;
+      }
       lastError = error instanceof Error ? error.message : String(error);
     }
   }

@@ -91,6 +91,45 @@ function parseToolProfile(input: unknown): string {
   return "default";
 }
 
+function parseAllowedTools(input: unknown): string[] {
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+
+  const toolsConfig = input as Record<string, unknown>;
+  const candidates: string[] = [];
+
+  for (const key of ["allowed_tools", "allowedTools"]) {
+    const raw = toolsConfig[key];
+    if (Array.isArray(raw)) {
+      candidates.push(...raw.filter((item): item is string => typeof item === "string"));
+    }
+  }
+
+  const rawTools = toolsConfig.tools;
+  if (Array.isArray(rawTools)) {
+    for (const item of rawTools) {
+      if (typeof item === "string") {
+        candidates.push(item);
+      } else if (item && typeof item === "object") {
+        const record = item as Record<string, unknown>;
+        if (typeof record.name === "string" && record.enabled !== false) {
+          candidates.push(record.name);
+        }
+      }
+    }
+  }
+
+  const normalized: string[] = [];
+  for (const candidate of candidates) {
+    const value = candidate.trim().toLowerCase();
+    if (value && !normalized.includes(value)) {
+      normalized.push(value);
+    }
+  }
+  return normalized;
+}
+
 function parseEgressPolicy(input: unknown): string {
   if (!input || typeof input !== "object") {
     return "default";
@@ -204,6 +243,7 @@ type DbTemplateVersionRow = {
   template_id: string;
   version_no: number;
   status: string;
+  system_prompt: string | null;
   model_config: unknown;
   tools_config: unknown;
   egress_policy: unknown;
@@ -218,6 +258,7 @@ export async function fetchTemplateVersions(templateId: string): Promise<Templat
       template_id::text,
       version_no,
       status::text,
+      system_prompt,
       model_config,
       tools_config,
       egress_policy,
@@ -234,7 +275,9 @@ export async function fetchTemplateVersions(templateId: string): Promise<Templat
     templateId: row.template_id,
     versionNo: row.version_no,
     status: toWorkflowStatus(row.status),
+    systemPrompt: row.system_prompt ?? undefined,
     modelChain: parseModelChain(row.model_config),
+    allowedTools: parseAllowedTools(row.tools_config),
     toolProfile: parseToolProfile(row.tools_config),
     egressPolicy: parseEgressPolicy(row.egress_policy),
     updatedAt: row.updated_at,

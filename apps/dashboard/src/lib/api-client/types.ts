@@ -34,7 +34,9 @@ export type TemplateVersion = {
   templateId: string;
   versionNo: number;
   status: WorkflowStatus;
+  systemPrompt?: string;
   modelChain: string[];
+  allowedTools?: string[];
   toolProfile: string;
   egressPolicy: string;
   updatedAt: string;
