@@ -19,17 +19,43 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-template_build_status = sa.Enum(
+def _create_pg_enum_if_not_exists(*, name: str, values: tuple[str, ...]) -> None:
+    """Create a Postgres enum type, ignoring 'already exists' races (parallel `alembic upgrade`)."""
+    assert name.isidentifier()  # migration-local constant, must never be user-controlled
+    value_sql = ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+    op.execute(
+        sa.text(
+            f"""
+            DO $do$
+            BEGIN
+                CREATE TYPE {name} AS ENUM ({value_sql});
+            EXCEPTION
+                WHEN duplicate_object THEN
+                    NULL;
+            END
+            $do$;
+            """
+        )
+    )
+
+
+# Bind to the named Postgres type without re-issuing `CREATE TYPE` in `create_table` DDL.
+template_build_status = postgresql.ENUM(
     "queued",
     "running",
     "succeeded",
     "failed",
     "cancelled",
     name="template_build_status",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
+    _create_pg_enum_if_not_exists(
+        name="template_build_status",
+        values=("queued", "running", "succeeded", "failed", "cancelled"),
+    )
     op.create_table(
         "template_builds",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),

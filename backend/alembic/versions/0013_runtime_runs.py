@@ -21,16 +21,41 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-runtime_run_status = sa.Enum(
+def _create_pg_enum_if_not_exists(*, name: str, values: tuple[str, ...]) -> None:
+    assert name.isidentifier()  # migration-local constant, must never be user-controlled
+    value_sql = ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+    op.execute(
+        sa.text(
+            f"""
+            DO $do$
+            BEGIN
+                CREATE TYPE {name} AS ENUM ({value_sql});
+            EXCEPTION
+                WHEN duplicate_object THEN
+                    NULL;
+            END
+            $do$;
+            """
+        )
+    )
+
+
+# Bind to the named Postgres type without re-issuing `CREATE TYPE` in `create_table` DDL.
+runtime_run_status = postgresql.ENUM(
     "started",
     "succeeded",
     "failed",
     "timeout",
     name="runtime_run_status",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
+    _create_pg_enum_if_not_exists(
+        name="runtime_run_status",
+        values=("started", "succeeded", "failed", "timeout"),
+    )
     op.create_table(
         "runtime_runs",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
