@@ -34,12 +34,17 @@ function fallbackFilename(input: {
   return `media-${input.id}.${fileExtensionFromMimeType(input.mime_type)}`;
 }
 
-function contentDisposition(filename: string): string {
+function contentDisposition(filename: string, disposition: "attachment" | "inline"): string {
   const asciiFilename = filename.replace(/[\r\n"]/g, "_");
-  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+  return `${disposition}; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
-function responseFromDataUrl(url: string, filename: string, fallbackMimeType: string): Response | null {
+function responseFromDataUrl(
+  url: string,
+  filename: string,
+  fallbackMimeType: string,
+  disposition: "attachment" | "inline",
+): Response | null {
   const match = /^data:([^;,]+)?(?:;base64)?,(.*)$/s.exec(url);
   if (!match) {
     return null;
@@ -55,14 +60,14 @@ function responseFromDataUrl(url: string, filename: string, fallbackMimeType: st
   return new Response(body, {
     headers: {
       "content-type": mimeType,
-      "content-disposition": contentDisposition(filename),
+      "content-disposition": contentDisposition(filename, disposition),
       "content-length": String(body.byteLength),
     },
   });
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Params },
 ): Promise<Response> {
   const session = await getSession();
@@ -71,6 +76,10 @@ export async function GET(
   }
 
   const { messageId, assetId } = await params;
+  const disposition =
+    new URL(request.url).searchParams.get("disposition") === "inline"
+      ? "inline"
+      : "attachment";
   const client = createBackendTrpcClient(session.backendAccessToken);
   const assets = await client.messages.media.query({ messageId });
   const asset = assets.find((item) => item.id === assetId);
@@ -87,7 +96,7 @@ export async function GET(
 
   if (downloadUrl.startsWith("data:")) {
     return (
-      responseFromDataUrl(downloadUrl, filename, asset.mime_type) ??
+      responseFromDataUrl(downloadUrl, filename, asset.mime_type, disposition) ??
       NextResponse.json({ detail: "invalid data url" }, { status: 502 })
     );
   }
@@ -100,7 +109,7 @@ export async function GET(
   return new Response(upstream.body, {
     headers: {
       "content-type": upstream.headers.get("content-type") ?? asset.mime_type,
-      "content-disposition": contentDisposition(filename),
+      "content-disposition": contentDisposition(filename, disposition),
       ...(upstream.headers.get("content-length")
         ? { "content-length": upstream.headers.get("content-length") as string }
         : {}),

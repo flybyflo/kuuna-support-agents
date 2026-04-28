@@ -269,9 +269,47 @@ function mediaFilename(row: { id: string; file_name?: string | null; mime_type: 
   return `media-${row.id}.${fileExtensionFromMimeType(row.mime_type)}`;
 }
 
-function mediaProxyUrl(row: { id: string; message_id: string; updated_at?: string }): string {
-  const version = row.updated_at ? `?v=${encodeURIComponent(row.updated_at)}` : "";
-  return `/api/media/${encodeURIComponent(row.message_id)}/${encodeURIComponent(row.id)}/download${version}`;
+function mediaProxyUrl(row: { id: string; message_id: string; updated_at?: string }, disposition?: "inline"): string {
+  const params = new URLSearchParams();
+  if (row.updated_at) {
+    params.set("v", row.updated_at);
+  }
+  if (disposition) {
+    params.set("disposition", disposition);
+  }
+  const query = params.size ? `?${params.toString()}` : "";
+  return `/api/media/${encodeURIComponent(row.message_id)}/${encodeURIComponent(row.id)}/download${query}`;
+}
+
+function mapMediaAsset(row: {
+  id: string;
+  message_id: string;
+  mime_type: string;
+  file_name?: string | null;
+  byte_size?: number | null;
+  status: string;
+  preview_url?: string | null;
+  download_url?: string | null;
+  transcript?: string | null;
+  updated_at?: string;
+}): MediaAsset {
+  const kind = mediaKind(row.mime_type);
+  const hasDownloadableMedia = Boolean(row.download_url || (kind === "image" && row.preview_url));
+  const downloadUrl = hasDownloadableMedia ? mediaProxyUrl(row) : undefined;
+  const viewUrl = hasDownloadableMedia ? mediaProxyUrl(row, "inline") : undefined;
+  return {
+    id: row.id,
+    messageId: row.message_id,
+    kind,
+    filename: mediaFilename(row),
+    mimeType: row.mime_type,
+    byteSize: row.byte_size ?? undefined,
+    status: workflowStatus(row.status),
+    transcript: row.transcript ?? undefined,
+    viewUrl,
+    previewUrl: kind === "image" ? viewUrl : undefined,
+    downloadUrl,
+  };
 }
 
 function mapRuntimeRun(row: {
@@ -426,6 +464,8 @@ export async function listTodos(providerGroupId?: string): Promise<TodoItem[]> {
       const rows = await client.agentState.todos.query({ providerGroupId, limit: 100 });
       return rows.map((row) => ({
         id: row.id,
+        messageId: row.message_id ?? undefined,
+        agentRunId: row.agent_run_id ?? undefined,
         providerGroupId: row.provider_group_id,
         groupTitle: titleFromGroupId(row.provider_group_id),
         title: row.title,
@@ -439,10 +479,13 @@ export async function listTodos(providerGroupId?: string): Promise<TodoItem[]> {
             ? row.priority
             : "normal",
         dueAt: row.due_at ?? undefined,
+        completedAt: row.completed_at ?? undefined,
         exportedAt: row.exported_at ?? undefined,
         exportAttemptCount: row.export_attempt_count,
         externalRef: row.external_ref ?? undefined,
         lastExportError: row.last_export_error ?? undefined,
+        attachments: (row.attachments ?? []).map(mapMediaAsset),
+        createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
     },
@@ -694,23 +737,7 @@ export async function listMediaAssets(messageId: string): Promise<MediaAsset[]> 
     "listMediaAssets",
     async () => {
       const client = await createSessionBackendTrpcClient();
-      return (await client.messages.media.query({ messageId })).map((row) => {
-        const kind = mediaKind(row.mime_type);
-        const hasDownloadableMedia = Boolean(row.download_url || (kind === "image" && row.preview_url));
-        const proxiedUrl = hasDownloadableMedia ? mediaProxyUrl(row) : undefined;
-        return {
-          id: row.id,
-          messageId: row.message_id,
-          kind,
-          filename: mediaFilename(row),
-          mimeType: row.mime_type,
-          byteSize: row.byte_size ?? undefined,
-          status: workflowStatus(row.status),
-          transcript: row.transcript ?? undefined,
-          previewUrl: kind === "image" ? proxiedUrl : undefined,
-          downloadUrl: proxiedUrl,
-        };
-      });
+      return (await client.messages.media.query({ messageId })).map(mapMediaAsset);
     },
     () => mockMediaAssets.filter((item) => item.messageId === messageId),
   );

@@ -188,6 +188,7 @@ export type MediaAsset = {
   byteSize?: number;
   status: WorkflowStatus;
   transcript?: string;
+  viewUrl?: string;
   previewUrl?: string;
   downloadUrl?: string;
 };
@@ -245,6 +246,8 @@ export type RuntimeDebugStatus = {
 
 export type TodoItem = {
   id: string;
+  messageId?: string;
+  agentRunId?: string;
   providerGroupId: string;
   groupTitle: string;
   title: string;
@@ -252,10 +255,13 @@ export type TodoItem = {
   status: "open" | "in_progress" | "done" | "cancelled";
   priority: "low" | "normal" | "high" | "urgent";
   dueAt?: string;
+  completedAt?: string;
   exportedAt?: string;
   exportAttemptCount: number;
   externalRef?: string;
   lastExportError?: string;
+  attachments: MediaAsset[];
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -323,6 +329,23 @@ export type BackendTodoRead = {
   export_attempt_count: number;
   external_ref?: string | null;
   last_export_error?: string | null;
+  attachments: BackendMediaAssetRead[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type BackendMediaAssetRead = {
+  id: string;
+  message_id: string;
+  provider_media_id?: string | null;
+  mime_type: string;
+  file_name?: string | null;
+  byte_size?: number | null;
+  status: string;
+  s3_key?: string | null;
+  preview_url?: string | null;
+  download_url?: string | null;
+  transcript?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -503,6 +526,51 @@ function toTodoPriority(value: string): TodoItem["priority"] {
   return "normal";
 }
 
+function toWorkflowStatus(value: string): WorkflowStatus {
+  const allowed: WorkflowStatus[] = [
+    "draft",
+    "ready",
+    "published",
+    "archived",
+    "active",
+    "inactive",
+    "provisioning",
+    "failed",
+    "queued",
+    "processing",
+    "running",
+    "succeeded",
+    "cancelled",
+  ];
+  return allowed.includes(value as WorkflowStatus) ? (value as WorkflowStatus) : "failed";
+}
+
+function toMediaKind(mimeType: string): MediaAsset["kind"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "file";
+}
+
+function fileExtensionFromMimeType(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType === "text/plain") return "txt";
+  if (mimeType === "audio/mpeg") return "mp3";
+  if (mimeType === "audio/ogg") return "ogg";
+  if (mimeType === "audio/mp4") return "m4a";
+  if (mimeType === "video/mp4") return "mp4";
+  return "bin";
+}
+
+function mediaFilename(item: BackendMediaAssetRead): string {
+  const fileName = item.file_name?.trim();
+  return fileName || `media-${item.id}.${fileExtensionFromMimeType(item.mime_type)}`;
+}
+
 function toAgentRunStatus(value: string): AgentRunRecord["status"] {
   if (value === "running" || value === "succeeded" || value === "failed") {
     return value;
@@ -551,8 +619,47 @@ function toBackendTodoRead(value: unknown, path: string): BackendTodoRead {
     export_attempt_count: readNumber(value, "export_attempt_count", path),
     external_ref: readOptionalString(value, "external_ref", path),
     last_export_error: readOptionalString(value, "last_export_error", path),
+    attachments: readArray(value, "attachments").map((item, index) => toBackendMediaAssetRead(item, `${path}.attachments[${index}]`)),
     created_at: readString(value, "created_at", path),
     updated_at: readString(value, "updated_at", path),
+  };
+}
+
+function toBackendMediaAssetRead(value: unknown, path: string): BackendMediaAssetRead {
+  if (!isRecord(value)) {
+    throw new KuunaApiClientError(`${path} must be an object`);
+  }
+  return {
+    id: readString(value, "id", path),
+    message_id: readString(value, "message_id", path),
+    provider_media_id: readOptionalString(value, "provider_media_id", path),
+    mime_type: readString(value, "mime_type", path),
+    file_name: readOptionalString(value, "file_name", path),
+    byte_size: value.byte_size === null || value.byte_size === undefined ? undefined : readNumber(value, "byte_size", path),
+    status: readString(value, "status", path),
+    s3_key: readOptionalString(value, "s3_key", path),
+    preview_url: readOptionalString(value, "preview_url", path),
+    download_url: readOptionalString(value, "download_url", path),
+    transcript: readOptionalString(value, "transcript", path),
+    created_at: readString(value, "created_at", path),
+    updated_at: readString(value, "updated_at", path),
+  };
+}
+
+function mapMediaAsset(item: BackendMediaAssetRead): MediaAsset {
+  const kind = toMediaKind(item.mime_type);
+  return {
+    id: item.id,
+    messageId: item.message_id,
+    kind,
+    filename: mediaFilename(item),
+    mimeType: item.mime_type,
+    byteSize: item.byte_size ?? undefined,
+    status: toWorkflowStatus(item.status),
+    transcript: item.transcript ?? undefined,
+    viewUrl: item.preview_url ?? item.download_url ?? undefined,
+    previewUrl: item.preview_url ?? undefined,
+    downloadUrl: item.download_url ?? undefined,
   };
 }
 
@@ -644,6 +751,8 @@ export class KuunaApiClient {
 
     return items.map((item) => ({
       id: item.id,
+      messageId: item.message_id ?? undefined,
+      agentRunId: item.agent_run_id ?? undefined,
       providerGroupId: item.provider_group_id,
       groupTitle: this.groupTitleForProviderGroupId(item.provider_group_id),
       title: item.title,
@@ -651,10 +760,13 @@ export class KuunaApiClient {
       status: toTodoStatus(item.status),
       priority: toTodoPriority(item.priority),
       dueAt: item.due_at ?? undefined,
+      completedAt: item.completed_at ?? undefined,
       exportedAt: item.exported_at ?? undefined,
       exportAttemptCount: item.export_attempt_count,
       externalRef: item.external_ref ?? undefined,
       lastExportError: item.last_export_error ?? undefined,
+      attachments: item.attachments.map(mapMediaAsset),
+      createdAt: item.created_at,
       updatedAt: item.updated_at,
     }));
   }
