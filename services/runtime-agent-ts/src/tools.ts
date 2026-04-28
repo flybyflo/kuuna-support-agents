@@ -261,6 +261,25 @@ export function executeExplicitTool(
     };
   }
 
+  if (name === "todo_create") {
+    const details = {
+      operation: "create",
+      title: textArg(args, ["title"]).trim(),
+      description: textArg(args, ["description"]).trim(),
+      priority: textArg(args, ["priority"]).trim() || "normal",
+      due_at: textArg(args, ["due_at"]).trim() || null,
+    };
+    return {
+      name,
+      ok: Boolean(details.title),
+      stdout: JSON.stringify(details),
+      stderr: details.title ? "" : "todo_create requires title",
+      timed_out: false,
+      duration_ms: nowMs(startedAt),
+      details,
+    };
+  }
+
   return {
     name,
     ok: false,

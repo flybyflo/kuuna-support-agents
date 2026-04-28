@@ -230,9 +230,10 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
     };
   }
 
-  const requestedToolResults = request.tool_requests.map((toolRequest) =>
-    executeExplicitTool(toolRequest, allowedTools, request.context),
-  );
+  const modelCreatedTodo = modelToolResults.some((result) => result.ok && result.name === "todo_create");
+  const requestedToolResults = request.tool_requests
+    .filter((toolRequest) => !(toolRequest.name.trim().toLowerCase() === "todo_create" && modelCreatedTodo))
+    .map((toolRequest) => executeExplicitTool(toolRequest, allowedTools, request.context));
   const toolResults = [...modelToolResults, ...requestedToolResults];
 
   return {

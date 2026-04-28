@@ -119,3 +119,43 @@ test("accepts runtime requests matching container identity", async () => {
     else process.env.KUUNA_AGENT_INSTANCE_ID = previousAgentInstanceId;
   }
 });
+
+test("executes explicit todo_create requests inside runtime container", async () => {
+  const previousApiKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const result = await runAgent({
+      user_prompt: "Review attached image",
+      allowed_tools: ["todo_create"],
+      context: {
+        provider_group_id: "group-a@g.us",
+        todo_required: true,
+      },
+      tool_requests: [
+        {
+          name: "todo_create",
+          arguments: {
+            title: "Review image attachment",
+            description: "Inspect image for staff follow-up.",
+            priority: "normal",
+          },
+        },
+      ],
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.tool_results.length, 1);
+    assert.equal(result.tool_results[0]?.name, "todo_create");
+    assert.equal(result.tool_results[0]?.ok, true);
+    assert.deepEqual(result.tool_results[0]?.details, {
+      operation: "create",
+      title: "Review image attachment",
+      description: "Inspect image for staff follow-up.",
+      priority: "normal",
+      due_at: null,
+    });
+  } finally {
+    if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousApiKey;
+  }
+});
