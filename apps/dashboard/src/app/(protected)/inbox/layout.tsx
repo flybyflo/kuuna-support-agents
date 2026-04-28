@@ -2,6 +2,10 @@ import type { ReactNode } from "react";
 
 import { GroupList } from "@/components/inbox/group-list";
 import {
+  AUTO_REFRESH_INTERVALS,
+  AutoRefresh,
+} from "@/components/system/auto-refresh";
+import {
   listBindings,
   listMessages,
   listTodos,
@@ -39,6 +43,7 @@ export default async function InboxLayout({
       <section className="flex min-h-0 flex-col overflow-hidden">
         {children}
       </section>
+      <AutoRefresh intervalMs={AUTO_REFRESH_INTERVALS.default} />
     </div>
   );
 }

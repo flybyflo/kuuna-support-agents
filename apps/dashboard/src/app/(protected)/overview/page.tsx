@@ -25,6 +25,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status/status-badge";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import {
   listAuditEvents,
   listBindings,
@@ -94,6 +95,7 @@ export default async function OverviewPage() {
 
   return (
     <div className="flex flex-col gap-10">
+      <AutoRefresh intervalMs={10000} />
       <PageHeader
         title="Operations Overview"
         description="Status across templates, bindings, ingestion, and audit trails."

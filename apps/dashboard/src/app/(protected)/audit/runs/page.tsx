@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { SimpleTable } from "@/components/data-table/simple-table";
 import { StatusBadge } from "@/components/status/status-badge";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import { Card, CardContent } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -38,6 +39,7 @@ export default async function RuntimeRunsPage({ searchParams }: { searchParams: 
 
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={8000} />
       <PageHeader
         title="Runtime runs"
         description="Per-message container executions with image selection, duration, and failure details."

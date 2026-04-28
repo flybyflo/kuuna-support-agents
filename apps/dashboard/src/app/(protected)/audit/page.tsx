@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { SimpleTable } from "@/components/data-table/simple-table";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { listAuditEvents } from "@/lib/api-client";
@@ -11,6 +12,7 @@ export default async function AuditPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={10000} />
       <PageHeader
         title="Audit events"
         description="Append-only operational events for governance and incident analysis."

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import {
   Card,
   CardContent,
@@ -39,6 +40,7 @@ export default async function TraceDetailPage({
 
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={10000} />
       <PageHeader
         title={`Trace ${detail.traceId}`}
         description="End-to-end correlation across ingest, retrieval, model path, and outbound intent."

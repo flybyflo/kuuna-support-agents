@@ -2,6 +2,7 @@ import Link from "next/link";
 import { GitBranch } from "lucide-react";
 
 import { SimpleTable } from "@/components/data-table/simple-table";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
 import { listMessageDecisions } from "@/lib/api-client";
@@ -12,6 +13,7 @@ export default async function DecisionsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <AutoRefresh intervalMs={6000} />
       <PageHeader
         title="Decisions"
         description="Stored message routing decisions from trigger and passive analysis."

@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   Bot,
@@ -103,6 +109,20 @@ function inboundDisplayText(entry: InboundEntry): string {
   }
 
   return "(no text)";
+}
+
+function findScrollableAncestor(element: HTMLElement): HTMLElement | null {
+  let current: HTMLElement | null = element.parentElement;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    const isScrollable =
+      (overflowY === "auto" || overflowY === "scroll") &&
+      current.scrollHeight > current.clientHeight;
+    if (isScrollable) return current;
+    current = current.parentElement;
+  }
+  return null;
 }
 
 function dayKey(value: string): string {
@@ -282,6 +302,7 @@ export function ChatTimeline({ inbound, outbound }: ChatTimelineProps) {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const wasNearBottomRef = useRef(true);
 
   const selectedItem = useMemo<SelectedItem>(() => {
     if (!selectedId) return null;
@@ -293,6 +314,36 @@ export function ChatTimeline({ inbound, outbound }: ChatTimelineProps) {
   useLayoutEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, []);
+
+  useEffect(() => {
+    const sentinel = bottomRef.current;
+    if (!sentinel) return;
+
+    const scrollContainer = findScrollableAncestor(sentinel);
+    if (!scrollContainer) return;
+
+    const updateNearBottom = () => {
+      const distance =
+        scrollContainer.scrollHeight -
+        scrollContainer.scrollTop -
+        scrollContainer.clientHeight;
+      wasNearBottomRef.current = distance < 80;
+    };
+
+    updateNearBottom();
+    scrollContainer.addEventListener("scroll", updateNearBottom, {
+      passive: true,
+    });
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", updateNearBottom);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!wasNearBottomRef.current) return;
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [items.length]);
 
   if (items.length === 0) {
     return (
