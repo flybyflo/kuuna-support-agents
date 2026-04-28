@@ -159,3 +159,45 @@ test("executes explicit todo_create requests inside runtime container", async ()
     else process.env.OPENAI_API_KEY = previousApiKey;
   }
 });
+
+test("analyzes image attachments before running the agent", async () => {
+  const previousApiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-key";
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    assert.equal(body.model, "gpt-4.1-mini");
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "Image shows an invoice requiring staff review." } }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  try {
+    const result = await runAgent({
+      user_prompt: "Review media",
+      context: {
+        provider_group_id: "group-a@g.us",
+        media_attachments: [
+          {
+            media_asset_id: "media-1",
+            mime_type: "image/jpeg",
+            status: "ready",
+            preview_url: "data:image/jpeg;base64,aGVsbG8=",
+          },
+        ],
+      },
+    });
+
+    assert.equal(result.media_insights.length, 1);
+    assert.equal(result.media_insights[0]?.status, "ready");
+    assert.equal(result.media_insights[0]?.summary, "Image shows an invoice requiring staff review.");
+    assert.match(result.context_block ?? "", /media_insights/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousApiKey;
+  }
+});

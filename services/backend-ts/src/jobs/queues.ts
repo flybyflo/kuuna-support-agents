@@ -50,6 +50,24 @@ export type EnqueueRuntimeChatTaskOptions = {
   tokenFactory?: () => string;
 };
 
+export type TodoExportSchedulerQueue = {
+  add(
+    name: "todo_export",
+    data: Record<string, unknown>,
+    options: {
+      jobId: string;
+      repeat: { every: number };
+      removeOnComplete: number;
+      removeOnFail: number;
+    },
+  ): Promise<unknown>;
+};
+
+export type ScheduleTodoExportJobOptions = {
+  enabled?: boolean;
+  queue?: TodoExportSchedulerQueue;
+};
+
 let redisConnection: Redis | undefined;
 let defaultQueue: Queue<Record<string, unknown>, unknown, KuunaJobName> | undefined;
 
@@ -83,6 +101,27 @@ export async function enqueueKuunaJob(
     },
   });
   return job.id ?? name;
+}
+
+export async function scheduleTodoExportJob(
+  options: ScheduleTodoExportJobOptions = {},
+): Promise<boolean> {
+  const enabled = options.enabled ?? getSettings().TODO_EXPORT_ENABLED;
+  if (!enabled) {
+    return false;
+  }
+  const queue = options.queue ?? getDefaultQueue();
+  await queue.add(
+    "todo_export",
+    {},
+    {
+      jobId: "todo_export_repeat",
+      repeat: { every: 10 * 60 * 1000 },
+      removeOnComplete: 500,
+      removeOnFail: 1000,
+    },
+  );
+  return true;
 }
 
 export async function enqueueRuntimeChatTask(

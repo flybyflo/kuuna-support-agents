@@ -13,7 +13,7 @@ export default async function AgentRunsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <AutoRefresh intervalMs={6000} />
+      <AutoRefresh intervalMs={6000} eventTypes={["agent_run.updated"]} />
       <PageHeader
         title="Agent Runs"
         description="Runtime executions, model selection, and tool availability."

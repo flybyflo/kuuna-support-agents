@@ -14,10 +14,20 @@ export function TemplateBuildAutoRefresh(props: { active: boolean }): null {
     const refresh = () => {
       router.refresh();
     };
-    window.addEventListener("kuuna:runtime-event", refresh);
+    const handleRuntimeEvent = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail : null;
+      const type =
+        detail && typeof detail === "object" && "type" in detail
+          ? String(detail.type)
+          : "";
+      if (type === "template_build.updated") {
+        refresh();
+      }
+    };
+    window.addEventListener("kuuna:runtime-event", handleRuntimeEvent);
 
     return () => {
-      window.removeEventListener("kuuna:runtime-event", refresh);
+      window.removeEventListener("kuuna:runtime-event", handleRuntimeEvent);
     };
   }, [props.active, router]);
 

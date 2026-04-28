@@ -410,6 +410,17 @@ async function createContractTables(sql: Sql): Promise<void> {
       unique (provider_group_id, doc_key)
     );
 
+    create table knowledge_customer_docs (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      customer_key text not null,
+      doc_key text not null,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (customer_key, doc_key)
+    );
+
     create table knowledge_versions (
       id uuid primary key default gen_random_uuid(),
       scope text not null,

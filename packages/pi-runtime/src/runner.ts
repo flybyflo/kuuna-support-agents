@@ -12,6 +12,7 @@ import {
   type ModelAttempt,
   type RuntimeAgentRequest,
   type RuntimeAgentResult,
+  type RuntimeMediaInsight,
   type ToolExecutionResult,
 } from "@kuuna/agent-contracts";
 import {
@@ -23,6 +24,7 @@ import {
   openAiApiKey,
 } from "./config.js";
 import { getOpenAiModel, modelPath, piThinkingLevel } from "./model.js";
+import { analyzeRuntimeMedia } from "./media-insights.js";
 import { buildPrompt } from "./prompt.js";
 import { createKuunaTools, executeExplicitTool, sanitizeAllowedTools } from "./tools.js";
 
@@ -112,13 +114,17 @@ async function runPiAttempt(
   request: RuntimeAgentRequest,
   modelName: string,
   allowedTools: string[],
+  mediaInsights: RuntimeMediaInsight[],
 ): Promise<{ responseText: string; toolResults: ToolExecutionResult[] }> {
   const model = getOpenAiModel(modelName);
   if (!model) {
     throw new Error(`OpenAI model '${modelName}' is not available in Pi model registry`);
   }
 
-  const prompt = buildPrompt(request);
+  const prompt = buildPrompt({
+    ...request,
+    context: { ...(request.context ?? {}), media_insights: mediaInsights },
+  });
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
     retry: { enabled: true, maxRetries: 1 },
@@ -184,7 +190,12 @@ async function runPiAttempt(
 export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
   const request = runtimeAgentRequestSchema.parse(input);
   assertRuntimeIdentity(request);
-  const prompt = buildPrompt(request);
+  const mediaInsights = await analyzeRuntimeMedia(request.context.media_attachments ?? []);
+  const enrichedRequest: RuntimeAgentRequest = {
+    ...request,
+    context: { ...(request.context ?? {}), media_insights: mediaInsights },
+  };
+  const prompt = buildPrompt(enrichedRequest);
   const selectedModelPath = modelPath(request.model_path);
   const reasoningEffort = request.reasoning_effort ?? defaultReasoningEffort() ?? DEFAULT_REASONING_EFFORT;
   const allowedTools = sanitizeAllowedTools(request.allowed_tools);
@@ -198,10 +209,10 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
   for (const modelName of selectedModelPath) {
     try {
       if (!openAiApiKey()) {
-        responseText = placeholderResponse(modelName || defaultModel(), request);
+        responseText = placeholderResponse(modelName || defaultModel(), enrichedRequest);
         modelToolResults = [];
       } else {
-        const result = await runPiAttempt(request, modelName, allowedTools);
+        const result = await runPiAttempt(enrichedRequest, modelName, allowedTools, mediaInsights);
         responseText = result.responseText;
         modelToolResults = result.toolResults;
       }
@@ -226,6 +237,7 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
       attempts,
       response_text: null,
       tool_results: [],
+      media_insights: mediaInsights,
       error: lastError ?? "no model candidates available",
     };
   }
@@ -247,6 +259,7 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
     attempts,
     response_text: responseText,
     tool_results: toolResults,
+    media_insights: mediaInsights,
     error: null,
   };
 }

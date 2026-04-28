@@ -9,6 +9,7 @@ import {
   agentRuns,
   groupBindings,
   groupTemplates,
+  mediaAssets,
   messageDecisions,
   messages,
   messageVersions,
@@ -16,6 +17,7 @@ import {
   templateVersions,
   todos,
   toolInvocations,
+  transcripts,
 } from "../src/db/schema.js";
 import { resetSettingsForTests } from "../src/config.js";
 import { processInboundExecutionJob, processPassiveMessageAnalysisJob } from "../src/jobs/runtime-execution.js";
@@ -30,6 +32,14 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   const harness = await createContractHarness();
   t.after(() => harness.close());
   const seeded = await seedRuntimeScenario(harness, { messageText: "Please follow up on missing invoice screenshots" });
+  const [asset] = await harness.db.insert(mediaAssets).values({
+    messageId: seeded.messageId,
+    providerMediaId: "media-passive",
+    mimeType: "image/jpeg",
+    status: "ready",
+    metadataJson: { preview_url: "data:image/jpeg;base64,aGVsbG8=" },
+  }).returning();
+  assert.ok(asset);
 
   const result = await processPassiveMessageAnalysisJob(
     harness.db,
@@ -40,6 +50,10 @@ test("contract: passive message analysis persists agent run, tool invocation, to
       traceId: "trace-passive",
     },
     {
+      enqueueJob: async (name, data, jobId) => {
+        harness.jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      },
       runtimeAgentCaller: async () => ({
           success: true,
           prompt: "prompt",
@@ -58,6 +72,16 @@ test("contract: passive message analysis persists agent run, tool invocation, to
               timed_out: false,
               duration_ms: 12,
               details: { title: "Collect invoice screenshots", priority: "high", description: "Ask client for screenshots." },
+            },
+          ],
+          media_insights: [
+            {
+              media_asset_id: asset.id,
+              mime_type: "image/jpeg",
+              kind: "image",
+              status: "ready",
+              summary: "Invoice screenshot for staff review.",
+              transcript: "Invoice screenshot for staff review.",
             },
           ],
           error: null,
@@ -80,6 +104,11 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   assert.ok(invocation);
   assert.equal(invocation.toolName, "todo_create");
   assert.equal(invocation.ok, true);
+
+  const [transcript] = await harness.db.select().from(transcripts).where(eq(transcripts.mediaAssetId, asset.id)).limit(1);
+  assert.ok(transcript);
+  assert.equal(transcript.textContent, "Invoice screenshot for staff review.");
+  assert.equal(harness.jobs.some((job) => job.name === "retrieval_indexing"), true);
 
   const [decision] = await harness.db.select().from(messageDecisions).where(eq(messageDecisions.messageId, seeded.messageId)).limit(1);
   assert.ok(decision);
@@ -115,6 +144,7 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "Please upload the tax form and I will review it.",
           tool_results: [],
+          media_insights: [],
           error: null,
         }),
     },
@@ -206,6 +236,7 @@ test("contract: inbound execution provisions strict per-chat runtime", { skip: s
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "I am isolated.",
           tool_results: [],
+          media_insights: [],
           error: null,
         };
       },

@@ -5,8 +5,10 @@ import {
   enqueueRuntimeChatTask,
   parseRuntimeChatTask,
   runtimeChatDrainJobId,
+  scheduleTodoExportJob,
   type EnqueueRuntimeChatTaskOptions,
   type KuunaJobName,
+  type TodoExportSchedulerQueue,
 } from "../src/jobs/queues.js";
 
 test("enqueueRuntimeChatTask appends to the per-chat Redis queue and schedules one drain job", async () => {
@@ -74,4 +76,36 @@ test("parseRuntimeChatTask rejects invalid task names", () => {
       }),
     /invalid name/,
   );
+});
+
+test("scheduleTodoExportJob registers a 10 minute repeatable job when enabled", async () => {
+  const calls: Array<{
+    name: "todo_export";
+    data: Record<string, unknown>;
+    options: Parameters<TodoExportSchedulerQueue["add"]>[2];
+  }> = [];
+  const queue: TodoExportSchedulerQueue = {
+    async add(name, data, options) {
+      calls.push({ name, data, options });
+    },
+  };
+
+  const scheduled = await scheduleTodoExportJob({ enabled: true, queue });
+
+  assert.equal(scheduled, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.name, "todo_export");
+  assert.deepEqual(calls[0]?.data, {});
+  assert.equal(calls[0]?.options.jobId, "todo_export_repeat");
+  assert.deepEqual(calls[0]?.options.repeat, { every: 10 * 60 * 1000 });
+});
+
+test("scheduleTodoExportJob does not touch Redis when disabled", async () => {
+  const queue: TodoExportSchedulerQueue = {
+    async add() {
+      throw new Error("queue should not be used");
+    },
+  };
+
+  assert.equal(await scheduleTodoExportJob({ enabled: false, queue }), false);
 });

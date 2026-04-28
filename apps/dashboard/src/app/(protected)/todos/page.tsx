@@ -10,7 +10,7 @@ export default async function GlobalTodosPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <AutoRefresh intervalMs={6000} />
+      <AutoRefresh intervalMs={6000} eventTypes={["todo.updated"]} />
       <PageHeader
         title="Todos"
         description="Open staff follow-ups from every chat you can access."

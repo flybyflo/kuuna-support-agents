@@ -43,7 +43,16 @@ export default async function InboxLayout({
       <section className="flex min-h-0 flex-col overflow-hidden">
         {children}
       </section>
-      <AutoRefresh intervalMs={AUTO_REFRESH_INTERVALS.default} />
+      <AutoRefresh
+        intervalMs={AUTO_REFRESH_INTERVALS.default}
+        eventTypes={[
+          "message.created",
+          "media.updated",
+          "todo.updated",
+          "outbound_intent.updated",
+          "agent_run.updated",
+        ]}
+      />
     </div>
   );
 }

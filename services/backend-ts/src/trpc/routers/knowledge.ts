@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   knowledgeCommonDocs,
+  knowledgeCustomerDocs,
   knowledgeGroupDocs,
   knowledgeVersions,
   mediaAssets,
@@ -24,14 +25,18 @@ const groupDocInput = commonDocInput.extend({
   providerGroupId: z.string().trim().min(1).max(255),
 });
 
+const customerDocInput = groupDocInput.extend({
+  customerKey: z.string().trim().min(1).max(255).optional(),
+});
+
 const versionInput = z.object({
-  scope: z.enum(["common", "group"]),
+  scope: z.enum(["common", "group", "customer"]),
   docRefId: z.string().uuid(),
   contentMarkdown: z.string(),
 });
 
 const versionTargetInput = z.object({
-  scope: z.enum(["common", "group"]),
+  scope: z.enum(["common", "group", "customer"]),
   docRefId: z.string().uuid(),
   versionId: z.string().uuid(),
 });
@@ -177,6 +182,53 @@ export const knowledgeRouter = createTRPCRouter({
     return doc;
   }),
 
+  customerDocs: protectedProcedure
+    .input(z.object({ providerGroupId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select()
+        .from(knowledgeCustomerDocs)
+        .where(eq(knowledgeCustomerDocs.customerKey, input.providerGroupId))
+        .orderBy(desc(knowledgeCustomerDocs.updatedAt));
+      return rows.map((doc) => ({
+        id: doc.id,
+        doc_key: doc.docKey,
+        scope: "customer" as const,
+        provider_group_id: doc.providerGroupId,
+        customer_key: doc.customerKey,
+        title: doc.title,
+        created_at: doc.createdAt.toISOString(),
+        updated_at: doc.updatedAt.toISOString(),
+      }));
+    }),
+
+  createCustomerDoc: roleProcedure("owner", "admin").input(customerDocInput).mutation(async ({ ctx, input }) => {
+    const customerKey = input.customerKey?.trim() || input.providerGroupId;
+    const [existing] = await ctx.db
+      .select({ id: knowledgeCustomerDocs.id })
+      .from(knowledgeCustomerDocs)
+      .where(
+        and(
+          eq(knowledgeCustomerDocs.customerKey, customerKey),
+          eq(knowledgeCustomerDocs.docKey, input.docKey),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      throw new TRPCError({ code: "CONFLICT", message: "customer knowledge doc already exists" });
+    }
+    const [doc] = await ctx.db
+      .insert(knowledgeCustomerDocs)
+      .values({
+        providerGroupId: input.providerGroupId,
+        customerKey,
+        docKey: input.docKey,
+        title: input.title,
+      })
+      .returning();
+    return doc;
+  }),
+
   versions: protectedProcedure
     .input(z.object({ docRefId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
@@ -198,8 +250,7 @@ export const knowledgeRouter = createTRPCRouter({
     }),
 
   createVersion: roleProcedure("owner", "admin").input(versionInput).mutation(async ({ ctx, input }) => {
-    const docTable = input.scope === "common" ? knowledgeCommonDocs : knowledgeGroupDocs;
-    const [doc] = await ctx.db.select({ id: docTable.id }).from(docTable).where(eq(docTable.id, input.docRefId));
+    const doc = await findKnowledgeDoc(ctx.db, input.scope, input.docRefId);
     if (!doc) {
       throw new TRPCError({ code: "NOT_FOUND", message: "knowledge doc not found" });
     }
@@ -302,6 +353,35 @@ export const knowledgeRouter = createTRPCRouter({
     return version;
   }),
 });
+
+async function findKnowledgeDoc(
+  database: DbLike,
+  scope: "common" | "group" | "customer",
+  docRefId: string,
+): Promise<{ id: string } | null> {
+  if (scope === "common") {
+    const [doc] = await database
+      .select({ id: knowledgeCommonDocs.id })
+      .from(knowledgeCommonDocs)
+      .where(eq(knowledgeCommonDocs.id, docRefId))
+      .limit(1);
+    return doc ?? null;
+  }
+  if (scope === "group") {
+    const [doc] = await database
+      .select({ id: knowledgeGroupDocs.id })
+      .from(knowledgeGroupDocs)
+      .where(eq(knowledgeGroupDocs.id, docRefId))
+      .limit(1);
+    return doc ?? null;
+  }
+  const [doc] = await database
+    .select({ id: knowledgeCustomerDocs.id })
+    .from(knowledgeCustomerDocs)
+    .where(eq(knowledgeCustomerDocs.id, docRefId))
+    .limit(1);
+  return doc ?? null;
+}
 
 async function collectIngestStats(database: DbLike): Promise<Map<string, GroupIngestStats>> {
   const statsByGroup = new Map<string, GroupIngestStats>();

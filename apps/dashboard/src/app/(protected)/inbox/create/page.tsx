@@ -136,7 +136,10 @@ export default async function InboxCreatePage({
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex flex-col gap-6 p-6">
-        <AutoRefresh intervalMs={15000} />
+        <AutoRefresh
+          intervalMs={15000}
+          eventTypes={["binding.updated", "runtime_container.updated"]}
+        />
 
         <PageHeader
           title="Bind WhatsApp group"

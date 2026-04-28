@@ -141,8 +141,9 @@ export type RuntimeRun = {
 export type KnowledgeDoc = {
   id: string;
   docKey: string;
-  scope: "common" | "group";
+  scope: "common" | "group" | "customer";
   providerGroupId?: string;
+  customerKey?: string;
   title: string;
   status: WorkflowStatus;
   updatedAt: string;
@@ -152,7 +153,7 @@ export type KnowledgeDoc = {
 
 export type KnowledgeDocVersion = {
   id: string;
-  scope: "common" | "group";
+  scope: "common" | "group" | "customer";
   docRefId: string;
   versionNo: number;
   status: WorkflowStatus;

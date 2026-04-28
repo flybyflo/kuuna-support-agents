@@ -28,6 +28,16 @@ export const runtimeMediaAttachmentSchema = z.object({
   preview_url: z.string().nullable().optional(),
 });
 
+export const runtimeMediaInsightSchema = z.object({
+  media_asset_id: z.string().min(1),
+  mime_type: z.string().min(1),
+  kind: z.enum(["image", "audio", "video", "file"]),
+  status: z.enum(["ready", "failed", "skipped"]),
+  summary: z.string().nullable().optional(),
+  transcript: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+});
+
 export const runtimeLinkSchema = z.object({
   url: z.string().min(1),
   normalized_url: z.string().nullable().optional(),
@@ -45,6 +55,7 @@ export const runtimeAgentContextSchema = z
     todos: z.array(z.record(z.unknown())).optional(),
     links: z.array(runtimeLinkSchema).optional(),
     media_attachments: z.array(runtimeMediaAttachmentSchema).optional(),
+    media_insights: z.array(runtimeMediaInsightSchema).optional(),
     todo_required: z.boolean().optional(),
     todo_required_reason: z.string().optional(),
   })
@@ -88,12 +99,14 @@ export const runtimeAgentResultSchema = z.object({
   attempts: z.array(modelAttemptSchema).default([]),
   response_text: z.string().nullable().optional(),
   tool_results: z.array(toolExecutionResultSchema).default([]),
+  media_insights: z.array(runtimeMediaInsightSchema).default([]),
   error: z.string().nullable().optional(),
 });
 
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 export type ToolInvocation = z.infer<typeof toolInvocationSchema>;
 export type RuntimeMediaAttachment = z.infer<typeof runtimeMediaAttachmentSchema>;
+export type RuntimeMediaInsight = z.infer<typeof runtimeMediaInsightSchema>;
 export type RuntimeLink = z.infer<typeof runtimeLinkSchema>;
 export type RuntimeAgentContext = z.infer<typeof runtimeAgentContextSchema>;
 export type RuntimeAgentRequest = z.infer<typeof runtimeAgentRequestSchema>;

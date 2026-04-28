@@ -12,7 +12,21 @@ export default async function AuditPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <AutoRefresh intervalMs={10000} />
+      <AutoRefresh
+        intervalMs={10000}
+        eventTypes={[
+          "message.created",
+          "message.decision",
+          "media.updated",
+          "agent_run.updated",
+          "tool_invocation.created",
+          "todo.updated",
+          "outbound_intent.updated",
+          "template_build.updated",
+          "binding.updated",
+          "runtime_container.updated",
+        ]}
+      />
       <PageHeader
         title="Audit events"
         description="Append-only operational events for governance and incident analysis."

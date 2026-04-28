@@ -8,6 +8,7 @@ import {
   type RuntimeAgentResult,
   type RuntimeLink,
   type RuntimeMediaAttachment,
+  type RuntimeMediaInsight,
   type ToolInvocation,
 } from "@kuuna/agent-contracts";
 import type { RuntimeAgentRouter } from "@kuuna/runtime-agent-ts/trpc";
@@ -174,7 +175,7 @@ export async function processInboundExecutionJob(
 export async function processPassiveMessageAnalysisJob(
   database: DbLike,
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
-  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner } = {},
+  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner; enqueueJob?: EnqueueKuunaJob } = {},
 ): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "analyzed" | "failed" }> {
   const resolved = await resolveMessageAndRuntime(database, input, "passive_analysis");
   if (!resolved.ok) return resolved.result;
@@ -339,7 +340,7 @@ async function runViaRuntimeAgent(
     extraContext?: Partial<RuntimeAgentContext>;
     toolRequests?: ToolInvocation[];
   },
-  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner },
+  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner; enqueueJob?: EnqueueKuunaJob },
 ): Promise<RuntimeResult | null> {
   const [agentRun] = await database
     .insert(agentRuns)
@@ -435,6 +436,12 @@ async function runViaRuntimeAgent(
       providerGroupId: input.providerGroupId,
       toolResults: result.tool_results,
     });
+    await persistRuntimeMediaInsights(database, {
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      mediaInsights: result.media_insights,
+      enqueueJob: options.enqueueJob,
+    });
     return {
       text: responseText,
       modelPath: attemptModels.length ? attemptModels : input.modelPath.slice(0, 1),
@@ -483,6 +490,79 @@ async function callRuntimeAgentViaTrpc(
     ],
   });
   return runtimeAgentResultSchema.parse(await client.agent.run.mutate(request));
+}
+
+async function persistRuntimeMediaInsights(
+  database: DbLike,
+  input: {
+    providerGroupId: string;
+    traceId: string | null;
+    mediaInsights: RuntimeMediaInsight[];
+    enqueueJob?: EnqueueKuunaJob;
+  },
+): Promise<void> {
+  for (const insight of input.mediaInsights) {
+    if (insight.status !== "ready") continue;
+    const text = (insight.transcript ?? insight.summary ?? "").trim();
+    if (!text) continue;
+    const [asset] = await database
+      .select({ id: mediaAssets.id, messageId: mediaAssets.messageId })
+      .from(mediaAssets)
+      .innerJoin(messages, eq(messages.id, mediaAssets.messageId))
+      .where(
+        and(
+          eq(mediaAssets.id, insight.media_asset_id),
+          eq(messages.providerGroupId, input.providerGroupId),
+        ),
+      )
+      .limit(1);
+    if (!asset) continue;
+
+    await upsertMediaTranscript(database, insight.media_asset_id, {
+      text,
+      status: "ready",
+    });
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: insight.media_asset_id,
+      entityType: "media_asset",
+      payload: {
+        status: "ready",
+        message_id: asset.messageId,
+        source: "runtime_media_insight",
+        kind: insight.kind,
+      },
+    });
+    await (input.enqueueJob ?? enqueueKuunaJob)(
+      "retrieval_indexing",
+      { source_type: "media_asset", source_id: insight.media_asset_id, trace_id: input.traceId },
+      `retrieval_indexing_media_asset_${jobToken(insight.media_asset_id)}_${jobToken(input.traceId ?? insight.media_asset_id)}`,
+    );
+  }
+}
+
+async function upsertMediaTranscript(
+  database: DbLike,
+  mediaAssetId: string,
+  input: { text: string; status: "ready" | "failed" },
+): Promise<void> {
+  const [existing] = await database
+    .select({ id: transcripts.id })
+    .from(transcripts)
+    .where(eq(transcripts.mediaAssetId, mediaAssetId))
+    .limit(1);
+  const values = {
+    textContent: input.text,
+    status: input.status,
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await database.update(transcripts).set(values).where(eq(transcripts.id, existing.id));
+    return;
+  }
+  await database.insert(transcripts).values({ mediaAssetId, ...values });
 }
 
 async function persistRuntimeToolResults(
@@ -640,7 +720,7 @@ async function retrieveRuntimeContext(
       return {
         source_type: row.sourceType,
         source_scope: row.scope,
-        score,
+        score: score + retrievalScopeBoost(row.scope),
         content: row.content,
         occurred_at: row.updatedAt.toISOString(),
         chunk_no: row.chunkNo,
@@ -649,6 +729,13 @@ async function retrieveRuntimeContext(
     .filter((hit) => hit.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+function retrievalScopeBoost(scope: string): number {
+  if (scope === "customer") return 0.3;
+  if (scope === "group") return 0.2;
+  if (scope === "conversation") return 0.1;
+  return 0;
 }
 
 function buildRetrievalRefs(hits: RetrievalHit[]): Array<Record<string, unknown>> {

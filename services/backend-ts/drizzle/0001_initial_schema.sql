@@ -50,7 +50,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE knowledge_scope AS ENUM ('common', 'group');
+  CREATE TYPE knowledge_scope AS ENUM ('common', 'group', 'customer');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
@@ -62,7 +62,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE embedding_scope AS ENUM ('common', 'group');
+  CREATE TYPE embedding_scope AS ENUM ('common', 'group', 'customer');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
@@ -272,6 +272,17 @@ CREATE TABLE IF NOT EXISTS knowledge_group_docs (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (provider_group_id, doc_key)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_customer_docs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider_group_id text NOT NULL,
+  customer_key text NOT NULL,
+  doc_key text NOT NULL,
+  title text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (customer_key, doc_key)
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_versions (

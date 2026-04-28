@@ -41,14 +41,14 @@ export const messageEventType = pgEnum("message_event_type", [
 ]);
 export const mediaStatus = pgEnum("media_status", ["pending", "ready", "failed"]);
 export const transcriptStatus = pgEnum("transcript_status", ["pending", "ready", "failed"]);
-export const knowledgeScope = pgEnum("knowledge_scope", ["common", "group"]);
+export const knowledgeScope = pgEnum("knowledge_scope", ["common", "group", "customer"]);
 export const knowledgeVersionStatus = pgEnum("knowledge_version_status", [
   "draft",
   "ready",
   "published",
   "archived",
 ]);
-export const embeddingScope = pgEnum("embedding_scope", ["common", "group"]);
+export const embeddingScope = pgEnum("embedding_scope", ["common", "group", "customer"]);
 export const outboundStatus = pgEnum("outbound_status", [
   "pending",
   "sending",
@@ -248,6 +248,16 @@ export const knowledgeCommonDocs = pgTable("knowledge_common_docs", {
 export const knowledgeGroupDocs = pgTable("knowledge_group_docs", {
   id: uuid("id").defaultRandom().primaryKey(),
   providerGroupId: text("provider_group_id").notNull(),
+  docKey: text("doc_key").notNull(),
+  title: text("title").notNull(),
+  createdAt,
+  updatedAt,
+});
+
+export const knowledgeCustomerDocs = pgTable("knowledge_customer_docs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  providerGroupId: text("provider_group_id").notNull(),
+  customerKey: text("customer_key").notNull(),
   docKey: text("doc_key").notNull(),
   title: text("title").notNull(),
   createdAt,

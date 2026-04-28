@@ -40,7 +40,18 @@ export default async function TraceDetailPage({
 
   return (
     <div className="flex flex-col gap-8">
-      <AutoRefresh intervalMs={10000} />
+      <AutoRefresh
+        intervalMs={10000}
+        eventTypes={[
+          "message.created",
+          "message.decision",
+          "media.updated",
+          "agent_run.updated",
+          "tool_invocation.created",
+          "todo.updated",
+          "outbound_intent.updated",
+        ]}
+      />
       <PageHeader
         title={`Trace ${detail.traceId}`}
         description="End-to-end correlation across ingest, retrieval, model path, and outbound intent."

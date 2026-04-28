@@ -10,6 +10,7 @@ import {
   peekRuntimeChatTask,
   refreshRuntimeChatDrain,
   removeProcessedRuntimeChatTask,
+  scheduleTodoExportJob,
   type KuunaJobName,
   type RuntimeChatTask,
 } from "./queues.js";
@@ -210,6 +211,7 @@ export function createDefaultWorker(): Worker<Record<string, unknown>, unknown, 
 
 export async function runWorker(): Promise<void> {
   const worker = createDefaultWorker();
+  await scheduleTodoExportJob();
   logger.info("backend_ts_worker_started", { queue: "default" });
 
   const shutdown = async () => {

@@ -222,6 +222,7 @@ function mapKnowledgeDoc(row: {
   doc_key: string;
   scope: string;
   provider_group_id?: string | null;
+  customer_key?: string | null;
   title: string;
   status?: string;
   updated_at?: string;
@@ -231,8 +232,14 @@ function mapKnowledgeDoc(row: {
   return {
     id: row.id,
     docKey: row.doc_key,
-    scope: row.scope === "group" ? "group" : "common",
+    scope:
+      row.scope === "customer"
+        ? "customer"
+        : row.scope === "group"
+          ? "group"
+          : "common",
     providerGroupId: row.provider_group_id ?? undefined,
+    customerKey: row.customer_key ?? undefined,
     title: row.title,
     status: workflowStatus(row.status ?? "ready"),
     updatedAt: row.updated_at ?? new Date(0).toISOString(),
@@ -688,7 +695,7 @@ export async function listPromptAssets(instanceId?: string): Promise<PromptAsset
 }
 
 export async function listKnowledgeDocs(
-  scope?: "common" | "group",
+  scope?: "common" | "group" | "customer",
   providerGroupId?: string,
 ): Promise<KnowledgeDoc[]> {
   return withOptionalMock(
@@ -701,11 +708,17 @@ export async function listKnowledgeDocs(
       if (scope === "group") {
         return (await client.knowledge.ingestedGroupDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
       }
-      const [commonDocs, groupDocs] = await Promise.all([
+      if (scope === "customer" && providerGroupId) {
+        return (await client.knowledge.customerDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
+      }
+      const [commonDocs, groupDocs, customerDocs] = await Promise.all([
         client.knowledge.ingestedCommonDocs.query(),
         client.knowledge.ingestedGroupDocs.query({ providerGroupId }),
+        providerGroupId
+          ? client.knowledge.customerDocs.query({ providerGroupId })
+          : Promise.resolve([]),
       ]);
-      return [...commonDocs, ...groupDocs].map(mapKnowledgeDoc);
+      return [...commonDocs, ...groupDocs, ...customerDocs].map(mapKnowledgeDoc);
     },
     () => [],
   );
