@@ -15,6 +15,7 @@ export class BaileysGateway implements GatewayClient {
   private module: BaileysModule | null = null;
   private saveCreds: (() => Promise<void>) | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly gatewayOutboundMessageIds = new Set<string>();
   private stopping = false;
   private starting: Promise<void> | null = null;
   private readonly logger: Logger;
@@ -85,7 +86,11 @@ export class BaileysGateway implements GatewayClient {
   }): Promise<string | null> {
     const socket = this.requireSocket();
     const response = await socket.sendMessage(input.providerGroupId, { text: input.text });
-    return response?.key?.id ?? null;
+    const providerMessageId = response?.key?.id ?? null;
+    if (providerMessageId) {
+      this.rememberGatewayOutboundMessage(providerMessageId);
+    }
+    return providerMessageId;
   }
 
   connectionSnapshot(): ConnectionSnapshot {
@@ -186,8 +191,14 @@ export class BaileysGateway implements GatewayClient {
       });
     });
 
-    socket.ev.on("messages.upsert", (event: { messages?: unknown }) => {
-      void this.handleMessages(Array.isArray(event.messages) ? event.messages as AnyRecord[] : []).catch((error) => {
+    socket.ev.on("messages.upsert", (event: { messages?: unknown; type?: unknown }) => {
+      const messages = Array.isArray(event.messages) ? (event.messages as AnyRecord[]) : [];
+      this.logger.info({
+        event: "gateway_messages_upsert_received",
+        upsert_type: typeof event.type === "string" ? event.type : null,
+        message_count: messages.length,
+      });
+      void this.handleMessages(messages).catch((error) => {
         this.logger.error({ event: "gateway_messages_upsert_failed", error: errorMessage(error) });
       });
     });
@@ -207,8 +218,33 @@ export class BaileysGateway implements GatewayClient {
 
   private async handleMessages(messages: AnyRecord[]): Promise<void> {
     for (const message of messages) {
-      if (!message.message || isSelfMessage(message)) continue;
+      const summary = messageSummary(message);
+      if (!message.message) {
+        this.logger.info({
+          event: "gateway_inbound_skipped",
+          reason: "missing_message_content",
+          ...summary,
+        });
+        continue;
+      }
+      if (isSelfMessage(message) && summary.provider_message_id && this.gatewayOutboundMessageIds.has(summary.provider_message_id)) {
+        this.logger.info({
+          event: "gateway_inbound_skipped",
+          reason: "known_gateway_outbound_echo",
+          ...summary,
+        });
+        continue;
+      }
       const payload = mapBaileysMessage(message);
+      if (!payload.provider_group_id) {
+        this.logger.warn({
+          event: "gateway_inbound_skipped",
+          reason: "missing_provider_group_id",
+          provider_message_id: payload.provider_message_id,
+          message_keys: summary.message_keys,
+        });
+        continue;
+      }
       try {
         const response = await this.input.backendClient.sendInboundPayload(payload);
         this.logger.info({
@@ -216,6 +252,9 @@ export class BaileysGateway implements GatewayClient {
           trace_id: response.trace_id,
           provider_group_id: payload.provider_group_id,
           provider_message_id: payload.provider_message_id,
+          from_me: summary.from_me,
+          text_present: Boolean((payload.message.text ?? "").trim()),
+          media_count: payload.message.media.length,
           deduped: response.deduped,
           execution_enqueued: response.execution_enqueued,
         });
@@ -228,6 +267,15 @@ export class BaileysGateway implements GatewayClient {
           error: errorMessage(error),
         });
       }
+    }
+  }
+
+  private rememberGatewayOutboundMessage(providerMessageId: string): void {
+    this.gatewayOutboundMessageIds.add(providerMessageId);
+    if (this.gatewayOutboundMessageIds.size <= 5000) return;
+    const oldest = this.gatewayOutboundMessageIds.values().next().value;
+    if (typeof oldest === "string") {
+      this.gatewayOutboundMessageIds.delete(oldest);
     }
   }
 
@@ -270,4 +318,26 @@ function errorMessage(error: unknown): string {
 
 function objectRecord(value: unknown): AnyRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as AnyRecord) : {};
+}
+
+function messageSummary(message: AnyRecord): {
+  provider_group_id: string | null;
+  provider_message_id: string | null;
+  from_me: boolean;
+  message_keys: string[];
+} {
+  const key = objectRecord(message.key);
+  const content = objectRecord(message.message);
+  return {
+    provider_group_id: stringValue(key.remoteJid),
+    provider_message_id: stringValue(key.id),
+    from_me: key.fromMe === true,
+    message_keys: Object.keys(content).sort(),
+  };
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
 }

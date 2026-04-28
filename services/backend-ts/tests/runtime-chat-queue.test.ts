@@ -54,7 +54,7 @@ test("enqueueRuntimeChatTask appends to the per-chat Redis queue and schedules o
   assert.equal(jobs[0]?.name, "runtime_chat_queue");
   assert.equal(jobs[0]?.data.provider_group_id, "group-a@g.us");
   assert.equal(jobs[0]?.data.drain_token, "drain-token");
-  assert.equal(jobs[0]?.jobId, runtimeChatDrainJobId("group-a@g.us"));
+  assert.match(jobs[0]?.jobId ?? "", new RegExp(`^${runtimeChatDrainJobId("group-a@g.us")}_`));
   assert.equal(jobs[0]?.data.queued_task, undefined);
 });
 

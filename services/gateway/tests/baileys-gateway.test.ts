@@ -100,16 +100,20 @@ test("tracks QR and connection status", async () => {
   assert.equal(gateway.qrSnapshot().qr, null);
 });
 
-test("forwards inbound messages and skips self messages", async () => {
+test("forwards inbound messages and skips gateway outbound echoes", async () => {
   const socket = new FakeSocket();
   const calls: unknown[] = [];
   const gateway = makeGateway(socket, calls);
 
   await gateway.start();
+  await gateway.sendText({
+    providerGroupId: "1203630-group@g.us",
+    text: "gateway outbound",
+  });
   socket.ev.emit("messages.upsert", {
     messages: [
       {
-        key: { id: "self", remoteJid: "1203630-group@g.us", fromMe: true },
+        key: { id: "provider-msg-123", remoteJid: "1203630-group@g.us", fromMe: true },
         message: { conversation: "ignore me" },
       },
       {
@@ -129,6 +133,34 @@ test("forwards inbound messages and skips self messages", async () => {
 
   assert.equal(calls.length, 1);
   assert.equal((calls[0] as Record<string, unknown>).provider_message_id, "msg-1");
+});
+
+test("forwards self messages not sent by this gateway", async () => {
+  const socket = new FakeSocket();
+  const calls: unknown[] = [];
+  const gateway = makeGateway(socket, calls);
+
+  await gateway.start();
+  socket.ev.emit("messages.upsert", {
+    messages: [
+      {
+        key: { id: "human-phone-msg", remoteJid: "1203630-group@g.us", fromMe: true },
+        message: {
+          imageMessage: {
+            url: "https://example.com/image.enc",
+            mimetype: "image/jpeg",
+            mediaKey: Buffer.from("media-key-1").toString("base64"),
+          },
+        },
+      },
+    ],
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0] as Record<string, unknown>).provider_message_id, "human-phone-msg");
+  assert.equal(((calls[0] as { message: { media: unknown[] } }).message.media).length, 1);
 });
 
 test("group and outbound methods delegate to socket", async () => {

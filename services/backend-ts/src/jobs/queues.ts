@@ -203,7 +203,11 @@ async function scheduleRuntimeChatDrain(
   const scheduled = await redis.set(runtimeChatActiveKey(providerGroupId), token, "EX", runtimeChatDrainTtlSeconds, "NX");
   if (scheduled !== "OK") return;
   const enqueue = options.enqueueJob ?? enqueueKuunaJob;
-  await enqueue("runtime_chat_queue", { provider_group_id: providerGroupId, drain_token: token }, runtimeChatDrainJobId(providerGroupId));
+  await enqueue(
+    "runtime_chat_queue",
+    { provider_group_id: providerGroupId, drain_token: token },
+    `${runtimeChatDrainJobId(providerGroupId)}_${chatQueueDigest(token)}`,
+  );
 }
 
 function requiredString(record: Record<string, unknown>, key: string): string {
