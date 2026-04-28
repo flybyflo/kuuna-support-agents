@@ -30,13 +30,15 @@ Contract suites to port or mirror for the TypeScript service:
 - `backend/tests/contract/test_tools_contract.py`
 - `backend/tests/contract/test_trace_contract.py`
 
-Cutover is blocked until the TypeScript service can satisfy the Staff API, Gateway REST API,
-internal Ops API, and worker behavior covered by those suites.
+Cutover gate now focuses on live Docker smoke coverage. The TypeScript service satisfies the
+mirrored Staff API, Gateway REST API, internal Ops API, and worker contract subsets that currently
+exist in `services/backend-ts/tests`.
 
 Current TypeScript parity status:
 
 - Auth token/password primitives are covered by TS unit tests.
-- Auth login/me and user create/hard-delete contracts are mirrored in TS contract tests.
+- Auth login/me, user create/hard-delete, and internal admin bootstrap contracts are mirrored in TS
+  contract tests.
 - Trigger decision logic is covered by TS unit tests.
 - Drizzle schema is aligned to the current Python SQLAlchemy model names for auth, runtime,
   messages, media, knowledge, outbound, agent state, retrieval chunks, and links.
@@ -44,13 +46,25 @@ Current TypeScript parity status:
   and knowledge lifecycle.
 - Gateway REST persists messages, versions, media, decisions, links, and outbound statuses, with
   inbound accept/dedupe and outbound status covered by TS contract tests.
-- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. `knowledge_indexing`,
+- BullMQ worker entry is now the default Compose `worker`. `knowledge_indexing`,
   `retrieval_indexing`, `outbound_dispatch`, `todo_export`, `template_build`, `media_processing`,
-  `passive_message_analysis`, and `inbound_execution` now have functional TS paths covered by TS
-  contract tests. Runtime provisioning and Dashboard cutover still need final hardening before that
-  profile can replace the Python RQ worker.
+  `passive_message_analysis`, and `inbound_execution` have functional TS paths covered by TS
+  contract tests.
 - Ingested knowledge read models are available through tRPC and covered for common and group docs.
 - Internal template-build, media-reconcile, and runtime-run Ops endpoints are implemented in TS.
+- Dashboard auth now uses backend `auth.login` through tRPC and stores the backend token in an
+  encrypted httpOnly cookie. Regular dashboard data paths no longer import direct Postgres
+  repositories.
+- Compose now runs TS as `backend` on port 8000, uses a Python `migrate` task for Alembic, and keeps
+  Python backend/worker services under the `legacy-python-backend` profile.
+
+Remaining live-verification gates:
+
+- Run the TS-only Docker smoke for `login -> template -> build -> bind -> ingest -> media ->
+  retrieval -> runtime -> outbound -> trace`.
+- Exercise runtime provisioning with `RUNTIME_PROVISIONING_ENABLED=true` against the Docker socket.
+- Decide post-cutover migration ownership: keep Alembic archived as legacy or move new migrations to
+  Drizzle-Kit.
 
 Run the Postgres-backed TS contract subset with:
 

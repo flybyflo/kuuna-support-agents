@@ -2,9 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { hashPassword } from "../auth.js";
 import { getSettings } from "../config.js";
 import { db, type Database } from "../db/client.js";
-import { runtimeRuns } from "../db/schema.js";
+import { roles, runtimeRuns, userRoles, users } from "../db/schema.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "../jobs/queues.js";
 import { reconcileMediaAssets } from "../jobs/media-processing.js";
 import {
@@ -59,6 +60,12 @@ export function registerInternalRoutes(
 ): void {
   const database = deps.database ?? db;
   const enqueueJob = deps.enqueueJob ?? enqueueKuunaJob;
+
+  app.post("/internal/admin/bootstrap", async (request, reply) => {
+    requireInternalToken(request.headers["x-internal-token"] as string | undefined);
+    const result = await bootstrapRequiredAdmin(database);
+    return reply.send(result);
+  });
 
   app.post("/internal/media/reconcile", async (request, reply) => {
     requireInternalToken(request.headers["x-internal-token"] as string | undefined);
@@ -167,6 +174,76 @@ export function registerInternalRoutes(
     }
     return reply.send(formatRuntimeRun(run));
   });
+}
+
+async function bootstrapRequiredAdmin(database: Database) {
+  const settings = getSettings();
+  const now = new Date();
+
+  const roleRows = await Promise.all(
+    (["owner", "admin", "operator", "viewer"] as const).map(async (name) => {
+      const [role] = await database
+        .insert(roles)
+        .values({ name })
+        .onConflictDoUpdate({ target: roles.name, set: { name } })
+        .returning();
+      return role;
+    }),
+  );
+
+  let [admin] = await database
+    .select()
+    .from(users)
+    .where(eq(users.email, settings.REQUIRED_ADMIN_EMAIL.toLowerCase()))
+    .limit(1);
+
+  let created = false;
+  if (!admin) {
+    [admin] = await database
+      .insert(users)
+      .values({
+        email: settings.REQUIRED_ADMIN_EMAIL.toLowerCase(),
+        passwordHash: hashPassword(settings.DASHBOARD_REQUIRED_ADMIN_PASSWORD),
+        mustChangePassword: true,
+        isActive: true,
+        failedLoginAttempts: 0,
+      })
+      .returning();
+    created = Boolean(admin);
+  } else {
+    const update = {
+      isActive: true,
+      updatedAt: now,
+      ...(settings.DASHBOARD_DEV_RESET_BOOTSTRAP_ADMIN_PASSWORD &&
+      process.env.NODE_ENV !== "production" &&
+      settings.APP_ENV !== "prod"
+        ? {
+            passwordHash: hashPassword(settings.DASHBOARD_REQUIRED_ADMIN_PASSWORD),
+            mustChangePassword: true,
+          }
+        : {}),
+    };
+    [admin] = await database
+      .update(users)
+      .set(update)
+      .where(eq(users.id, admin.id))
+      .returning();
+  }
+
+  const adminRole = roleRows.find((role) => role?.name === "admin");
+  if (admin && adminRole) {
+    await database
+      .insert(userRoles)
+      .values({ userId: admin.id, roleId: adminRole.id })
+      .onConflictDoNothing();
+  }
+
+  return {
+    ok: Boolean(admin),
+    created,
+    user_id: admin?.id ?? null,
+    email: admin?.email ?? settings.REQUIRED_ADMIN_EMAIL.toLowerCase(),
+  };
 }
 
 function formatRuntimeRun(run: typeof runtimeRuns.$inferSelect) {

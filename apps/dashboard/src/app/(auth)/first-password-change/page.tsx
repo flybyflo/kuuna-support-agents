@@ -15,6 +15,8 @@ function getMessage(error: string | undefined): string | null {
       return "Password must be at least 12 characters.";
     case "mismatch":
       return "Passwords do not match.";
+    case "current-password":
+      return "Current password is required.";
     case "db":
       return "Could not update password in database. Please retry.";
     default:
@@ -51,6 +53,17 @@ export default async function FirstPasswordChangePage({
         action={completePasswordChangeAction}
         className="flex flex-col gap-4"
       >
+        <FormRow label="Current password" htmlFor="currentPassword">
+          <Input
+            id="currentPassword"
+            type="password"
+            name="currentPassword"
+            required
+            placeholder="Current password"
+            autoComplete="current-password"
+          />
+        </FormRow>
+
         <FormRow label="New password" htmlFor="password">
           <Input
             id="password"

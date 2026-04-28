@@ -4,6 +4,7 @@ import path from "node:path";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: path.join(process.cwd(), "../.."),
+  transpilePackages: ["@kuuna/api-client-ts"],
   webpack: (config, { webpack }) => {
     // Sentry bundles Prisma instrumentation as an optional integration; this dashboard
     // uses `pg` directly and does not rely on Prisma. Ignoring it prevents noisy

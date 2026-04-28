@@ -73,6 +73,29 @@ export const usersRouter = createTRPCRouter({
     }));
   }),
 
+  assignments: roleProcedure("owner", "admin").query(async ({ ctx }) => {
+    const rows = await ctx.db
+      .select({
+        id: groupAssignments.id,
+        userId: groupAssignments.userId,
+        email: users.email,
+        providerGroupId: groupAssignments.providerGroupId,
+        createdAt: groupAssignments.createdAt,
+        updatedAt: groupAssignments.updatedAt,
+      })
+      .from(groupAssignments)
+      .innerJoin(users, eq(groupAssignments.userId, users.id));
+
+    return rows.map((row) => ({
+      id: row.id,
+      user_id: row.userId,
+      user_email: row.email,
+      provider_group_id: row.providerGroupId,
+      created_at: row.createdAt.toISOString(),
+      updated_at: row.updatedAt.toISOString(),
+    }));
+  }),
+
   create: roleProcedure("owner", "admin").input(userCreateInput).mutation(async ({ ctx, input }) => {
     if (!ctx.auth) {
       throw new TRPCError({ code: "UNAUTHORIZED", message: "missing auth context" });

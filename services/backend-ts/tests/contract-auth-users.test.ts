@@ -3,7 +3,9 @@ import test from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { auditEvents } from "../src/db/schema.js";
+import { resetSettingsForTests } from "../src/config.js";
+import { auditEvents, users } from "../src/db/schema.js";
+import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -77,4 +79,54 @@ test("contract: users create and hard delete append audit event", { skip: skipRe
   assert.ok(hardDeleteEvent);
   assert.equal(hardDeleteEvent.actorUserId, owner.id);
   assert.equal(hardDeleteEvent.entityId, created.id);
+});
+
+test("contract: internal admin bootstrap is idempotent and token protected", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  process.env.INTERNAL_OPS_TOKEN = "admin-bootstrap-token";
+  process.env.REQUIRED_ADMIN_EMAIL = "admin@kuuna.ai";
+  process.env.DASHBOARD_REQUIRED_ADMIN_PASSWORD = "AdminBootstrap123!";
+  resetSettingsForTests();
+  t.after(() => {
+    delete process.env.INTERNAL_OPS_TOKEN;
+    delete process.env.REQUIRED_ADMIN_EMAIL;
+    delete process.env.DASHBOARD_REQUIRED_ADMIN_PASSWORD;
+    resetSettingsForTests();
+  });
+
+  const app = await buildServer({ db: harness.db });
+  t.after(() => app.close());
+
+  const rejected = await app.inject({
+    method: "POST",
+    url: "/internal/admin/bootstrap",
+    headers: { "x-internal-token": "wrong" },
+    payload: {},
+  });
+  assert.equal(rejected.statusCode, 403);
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/internal/admin/bootstrap",
+    headers: { "x-internal-token": "admin-bootstrap-token" },
+    payload: {},
+  });
+  assert.equal(created.statusCode, 200);
+  assert.equal((created.json() as Record<string, unknown>).created, true);
+
+  const second = await app.inject({
+    method: "POST",
+    url: "/internal/admin/bootstrap",
+    headers: { "x-internal-token": "admin-bootstrap-token" },
+    payload: {},
+  });
+  assert.equal(second.statusCode, 200);
+  assert.equal((second.json() as Record<string, unknown>).created, false);
+
+  const rows = await harness.db.select().from(users).where(eq(users.email, "admin@kuuna.ai"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.isActive, true);
+  assert.equal(rows[0]?.mustChangePassword, true);
 });

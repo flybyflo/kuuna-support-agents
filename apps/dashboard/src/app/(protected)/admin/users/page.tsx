@@ -27,7 +27,6 @@ import {
 } from "@/lib/auth/admin-account-invariant";
 import { requireAuthorized } from "@/lib/auth/guards";
 import { runMediaReconcileAction } from "@/lib/admin/media-reconcile-action";
-import { ensureRequiredAdminAccount } from "@/lib/db/auth-repository";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -43,12 +42,6 @@ export default async function AdminUsersPage({
   searchParams: SearchParams;
 }) {
   await requireAuthorized("users", "read");
-
-  try {
-    await ensureRequiredAdminAccount();
-  } catch (error) {
-    console.warn("[dashboard-admin] required admin check failed", error);
-  }
 
   const users = await listUsers();
   const params = await searchParams;

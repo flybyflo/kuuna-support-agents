@@ -1,7 +1,7 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
-import { messageVersions, messages } from "../../db/schema.js";
+import { mediaAssets, messageVersions, messages, transcripts } from "../../db/schema.js";
 import { createTRPCRouter, protectedProcedure } from "../init.js";
 
 type MessageRow = typeof messages.$inferSelect;
@@ -65,5 +65,38 @@ export const messagesRouter = createTRPCRouter({
         occurred_at: version.occurredAt.toISOString(),
         created_at: version.createdAt.toISOString(),
       }));
+    }),
+
+  media: protectedProcedure
+    .input(z.object({ messageId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.messageId, input.messageId))
+        .orderBy(desc(mediaAssets.createdAt));
+      const transcriptRows =
+        rows.length > 0
+          ? await ctx.db
+              .select()
+              .from(transcripts)
+              .where(inArray(transcripts.mediaAssetId, rows.map((row) => row.id)))
+          : [];
+      const transcriptByMediaId = new Map(transcriptRows.map((row) => [row.mediaAssetId, row]));
+      return rows.map((asset) => {
+        const transcript = transcriptByMediaId.get(asset.id);
+        return {
+          id: asset.id,
+          message_id: asset.messageId,
+          provider_media_id: asset.providerMediaId,
+          mime_type: asset.mimeType,
+          file_name: asset.fileName,
+          status: asset.status,
+          s3_key: asset.s3Key,
+          transcript: transcript?.textContent ?? null,
+          created_at: asset.createdAt.toISOString(),
+          updated_at: asset.updatedAt.toISOString(),
+        };
+      });
     }),
 });

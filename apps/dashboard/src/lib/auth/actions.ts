@@ -2,13 +2,8 @@
 
 import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
-import {
-  authenticateUser,
-  ensureRequiredAdminAccount,
-  updateUserPassword,
-} from "@/lib/db/auth-repository";
 import { clearSessionCookie, getSession, setSessionCookie } from "@/lib/auth/session";
-import { isMissingRelationError } from "@/lib/db/postgres";
+import { bootstrapRequiredAdmin, createBackendTrpcClient, loginWithBackend } from "@/lib/backend/client";
 
 function rethrowRedirectError(error: unknown): void {
   if (isRedirectError(error)) {
@@ -25,16 +20,8 @@ export async function loginAction(formData: FormData): Promise<void> {
   }
 
   try {
-    await ensureRequiredAdminAccount();
-
-    const user = await authenticateUser(email, password);
-    if (!user) {
-      redirect("/login?error=invalid");
-    }
-
-    if (!user.isActive) {
-      redirect("/locked?reason=inactive");
-    }
+    await bootstrapRequiredAdmin();
+    const user = await loginWithBackend(email, password);
 
     await setSessionCookie({
       userId: user.userId,
@@ -43,6 +30,9 @@ export async function loginAction(formData: FormData): Promise<void> {
       role: user.role,
       assignedGroupIds: user.assignedGroupIds,
       mustChangePassword: user.mustChangePassword,
+      backendAccessToken: user.backendAccessToken,
+      backendTokenExpiresAt: user.backendTokenExpiresAt,
+      sessionExpiresAt: user.sessionExpiresAt,
     });
 
     if (user.mustChangePassword) {
@@ -53,18 +43,20 @@ export async function loginAction(formData: FormData): Promise<void> {
   } catch (error) {
     rethrowRedirectError(error);
     console.error("[dashboard-auth] login failed", error);
-    if (isMissingRelationError(error)) {
-      redirect("/login?error=schema-missing");
-    }
-    redirect("/login?error=db");
+    redirect("/login?error=invalid");
   }
 }
 
 export async function completePasswordChangeAction(
   formData: FormData,
 ): Promise<void> {
+  const currentPassword = String(formData.get("currentPassword") ?? "");
   const nextPassword = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  if (!currentPassword) {
+    redirect("/first-password-change?error=current-password");
+  }
 
   if (nextPassword.length < 12) {
     redirect("/first-password-change?error=weak-password");
@@ -79,16 +71,16 @@ export async function completePasswordChangeAction(
     redirect("/login");
   }
 
-  if (session.userId.startsWith("legacy:")) {
-    redirect("/login?error=reauth");
-  }
-
   try {
-    await updateUserPassword(session.userId, nextPassword);
+    const client = createBackendTrpcClient(session.backendAccessToken);
+    const user = await client.auth.changePassword.mutate({
+      currentPassword,
+      newPassword: nextPassword,
+    });
 
     await setSessionCookie({
       ...session,
-      mustChangePassword: false,
+      mustChangePassword: user.must_change_password,
     });
 
     redirect("/overview?passwordChanged=1");
