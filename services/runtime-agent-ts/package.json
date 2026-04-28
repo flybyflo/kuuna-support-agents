@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx --conditions=development watch src/server.ts",
+    "dev": "tsx watch --conditions=development src/server.ts",
     "serve": "tsx --conditions=development src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",

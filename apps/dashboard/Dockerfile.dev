@@ -9,6 +9,7 @@ COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY packages/agent-contracts/package.json packages/agent-contracts/package.json
 COPY packages/api-client-ts/package.json packages/api-client-ts/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/pi-runtime/package.json packages/pi-runtime/package.json
 COPY services/backend-ts/package.json services/backend-ts/package.json
 COPY services/gateway/package.json services/gateway/package.json
 COPY services/runtime-agent-ts/package.json services/runtime-agent-ts/package.json

@@ -4,6 +4,8 @@ services:
   node-deps:
     image: node:22-bookworm
     working_dir: /workspace
+    environment:
+      CI: "true"
     command: >
       sh -c '
         corepack enable &&
@@ -23,7 +25,7 @@ services:
       dockerfile: apps/dashboard/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'corepack enable && pnpm --filter @kuuna/dashboard dev -- --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
+      sh -c 'corepack enable && pnpm --dir apps/dashboard exec next dev --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local

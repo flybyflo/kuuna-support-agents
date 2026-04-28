@@ -9,8 +9,8 @@
     ".": "./src/server.ts"
   },
   "scripts": {
-    "dev": "tsx --conditions=development watch src/server.ts",
-    "dev:worker": "tsx --conditions=development watch src/jobs/worker.ts",
+    "dev": "tsx watch --conditions=development src/server.ts",
+    "dev:worker": "tsx watch --conditions=development src/jobs/worker.ts",
     "db:migrate": "tsx --conditions=development src/db/migrate.ts",
     "serve": "tsx --conditions=development src/server.ts",
     "worker": "tsx --conditions=development src/jobs/worker.ts",
