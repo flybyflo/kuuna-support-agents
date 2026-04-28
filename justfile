@@ -24,7 +24,7 @@ ps:
     docker compose -f {{compose_file}} ps
 
 migrate:
-    docker compose -f {{compose_file}} exec backend uv run alembic upgrade head
+    docker compose -f {{compose_file}} run --rm migrate
 
 shell-backend:
     docker compose -f {{compose_file}} exec backend sh

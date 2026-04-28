@@ -37,11 +37,7 @@ wait_for_gateway_healthz() {
   local retries=20
   local delay=2
   for ((i=1; i<=retries; i++)); do
-    if compose exec -T gateway uv run python - <<'PY' >/dev/null 2>&1
-import urllib.request
-urllib.request.urlopen("http://127.0.0.1:8090/healthz", timeout=3)
-PY
-    then
+    if curl -fsS "http://127.0.0.1:8090/healthz" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"
@@ -76,7 +72,7 @@ if ! wait_for_gateway_healthz; then
 fi
 
 log "running alembic upgrade head"
-compose exec -T backend uv run alembic upgrade head >/dev/null
+compose run --rm migrate >/dev/null
 
 log "verifying core tables exist"
 compose exec -T postgres psql -U postgres -d kuuna -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('users','messages','outbound_intents','audit_events');" | grep -q '^4$'

@@ -14,13 +14,13 @@ just down
 
 ## Hot Reload
 - Dashboard: Next.js dev server runs with bind mount (`apps/dashboard:/app`).
-- Backend API: `uvicorn --reload` runs with bind mount (`backend:/app`).
-- Worker: `watchfiles` restarts `rq worker` on Python file changes.
-- Gateway: `watchfiles` restarts Neonize bridge on Python file changes.
+- Backend API: `tsx watch` runs the TypeScript backend with bind-mounted source.
+- Worker: `tsx watch` runs the TypeScript BullMQ worker with bind-mounted source.
+- Gateway: `tsx watch` runs the Baileys TypeScript gateway with bind-mounted source.
 
 ## WhatsApp Session Persistence (Gateway)
-The gateway stores Neonize session state in the named Docker volume `gateway_session` at `/data`.
-`NEONIZE_DATABASE_PATH` defaults to `/data/neonize.db`, so login/session state survives container restarts.
+The gateway stores Baileys auth/session state in the named Docker volume `gateway_session` at `/data`.
+`BAILEYS_AUTH_DIR` defaults to `/data/baileys-auth`, so login/session state survives container restarts.
 
 Reset session state intentionally:
 

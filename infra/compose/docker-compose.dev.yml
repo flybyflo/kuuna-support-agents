@@ -20,6 +20,7 @@ services:
       - dashboard_next:/workspace/apps/dashboard/.next
       - dashboard_next:/workspace/apps/dashboard/.next
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
+      - gateway_node_modules:/workspace/services/gateway/node_modules
       - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
       - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
 
@@ -257,10 +258,11 @@ services:
 
   gateway:
     build:
-      context: ../../services/gateway
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c 'uv sync && uv run watchfiles --filter python "uv run python src/app.py" src'
+      context: ../..
+      dockerfile: services/gateway/Dockerfile.dev
+    working_dir: /workspace
+    command: >
+      sh -c 'npm run dev --workspace @kuuna/gateway'
     env_file:
       - path: ../env/gateway.env.example
       - path: ../env/gateway.env.local
@@ -270,10 +272,13 @@ services:
     ports:
       - "8090:8090"
     volumes:
-      - ../../services/gateway:/app
-      - gateway_venv:/app/.venv
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - gateway_node_modules:/workspace/services/gateway/node_modules
       - gateway_session:/data
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
 
@@ -325,7 +330,7 @@ volumes:
   todo_exporter_venv:
   runtime_agent_node_modules:
   runtime_agent_contracts_node_modules:
-  gateway_venv:
+  gateway_node_modules:
   gateway_session:
   postgres_data:
   minio_data:
