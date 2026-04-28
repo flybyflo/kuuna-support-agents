@@ -56,9 +56,14 @@ function makeGateway(socket: FakeSocket, calls: unknown[], overrides: Partial<Co
   const qrStatus = new GatewayQrStatus();
   const backendClient = new BackendIngestClient({
     backendBaseUrl: "http://backend.test",
-    httpClient: async (_url, init) => {
-      calls.push(JSON.parse(String(init?.body ?? "{}")));
-      return new Response("{}", { status: 202 });
+    transport: async (payload) => {
+      calls.push(payload);
+      return {
+        accepted: true,
+        trace_id: payload.trace_id,
+        deduped: false,
+        execution_enqueued: false,
+      };
     },
   });
 

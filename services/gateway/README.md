@@ -1,6 +1,6 @@
 # Gateway
 
-TypeScript WhatsApp gateway using Baileys for ingest, outbound dispatch, and ops endpoints.
+TypeScript WhatsApp gateway using Baileys for ingest, outbound dispatch, and ops tRPC procedures.
 
 ## Raw Event Persistence Rule
 
@@ -14,7 +14,7 @@ The backend provider literal is `whatsapp-baileys`.
 `src/baileys-gateway.ts` wires Baileys events:
 - `connection.update` -> connection status and QR cache
 - `creds.update` -> persisted auth state
-- `messages.upsert` -> map event -> POST `/gateway/inbound`
+- `messages.upsert` -> map event -> backend tRPC `gateway.inbound.ingest`
 
 Entry point: `src/server.ts`
 
@@ -32,6 +32,6 @@ Environment variables:
 
 For Docker dev, bind-mount source code and keep Baileys auth/session data on a persistent named volume (`gateway_session` -> `/data`).
 
-When Baileys emits a QR code, the gateway stores it for `GET /ops/qr` and prints
-a scannable terminal QR to the container logs by default. Set
+When Baileys emits a QR code, the gateway stores it for the gateway tRPC `ops.qr`
+procedure and prints a scannable terminal QR to the container logs by default. Set
 `GATEWAY_PRINT_QR=false` to disable log rendering.

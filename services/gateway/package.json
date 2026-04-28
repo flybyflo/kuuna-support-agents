@@ -14,7 +14,9 @@
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@kuuna/contracts": "file:../../packages/contracts",
     "@sentry/node": "^10.49.0",
+    "@trpc/client": "^11.7.2",
     "@trpc/server": "^11.7.2",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "fastify": "^5.6.2",

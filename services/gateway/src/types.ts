@@ -1,30 +1,11 @@
-export type GatewayEventType = "message_created" | "message_edited" | "message_deleted";
-
-export type GatewayInboundMedia = {
-  provider_media_id: string;
-  mime_type: string;
-  file_name?: string | null;
-  byte_size?: number | null;
-  download_url?: string | null;
-  inline_data_base64?: string | null;
-};
-
-export type GatewayInboundEvent = {
-  trace_id: string;
-  provider: "whatsapp-baileys";
-  provider_group_id: string;
-  provider_message_id: string;
-  sender_provider_user_id?: string | null;
-  event_type: GatewayEventType;
-  occurred_at: string;
-  message: {
-    text?: string | null;
-    reply_to_provider_message_id?: string | null;
-    mentions: string[];
-    media: GatewayInboundMedia[];
-  };
-  raw_event?: Record<string, unknown> | null;
-};
+export type {
+  GatewayEventType,
+  GatewayInboundEvent,
+  GatewayInboundMedia,
+  GatewayInboundMessage,
+  GatewayOutboundIntent,
+  GatewayOutboundStatusEvent,
+} from "@kuuna/contracts";
 
 export type GatewayGroup = {
   jid: string;

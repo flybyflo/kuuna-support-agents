@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { GatewayRouter } from "@kuuna/gateway/trpc";
 import { createTRPCClient, httpLink, TRPCClientError } from "@trpc/client";
-import { z } from "zod";
+import { gatewayOutboundIntentSchema } from "@kuuna/contracts";
 
 import { getSettings } from "../config.js";
 import type { DbLike } from "../db/client.js";
@@ -9,14 +9,6 @@ import { outboundIntents } from "../db/schema.js";
 import { logger } from "../logging.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const gatewayOutboundPayloadSchema = z.object({
-  trace_id: z.string(),
-  outbound_intent_id: z.string(),
-  provider_group_id: z.string(),
-  reply_to_provider_message_id: z.string().nullable().optional(),
-  text: z.string(),
-  metadata: z.record(z.unknown()).optional(),
-});
 
 export class OutboundDispatchError extends Error {}
 export class OutboundDispatchRetryableError extends OutboundDispatchError {}
@@ -133,7 +125,7 @@ async function sendGatewayOutboundViaTrpc(
     ],
   });
   try {
-    return objectPayload(await client.outbound.sendText.mutate(gatewayOutboundPayloadSchema.parse(payload)));
+    return objectPayload(await client.outbound.sendText.mutate(gatewayOutboundIntentSchema.parse(payload)));
   } catch (error) {
     if (error instanceof TRPCClientError) {
       throw new Error(`gateway_trpc_error: ${error.message}`);

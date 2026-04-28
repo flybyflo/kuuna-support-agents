@@ -5,7 +5,6 @@ import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import { BackendIngestClient } from "./backend.js";
 import { BaileysGateway } from "./baileys-gateway.js";
 import { getSettings } from "./config.js";
-import { registerHttpApi } from "./http-api.js";
 import { GatewayConnectionStatus, GatewayQrStatus } from "./status.js";
 import type { GatewayClient } from "./types.js";
 import { createGatewayRouter } from "./trpc.js";
@@ -49,12 +48,6 @@ export async function buildServer(input: { client?: GatewayClient } = {}) {
       }),
     },
   });
-  registerHttpApi(app, {
-    client,
-    opsToken: settings.GATEWAY_OPS_TOKEN ?? null,
-    serviceToken: settings.GATEWAY_SERVICE_TOKEN ?? null,
-  });
-
   app.addHook("onClose", async () => {
     await client.stop();
   });

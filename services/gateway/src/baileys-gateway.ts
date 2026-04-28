@@ -151,7 +151,7 @@ export class BaileysGateway implements GatewayClient {
         this.input.qrStatus.setQr(qr);
         this.input.connectionStatus.markDisconnected(
           "qr",
-          "pairing required - scan the QR code printed in gateway logs or read /ops/qr",
+          "pairing required - scan the QR code printed in gateway logs or query gateway ops QR over tRPC",
         );
         this.printQr(qr);
       }
@@ -209,26 +209,25 @@ export class BaileysGateway implements GatewayClient {
     for (const message of messages) {
       if (!message.message || isSelfMessage(message)) continue;
       const payload = mapBaileysMessage(message);
-      const response = await this.input.backendClient.sendInboundPayload(payload);
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
+      try {
+        const response = await this.input.backendClient.sendInboundPayload(payload);
+        this.logger.info({
+          event: "gateway_inbound_forwarded",
+          trace_id: response.trace_id,
+          provider_group_id: payload.provider_group_id,
+          provider_message_id: payload.provider_message_id,
+          deduped: response.deduped,
+          execution_enqueued: response.execution_enqueued,
+        });
+      } catch (error) {
         this.logger.error({
           event: "gateway_inbound_forward_failed",
           trace_id: payload.trace_id,
           provider_group_id: payload.provider_group_id,
           provider_message_id: payload.provider_message_id,
-          status_code: response.status,
-          response: text.slice(0, 500),
+          error: errorMessage(error),
         });
-        continue;
       }
-      this.logger.info({
-        event: "gateway_inbound_forwarded",
-        trace_id: payload.trace_id,
-        provider_group_id: payload.provider_group_id,
-        provider_message_id: payload.provider_message_id,
-        status_code: response.status,
-      });
     }
   }
 

@@ -22,12 +22,11 @@ export function AutoRefresh({
   const router = useRouter();
 
   useEffect(() => {
+    void intervalMs;
     const tick = () => {
       if (pauseWhenHidden && document.visibilityState !== "visible") return;
       router.refresh();
     };
-
-    const timer = window.setInterval(tick, intervalMs);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -41,7 +40,6 @@ export function AutoRefresh({
     window.addEventListener("kuuna:runtime-event", tick);
 
     return () => {
-      window.clearInterval(timer);
       window.removeEventListener("kuuna:runtime-event", tick);
       if (pauseWhenHidden) {
         document.removeEventListener(

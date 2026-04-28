@@ -1,5 +1,6 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { gatewayOutboundIntentSchema } from "@kuuna/contracts";
 
 import type { GatewayClient } from "./types.js";
 
@@ -8,15 +9,6 @@ const t = initTRPC.context<{ headers: Headers }>().create();
 const createGroupSchema = z.object({
   name: z.string().min(1).max(120),
   participants: z.array(z.string()).default([]),
-});
-
-const outboundRequestSchema = z.object({
-  trace_id: z.string().min(1).max(120),
-  outbound_intent_id: z.string().min(1).max(120),
-  provider_group_id: z.string().min(1).max(255),
-  reply_to_provider_message_id: z.string().nullable().optional(),
-  text: z.string().min(1).max(8000),
-  metadata: z.record(z.unknown()).default({}),
 });
 
 export function createGatewayRouter(input: {
@@ -48,7 +40,7 @@ export function createGatewayRouter(input: {
       })),
     }),
     outbound: t.router({
-      sendText: serviceProcedure.input(outboundRequestSchema).mutation(async ({ input: payload }) => ({
+      sendText: serviceProcedure.input(gatewayOutboundIntentSchema).mutation(async ({ input: payload }) => ({
         accepted: true,
         trace_id: payload.trace_id,
         outbound_intent_id: payload.outbound_intent_id,

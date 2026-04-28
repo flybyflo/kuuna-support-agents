@@ -3,31 +3,19 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import { eq } from "drizzle-orm";
+import type { GatewayInboundEvent, GatewayOutboundStatusEvent } from "@kuuna/contracts";
 
 import { outboundIntents, messageLinks, messageVersions } from "../src/db/schema.js";
-import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
   ? false
   : "set BACKEND_TS_CONTRACT_DATABASE_URL to run backend-ts contract tests";
 
-function inboundPayload(messageId: string, eventType = "message_created"): {
-  trace_id: string;
-  provider: "whatsapp-baileys";
-  provider_group_id: string;
-  provider_message_id: string;
-  sender_provider_user_id: string;
-  event_type: string;
-  occurred_at: string;
-  message: {
-    text: string | null;
-    reply_to_provider_message_id: string | null;
-    mentions: string[];
-    media: unknown[];
-  };
-  raw_event: Record<string, unknown>;
-} {
+function inboundPayload(
+  messageId: string,
+  eventType: GatewayInboundEvent["event_type"] = "message_created",
+): GatewayInboundEvent {
   return {
     trace_id: randomUUID(),
     provider: "whatsapp-baileys",
@@ -51,29 +39,17 @@ function inboundPayload(messageId: string, eventType = "message_created"): {
 
 test("contract: gateway inbound accepts and versions event", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
+  const caller = await harness.caller();
   t.after(async () => {
-    await app.close();
     await harness.close();
   });
 
   const payload = inboundPayload("msg-123");
-  const response = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload,
-  });
+  const response = await caller.gateway.inbound.ingest(payload);
 
-  assert.equal(response.statusCode, 202);
-  assert.equal(response.json().accepted, true);
-  assert.equal(response.json().trace_id, payload.trace_id);
-  assert.equal(response.json().deduped, false);
+  assert.equal(response.accepted, true);
+  assert.equal(response.trace_id, payload.trace_id);
+  assert.equal(response.deduped, false);
 
   const [storedVersion] = await harness.db.select().from(messageVersions).limit(1);
   assert.ok(storedVersion);
@@ -86,46 +62,22 @@ test("contract: gateway inbound accepts and versions event", { skip: skipReason 
 
 test("contract: gateway inbound dedupes duplicate created event", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
+  const caller = await harness.caller();
   t.after(async () => {
-    await app.close();
     await harness.close();
   });
 
-  const firstResponse = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload: inboundPayload("msg-dedupe"),
-  });
-  const secondResponse = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload: inboundPayload("msg-dedupe"),
-  });
+  const firstResponse = await caller.gateway.inbound.ingest(inboundPayload("msg-dedupe"));
+  const secondResponse = await caller.gateway.inbound.ingest(inboundPayload("msg-dedupe"));
 
-  assert.equal(firstResponse.statusCode, 202);
-  assert.equal(firstResponse.json().deduped, false);
-  assert.equal(secondResponse.statusCode, 202);
-  assert.equal(secondResponse.json().deduped, true);
+  assert.equal(firstResponse.deduped, false);
+  assert.equal(secondResponse.deduped, true);
 });
 
 test("contract: gateway inbound fills a contentless duplicate created event", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
+  const caller = await harness.caller();
   t.after(async () => {
-    await app.close();
     await harness.close();
   });
 
@@ -135,20 +87,12 @@ test("contract: gateway inbound fills a contentless duplicate created event", { 
   const contentPayload = inboundPayload("msg-content-fill");
   contentPayload.message.text = "actual text";
 
-  const firstResponse = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload: emptyPayload,
-  });
-  const secondResponse = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload: contentPayload,
-  });
+  const firstResponse = await caller.gateway.inbound.ingest(emptyPayload);
+  const secondResponse = await caller.gateway.inbound.ingest(contentPayload);
 
-  assert.equal(firstResponse.statusCode, 202);
-  assert.equal(secondResponse.statusCode, 202);
-  assert.equal(secondResponse.json().deduped, false);
+  assert.equal(firstResponse.accepted, true);
+  assert.equal(secondResponse.accepted, true);
+  assert.equal(secondResponse.deduped, false);
 
   const versions = await harness.db.select().from(messageVersions);
   assert.equal(versions.length, 2);
@@ -157,28 +101,17 @@ test("contract: gateway inbound fills a contentless duplicate created event", { 
 
 test("contract: gateway inbound strips closing URL delimiters", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
+  const caller = await harness.caller();
   t.after(async () => {
-    await app.close();
     await harness.close();
   });
 
   const payload = inboundPayload("msg-url-delimiter");
   payload.message.text = "Please read https://example.com/path] before replying.";
 
-  const response = await app.inject({
-    method: "POST",
-    url: "/gateway/inbound",
-    payload,
-  });
+  const response = await caller.gateway.inbound.ingest(payload);
 
-  assert.equal(response.statusCode, 202);
+  assert.equal(response.accepted, true);
   const [link] = await harness.db.select().from(messageLinks).limit(1);
   assert.ok(link);
   assert.equal(link.url, "https://example.com/path");
@@ -187,9 +120,8 @@ test("contract: gateway inbound strips closing URL delimiters", { skip: skipReas
 
 test("contract: gateway outbound status persists dispatch status", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
-  const app = await buildServer({ db: harness.db });
+  const caller = await harness.caller();
   t.after(async () => {
-    await app.close();
     await harness.close();
   });
 
@@ -202,7 +134,7 @@ test("contract: gateway outbound status persists dispatch status", { skip: skipR
     payload: { kind: "reply", _dispatch: { last_status: "pending" } },
   });
 
-  const payload = {
+  const payload: GatewayOutboundStatusEvent = {
     trace_id: randomUUID(),
     outbound_intent_id: outboundIntentId,
     status: "sent",
@@ -211,15 +143,10 @@ test("contract: gateway outbound status persists dispatch status", { skip: skipR
     error_message: null,
     occurred_at: new Date().toISOString(),
   };
-  const response = await app.inject({
-    method: "POST",
-    url: "/gateway/outbound/status",
-    payload,
-  });
+  const response = await caller.gateway.outbound.status(payload);
 
-  assert.equal(response.statusCode, 202);
-  assert.equal(response.json().accepted, true);
-  assert.equal(response.json().found, true);
+  assert.equal(response.accepted, true);
+  assert.equal(response.found, true);
 
   const [storedIntent] = await harness.db
     .select()
