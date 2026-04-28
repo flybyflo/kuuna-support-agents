@@ -86,17 +86,17 @@ Run everything through the dev stack:
 just up
 ```
 
-(or via npm wrapper: `npm run dev`)
+(or via pnpm wrapper: `pnpm dev`)
 
 ## TypeScript Monorepo Commands
 
-The TypeScript packages are wired as npm workspaces and orchestrated with Turborepo:
+The TypeScript packages are wired as pnpm workspaces and orchestrated with Turborepo:
 
 ```bash
-npm run typecheck
-npm run test
-npm run build
-npm run lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm lint
 ```
 
 These commands cover the dashboard, backend, gateway, runtime agent, and shared packages.

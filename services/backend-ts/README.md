@@ -6,21 +6,21 @@ This service owns the active TypeScript backend path:
 
 - TypeScript backend runs as the default backend service.
 - Drizzle models the PostgreSQL schema.
-- New TypeScript-backend schema changes are applied through `npm run db:migrate --workspace @kuuna/backend-ts`.
+- New TypeScript-backend schema changes are applied through `pnpm --filter @kuuna/backend-ts db:migrate`.
 
 Run locally through Compose from the repository root:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Direct development commands:
 
 ```bash
-npm run dev --workspace @kuuna/backend-ts
-npm run db:migrate --workspace @kuuna/backend-ts
-npm run typecheck --workspace @kuuna/backend-ts
-npm run test --workspace @kuuna/backend-ts
+pnpm --filter @kuuna/backend-ts dev
+pnpm --filter @kuuna/backend-ts db:migrate
+pnpm --filter @kuuna/backend-ts typecheck
+pnpm --filter @kuuna/backend-ts test
 ```
 
 Contract tests that need a disposable Postgres target are gated by
@@ -28,7 +28,7 @@ Contract tests that need a disposable Postgres target are gated by
 
 ```bash
 BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/kuuna \
-  npm run test --workspace @kuuna/backend-ts
+  pnpm --filter @kuuna/backend-ts test
 ```
 
 The TypeScript worker is part of the default Compose stack and uses the same Drizzle schema.

@@ -40,7 +40,7 @@ On login/admin-user-page access, the app ensures this account + admin role assig
 Run through Docker Compose from repo root:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Execute frontend commands inside container:
@@ -70,7 +70,7 @@ Required env vars (already set in `infra/env/dashboard.env.example`):
 ## Quality checks
 
 ```bash
-npm run typecheck
-npm run lint
-npm run build
+pnpm typecheck
+pnpm lint
+pnpm build
 ```

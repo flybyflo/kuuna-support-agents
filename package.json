@@ -2,14 +2,7 @@
   "name": "kuuna-support-agents",
   "private": true,
   "version": "0.1.0",
-  "packageManager": "npm@11.8.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*",
-    "services/backend-ts",
-    "services/gateway",
-    "services/runtime-agent-ts"
-  ],
+  "packageManager": "pnpm@10.19.0",
   "scripts": {
     "dev": "just up",
     "dev:down": "just down",
@@ -25,5 +18,11 @@
   },
   "devDependencies": {
     "turbo": "^2.6.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@trpc/client": "11.17.0",
+      "@trpc/server": "11.17.0"
+    }
   }
 }

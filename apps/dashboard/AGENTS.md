@@ -7,7 +7,7 @@
 
 ## Setup & Commands
 - Run the frontend via Docker Compose from repo root:
-  - `npm run dev`
+  - `pnpm dev`
 - Use container execution for frontend commands when needed:
   - `docker compose -f infra/compose/docker-compose.dev.yml exec dashboard <command>`
 - Keep host-side `npm` execution for scaffolding/package edits only.

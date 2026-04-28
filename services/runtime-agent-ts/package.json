@@ -4,18 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "serve": "tsx src/server.ts",
-    "start": "node dist/server.js",
+    "dev": "tsx --conditions=development watch src/server.ts",
+    "serve": "tsx --conditions=development src/server.ts",
+    "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --conditions=development --import tsx --test tests/*.test.ts"
   },
   "exports": {
-    "./trpc": "./src/trpc.ts"
+    "./trpc": {
+      "types": "./dist/src/trpc.d.ts",
+      "development": "./src/trpc.ts",
+      "default": "./dist/src/trpc.js"
+    }
   },
   "dependencies": {
-    "@kuuna/agent-contracts": "file:../../packages/agent-contracts",
+    "@kuuna/agent-contracts": "workspace:*",
     "@mariozechner/pi-agent-core": "0.70.2",
     "@mariozechner/pi-ai": "0.70.2",
     "@mariozechner/pi-coding-agent": "0.70.2",

@@ -6,15 +6,15 @@
   "main": "./src/server.ts",
   "types": "./src/server.ts",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "serve": "tsx src/server.ts",
-    "start": "node dist/server.js",
+    "dev": "tsx --conditions=development watch src/server.ts",
+    "serve": "tsx --conditions=development src/server.ts",
+    "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --conditions=development --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "@kuuna/contracts": "file:../../packages/contracts",
+    "@kuuna/contracts": "workspace:*",
     "@sentry/node": "^10.49.0",
     "@trpc/client": "^11.7.2",
     "@trpc/server": "^11.7.2",
@@ -31,6 +31,10 @@
     "typescript": "^5.8.0"
   },
   "exports": {
-    "./trpc": "./src/trpc.ts"
+    "./trpc": {
+      "types": "./dist/src/trpc.d.ts",
+      "development": "./src/trpc.ts",
+      "default": "./dist/src/trpc.js"
+    }
   }
 }

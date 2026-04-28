@@ -6,12 +6,8 @@ services:
     working_dir: /workspace
     command: >
       sh -c '
-        npm install --include=optional &&
-        case "$$(uname -m)" in
-          aarch64|arm64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-arm64-gnu @tailwindcss/oxide-linux-arm64-gnu ;;
-          x86_64|amd64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu ;;
-          *) echo "unsupported node dependency architecture: $$(uname -m)" >&2; exit 1 ;;
-        esac
+        corepack enable &&
+        pnpm install
       '
     volumes:
       - ../..:/workspace
@@ -27,7 +23,7 @@ services:
       dockerfile: apps/dashboard/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/dashboard -- --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
+      sh -c 'corepack enable && pnpm --filter @kuuna/dashboard dev -- --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local
@@ -50,7 +46,7 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/backend-ts'
+      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -95,7 +91,7 @@ services:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
-    command: sh -c "npm run db:migrate --workspace @kuuna/backend-ts"
+    command: sh -c "corepack enable && pnpm --filter @kuuna/backend-ts db:migrate"
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -116,7 +112,7 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev:worker --workspace @kuuna/backend-ts'
+      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev:worker'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -146,7 +142,7 @@ services:
       dockerfile: services/gateway/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/gateway'
+      sh -c 'corepack enable && pnpm --filter @kuuna/gateway dev'
     env_file:
       - path: ../env/gateway.env.example
       - path: ../env/gateway.env.local

@@ -1,8 +1,9 @@
 import { createTRPCClient, httpLink, httpSubscriptionLink, loggerLink, splitLink } from "@trpc/client";
+import type { TRPCClient } from "@trpc/client";
 
 import type { AppRouter } from "@kuuna/backend-ts";
 
-export type KuunaTrpcClient = ReturnType<typeof createKuunaTrpcClient>;
+export type KuunaTrpcClient = TRPCClient<AppRouter>;
 export type KuunaEventSourceInit = EventSourceInit & {
   headers?: Record<string, string>;
 };
@@ -16,7 +17,7 @@ export type KuunaTrpcClientOptions = {
   eventSource?: KuunaEventSource;
 };
 
-export function createKuunaTrpcClient(options: KuunaTrpcClientOptions) {
+export function createKuunaTrpcClient(options: KuunaTrpcClientOptions): KuunaTrpcClient {
   const normalizedBaseUrl = options.baseUrl.replace(/\/$/, "");
   const headers = () => ({
     ...options.headers,

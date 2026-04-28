@@ -33,11 +33,11 @@ wait_for_backend_health() {
   return 1
 }
 
-wait_for_gateway_healthz() {
+wait_for_gateway_health() {
   local retries=20
   local delay=2
   for ((i=1; i<=retries; i++)); do
-    if curl -fsS "http://127.0.0.1:8090/healthz" >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:8090/trpc/health" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"
@@ -65,9 +65,9 @@ if ! wait_for_backend_health; then
   exit 1
 fi
 
-log "checking gateway ops /healthz"
-if ! wait_for_gateway_healthz; then
-  echo "gateway /healthz did not become ready" >&2
+log "checking gateway tRPC health"
+if ! wait_for_gateway_health; then
+  echo "gateway tRPC health did not become ready" >&2
   exit 1
 fi
 
