@@ -23,6 +23,23 @@ const versionTargetInput = z.object({
   versionId: z.string().uuid(),
 });
 
+type TemplateVersionRow = typeof templateVersions.$inferSelect;
+
+function mapTemplateVersion(version: TemplateVersionRow) {
+  return {
+    id: version.id,
+    template_id: version.templateId,
+    version_no: version.versionNo,
+    status: version.status,
+    system_prompt: version.systemPrompt,
+    model_settings: version.modelConfig,
+    tools_config: version.toolsConfig,
+    egress_policy: version.egressPolicy,
+    created_at: version.createdAt.toISOString(),
+    updated_at: version.updatedAt.toISOString(),
+  };
+}
+
 export const templatesRouter = createTRPCRouter({
   list: protectedProcedure.query(async ({ ctx }) => {
     return ctx.db
@@ -95,18 +112,7 @@ export const templatesRouter = createTRPCRouter({
         .where(eq(templateVersions.templateId, input.templateId))
         .orderBy(desc(templateVersions.versionNo));
 
-      return rows.map((version) => ({
-        id: version.id,
-        template_id: version.templateId,
-        version_no: version.versionNo,
-        status: version.status,
-        system_prompt: version.systemPrompt,
-        model_settings: version.modelConfig,
-        tools_config: version.toolsConfig,
-        egress_policy: version.egressPolicy,
-        created_at: version.createdAt.toISOString(),
-        updated_at: version.updatedAt.toISOString(),
-      }));
+      return rows.map(mapTemplateVersion);
     }),
 
   createVersion: roleProcedure("owner", "admin")
@@ -142,18 +148,7 @@ export const templatesRouter = createTRPCRouter({
       if (!version) {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "template version creation failed" });
       }
-      return {
-        id: version.id,
-        template_id: version.templateId,
-        version_no: version.versionNo,
-        status: version.status,
-        system_prompt: version.systemPrompt,
-        model_settings: version.modelConfig,
-        tools_config: version.toolsConfig,
-        egress_policy: version.egressPolicy,
-        created_at: version.createdAt.toISOString(),
-        updated_at: version.updatedAt.toISOString(),
-      };
+      return mapTemplateVersion(version);
     }),
 
   publishVersion: roleProcedure("owner", "admin")
@@ -186,6 +181,9 @@ export const templatesRouter = createTRPCRouter({
         .set({ status: "published", updatedAt: new Date() })
         .where(eq(templateVersions.id, input.versionId))
         .returning();
+      if (!version) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "template version publish failed" });
+      }
       const bindingsToRetarget = await ctx.db
         .select({ id: groupBindings.id })
         .from(groupBindings)
@@ -197,7 +195,7 @@ export const templatesRouter = createTRPCRouter({
           .set({ templateVersionId: input.versionId, updatedAt: new Date() })
           .where(inArray(groupBindings.id, bindingsToRetarget.map((binding) => binding.id)));
       }
-      return version;
+      return mapTemplateVersion(version);
     }),
 
   rollbackVersion: roleProcedure("owner", "admin")
@@ -229,6 +227,9 @@ export const templatesRouter = createTRPCRouter({
         .set({ status: "published", updatedAt: new Date() })
         .where(eq(templateVersions.id, input.versionId))
         .returning();
+      if (!version) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "template version rollback failed" });
+      }
       const bindingsToRetarget = await ctx.db
         .select({ id: groupBindings.id })
         .from(groupBindings)
@@ -240,7 +241,7 @@ export const templatesRouter = createTRPCRouter({
           .set({ templateVersionId: input.versionId, updatedAt: new Date() })
           .where(inArray(groupBindings.id, bindingsToRetarget.map((binding) => binding.id)));
       }
-      return version;
+      return mapTemplateVersion(version);
     }),
 
   builds: protectedProcedure

@@ -328,7 +328,7 @@ export function registerGatewayRoutes(
 function extractUrls(text: string | null): string[] {
   if (!text) return [];
   const matches = text.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
-  return Array.from(new Set(matches.map((url) => url.replace(/[.,;:!?)]}]+$/, ""))));
+  return Array.from(new Set(matches.map((url) => url.replace(/[.,;:!?)\]}]+$/, ""))));
 }
 
 function normalizeUrl(url: string): string {

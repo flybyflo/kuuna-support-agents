@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { outboundIntents, messageVersions } from "../src/db/schema.js";
+import { outboundIntents, messageLinks, messageVersions } from "../src/db/schema.js";
 import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
@@ -153,6 +153,36 @@ test("contract: gateway inbound fills a contentless duplicate created event", { 
   const versions = await harness.db.select().from(messageVersions);
   assert.equal(versions.length, 2);
   assert.equal(versions.some((version) => version.textContent === "actual text"), true);
+});
+
+test("contract: gateway inbound strips closing URL delimiters", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  const app = await buildServer({
+    db: harness.db,
+    enqueueJob: async (name, data, jobId) => {
+      harness.jobs.push({ name, data, jobId });
+      return jobId ?? name;
+    },
+  });
+  t.after(async () => {
+    await app.close();
+    await harness.close();
+  });
+
+  const payload = inboundPayload("msg-url-delimiter");
+  payload.message.text = "Please read https://example.com/path] before replying.";
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/gateway/inbound",
+    payload,
+  });
+
+  assert.equal(response.statusCode, 202);
+  const [link] = await harness.db.select().from(messageLinks).limit(1);
+  assert.ok(link);
+  assert.equal(link.url, "https://example.com/path");
+  assert.equal(link.normalizedUrl, "https://example.com/path");
 });
 
 test("contract: gateway outbound status persists dispatch status", { skip: skipReason }, async (t) => {

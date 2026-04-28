@@ -616,25 +616,21 @@ export async function listMessages(providerGroupId?: string): Promise<MessageRec
     async () => {
       const client = await createSessionBackendTrpcClient();
       const rows = await client.messages.list.query({ providerGroupId, limit: 100 });
-      return Promise.all(
-        rows.map(async (row) => {
-          const versions = await client.messages.versions.query({ messageId: row.id });
-          const latest = versions[0];
-          const raw = asRecord(latest?.raw_event);
-          return {
-            id: row.id,
-            providerGroupId: row.provider_group_id,
-            sender: row.sender_provider_user_id ?? "unknown",
-            senderPhone: typeof raw.sender_phone === "string" ? raw.sender_phone : undefined,
-            senderPushName: typeof raw.sender_push_name === "string" ? raw.sender_push_name : undefined,
-            preview: latest?.text ?? "",
-            hasMedia: false,
-            isDeleted: Boolean(latest?.is_deleted),
-            latestVersionNo: row.latest_version_no,
-            createdAt: row.created_at,
-          };
-        }),
-      );
+      return rows.map((row) => {
+        const raw = asRecord(row.latest_raw_event);
+        return {
+          id: row.id,
+          providerGroupId: row.provider_group_id,
+          sender: row.sender_provider_user_id ?? "unknown",
+          senderPhone: typeof raw.sender_phone === "string" ? raw.sender_phone : undefined,
+          senderPushName: typeof raw.sender_push_name === "string" ? raw.sender_push_name : undefined,
+          preview: row.latest_text ?? "",
+          hasMedia: row.has_media,
+          isDeleted: row.latest_is_deleted,
+          latestVersionNo: row.latest_version_no,
+          createdAt: row.created_at,
+        };
+      });
     },
     () => mockMessages.filter((item) => !providerGroupId || item.providerGroupId === providerGroupId),
   );

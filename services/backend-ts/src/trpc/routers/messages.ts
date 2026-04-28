@@ -5,6 +5,27 @@ import { mediaAssets, messageVersions, messages, transcripts } from "../../db/sc
 import { createTRPCRouter, protectedProcedure } from "../init.js";
 
 type MessageRow = typeof messages.$inferSelect;
+type MessageVersionRow = typeof messageVersions.$inferSelect;
+
+function mapMessageListRow(
+  message: MessageRow,
+  latestVersion: MessageVersionRow | undefined,
+  messageIdsWithMedia: Set<string>,
+) {
+  return {
+    id: message.id,
+    provider_group_id: message.providerGroupId,
+    provider_message_id: message.providerMessageId,
+    sender_provider_user_id: message.senderProviderUserId,
+    latest_version_no: message.latestVersionNo,
+    latest_text: latestVersion?.textContent ?? null,
+    latest_raw_event: latestVersion?.rawEvent ?? null,
+    latest_is_deleted: latestVersion?.isDeleted ?? false,
+    has_media: messageIdsWithMedia.has(message.id),
+    created_at: message.createdAt.toISOString(),
+    updated_at: message.updatedAt.toISOString(),
+  };
+}
 
 export const messagesRouter = createTRPCRouter({
   list: protectedProcedure
@@ -35,15 +56,32 @@ export const messagesRouter = createTRPCRouter({
         rows = [];
       }
 
-      return rows.map((message) => ({
-        id: message.id,
-        provider_group_id: message.providerGroupId,
-        provider_message_id: message.providerMessageId,
-        sender_provider_user_id: message.senderProviderUserId,
-        latest_version_no: message.latestVersionNo,
-        created_at: message.createdAt.toISOString(),
-        updated_at: message.updatedAt.toISOString(),
-      }));
+      const messageIds = rows.map((message) => message.id);
+      const versionRows =
+        messageIds.length > 0
+          ? await ctx.db
+              .select()
+              .from(messageVersions)
+              .where(inArray(messageVersions.messageId, messageIds))
+              .orderBy(desc(messageVersions.versionNo))
+          : [];
+      const latestByMessageId = new Map<string, MessageVersionRow>();
+      for (const version of versionRows) {
+        if (!latestByMessageId.has(version.messageId)) {
+          latestByMessageId.set(version.messageId, version);
+        }
+      }
+
+      const mediaRows =
+        messageIds.length > 0
+          ? await ctx.db
+              .select({ messageId: mediaAssets.messageId })
+              .from(mediaAssets)
+              .where(inArray(mediaAssets.messageId, messageIds))
+          : [];
+      const messageIdsWithMedia = new Set(mediaRows.map((row) => row.messageId));
+
+      return rows.map((message) => mapMessageListRow(message, latestByMessageId.get(message.id), messageIdsWithMedia));
     }),
 
   versions: protectedProcedure
