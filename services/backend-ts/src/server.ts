@@ -4,8 +4,8 @@ import fastify, { type FastifyError } from "fastify";
 import { ZodError } from "zod";
 
 import { getSettings } from "./config.js";
-import { closeDb } from "./db/client.js";
-import { closeQueues } from "./jobs/queues.js";
+import { closeDb, type Database } from "./db/client.js";
+import { closeQueues, type EnqueueKuunaJob } from "./jobs/queues.js";
 import { logger } from "./logging.js";
 import { registerGatewayRoutes } from "./rest/gateway.js";
 import { registerInternalRoutes } from "./rest/internal.js";
@@ -27,7 +27,12 @@ function headersFromRecord(headers: Record<string, string | string[] | undefined
   return output;
 }
 
-export async function buildServer() {
+export type BuildServerOptions = {
+  db?: Database;
+  enqueueJob?: EnqueueKuunaJob;
+};
+
+export async function buildServer(options: BuildServerOptions = {}) {
   initSentry();
 
   const app = fastify({
@@ -67,11 +72,12 @@ export async function buildServer() {
             String(req.headers["x-real-ip"] ?? "") ||
             req.socket.remoteAddress ||
             "unknown",
+          db: options.db,
         }),
     },
   });
 
-  registerGatewayRoutes(app);
+  registerGatewayRoutes(app, { database: options.db, enqueueJob: options.enqueueJob });
   registerInternalRoutes(app);
 
   return app;

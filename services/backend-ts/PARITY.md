@@ -36,11 +36,21 @@ internal Ops API, and worker behavior covered by those suites.
 Current TypeScript parity status:
 
 - Auth token/password primitives are covered by TS unit tests.
+- Auth login/me and user create/hard-delete contracts are mirrored in TS contract tests.
 - Trigger decision logic is covered by TS unit tests.
 - Drizzle schema is aligned to the current Python SQLAlchemy model names for auth, runtime,
   messages, media, knowledge, outbound, agent state, retrieval chunks, and links.
 - tRPC has functional mutations for templates, template versions, tools, users, bindings,
   and knowledge lifecycle.
-- Gateway REST persists messages, versions, media, decisions, links, and outbound statuses.
-- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. Job bodies still
-  need Python behavior parity before that profile can replace the Python RQ worker.
+- Gateway REST persists messages, versions, media, decisions, links, and outbound statuses, with
+  inbound accept/dedupe and outbound status covered by TS contract tests.
+- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. `retrieval_indexing`
+  has a first Python-compatible message indexing path covered by TS contract tests. The remaining
+  job bodies still need Python behavior parity before that profile can replace the Python RQ worker.
+
+Run the Postgres-backed TS contract subset with:
+
+```bash
+BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kuuna \
+  npm run test --workspace @kuuna/backend-ts
+```

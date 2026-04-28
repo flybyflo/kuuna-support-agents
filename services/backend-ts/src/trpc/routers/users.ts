@@ -3,7 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import type { DbLike } from "../../db/client.js";
-import { roles, userRoles, users, groupAssignments } from "../../db/schema.js";
+import { auditEvents, roles, userRoles, users, groupAssignments } from "../../db/schema.js";
 import { hashPassword, passwordPolicyViolations, type RoleName } from "../../auth.js";
 import { createTRPCRouter, roleProcedure } from "../init.js";
 
@@ -20,6 +20,10 @@ const userUpdateInput = z.object({
   userId: z.string().uuid(),
   isActive: z.boolean().optional(),
   mustChangePassword: z.boolean().optional(),
+});
+
+const userIdInput = z.object({
+  userId: z.string().uuid(),
 });
 
 async function replaceRoles(database: DbLike, userId: string, roleNames: RoleName[]) {
@@ -100,6 +104,13 @@ export const usersRouter = createTRPCRouter({
     }
     await replaceRoles(ctx.db, user.id, input.roles);
     await replaceAssignments(ctx.db, user.id, input.groupScope);
+    await ctx.db.insert(auditEvents).values({
+      actorUserId: ctx.auth.userId,
+      eventType: "user.created",
+      entityType: "user",
+      entityId: user.id,
+      payload: { email: user.email, roles: input.roles },
+    });
     return {
       id: user.id,
       email: user.email,
@@ -113,6 +124,13 @@ export const usersRouter = createTRPCRouter({
   }),
 
   update: roleProcedure("owner", "admin").input(userUpdateInput).mutation(async ({ ctx, input }) => {
+    if (!ctx.auth) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "missing auth context" });
+    }
+    const [before] = await ctx.db.select().from(users).where(eq(users.id, input.userId)).limit(1);
+    if (!before) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "user not found" });
+    }
     const [user] = await ctx.db
       .update(users)
       .set({
@@ -127,6 +145,22 @@ export const usersRouter = createTRPCRouter({
     if (!user) {
       throw new TRPCError({ code: "NOT_FOUND", message: "user not found" });
     }
+    await ctx.db.insert(auditEvents).values({
+      actorUserId: ctx.auth.userId,
+      eventType: "user.updated",
+      entityType: "user",
+      entityId: user.id,
+      payload: {
+        before: {
+          is_active: before.isActive,
+          must_change_password: before.mustChangePassword,
+        },
+        after: {
+          is_active: user.isActive,
+          must_change_password: user.mustChangePassword,
+        },
+      },
+    });
     return {
       id: user.id,
       email: user.email,
@@ -135,5 +169,30 @@ export const usersRouter = createTRPCRouter({
       created_at: user.createdAt.toISOString(),
       updated_at: user.updatedAt.toISOString(),
     };
+  }),
+
+  delete: roleProcedure("owner", "admin").input(userIdInput).mutation(async ({ ctx, input }) => {
+    if (!ctx.auth) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "missing auth context" });
+    }
+    if (ctx.auth.userId === input.userId) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "cannot hard-delete current user" });
+    }
+    const [user] = await ctx.db.select().from(users).where(eq(users.id, input.userId)).limit(1);
+    if (!user) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "user not found" });
+    }
+
+    await ctx.db.insert(auditEvents).values({
+      actorUserId: ctx.auth.userId,
+      eventType: "user.hard_deleted",
+      entityType: "user",
+      entityId: user.id,
+      payload: { email: user.email },
+    });
+    await ctx.db.delete(groupAssignments).where(eq(groupAssignments.userId, user.id));
+    await ctx.db.delete(userRoles).where(eq(userRoles.userId, user.id));
+    await ctx.db.delete(users).where(eq(users.id, user.id));
+    return { deleted: true };
   }),
 });

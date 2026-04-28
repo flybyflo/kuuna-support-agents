@@ -23,6 +23,14 @@ npm run typecheck --workspace @kuuna/backend-ts
 npm run test --workspace @kuuna/backend-ts
 ```
 
+Contract tests that need a disposable Postgres target are gated by
+`BACKEND_TS_CONTRACT_DATABASE_URL`. They create and drop an isolated schema per test case:
+
+```bash
+BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kuuna \
+  npm run test --workspace @kuuna/backend-ts
+```
+
 The TypeScript worker is intentionally not part of the default Compose profile yet, because the
 Python RQ worker remains the behavioral owner during parity work. To start the TS worker during
 cutover experiments:

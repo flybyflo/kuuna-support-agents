@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { db } from "../db/client.js";
+import { db, type Database } from "../db/client.js";
 import {
   groupBindings,
   mediaAssets,
@@ -14,7 +14,7 @@ import {
   messageVersions,
   outboundIntents,
 } from "../db/schema.js";
-import { enqueueKuunaJob } from "../jobs/queues.js";
+import { enqueueKuunaJob, type EnqueueKuunaJob } from "../jobs/queues.js";
 import { logger } from "../logging.js";
 import { evaluateTrigger } from "../trigger.js";
 
@@ -63,13 +63,19 @@ function mediaKindFromMimeType(mimeType: string | null | undefined): string {
   return "file";
 }
 
-export function registerGatewayRoutes(app: FastifyInstance): void {
+export function registerGatewayRoutes(
+  app: FastifyInstance,
+  deps: { database?: Database; enqueueJob?: EnqueueKuunaJob } = {},
+): void {
+  const database = deps.database ?? db;
+  const enqueueJob = deps.enqueueJob ?? enqueueKuunaJob;
+
   app.post("/gateway/inbound", async (request, reply) => {
     const event = inboundEventSchema.parse(request.body);
     const occurredAt = new Date(event.occurred_at);
     const triggerDecision = evaluateTrigger(event);
 
-    const result = await db.transaction(async (tx) => {
+    const result = await database.transaction(async (tx) => {
       const [existing] = await tx
         .select()
         .from(messages)
@@ -117,21 +123,6 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
           .set({ latestVersionNo: versionNo, updatedAt: new Date() })
           .where(eq(messages.id, message.id));
 
-        for (const media of event.message.media) {
-          await tx.insert(mediaAssets).values({
-            messageId: message.id,
-            providerMediaId: media.provider_media_id,
-            mimeType: media.mime_type ?? "application/octet-stream",
-            fileName: media.file_name ?? null,
-            byteSize: media.byte_size ?? null,
-            status: "pending",
-            metadataJson: {
-              kind: mediaKindFromMimeType(media.mime_type),
-              download_url: media.download_url ?? null,
-            },
-          });
-        }
-
         await tx.insert(messageDecisions).values({
           messageId: message.id,
           providerGroupId: event.provider_group_id,
@@ -145,15 +136,6 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
           },
         });
 
-        for (const url of extractUrls(event.message.text ?? null)) {
-          await tx.insert(messageLinks).values({
-            messageId: message.id,
-            providerGroupId: event.provider_group_id,
-            url,
-            normalizedUrl: normalizeUrl(url),
-            metadataJson: { trace_id: event.trace_id },
-          }).onConflictDoNothing();
-        }
       }
 
       const [activeBinding] = await tx
@@ -162,21 +144,85 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
         .where(and(eq(groupBindings.providerGroupId, event.provider_group_id), eq(groupBindings.status, "active")))
         .limit(1);
 
-      return { messageId: message.id, deduped, activeBinding: Boolean(activeBinding) };
+      const mediaAssetIds: string[] = [];
+      const messageLinkIds: string[] = [];
+
+      if (!deduped) {
+        for (const media of event.message.media) {
+          const [asset] = await tx.insert(mediaAssets).values({
+            messageId: message.id,
+            providerMediaId: media.provider_media_id,
+            mimeType: media.mime_type ?? "application/octet-stream",
+            fileName: media.file_name ?? null,
+            byteSize: media.byte_size ?? null,
+            status: "pending",
+            metadataJson: {
+              kind: mediaKindFromMimeType(media.mime_type),
+              download_url: media.download_url ?? null,
+            },
+          }).returning({ id: mediaAssets.id });
+          if (asset) {
+            mediaAssetIds.push(asset.id);
+          }
+        }
+
+        for (const url of extractUrls(event.message.text ?? null)) {
+          const [link] = await tx.insert(messageLinks).values({
+            messageId: message.id,
+            providerGroupId: event.provider_group_id,
+            url,
+            normalizedUrl: normalizeUrl(url),
+            metadataJson: { trace_id: event.trace_id },
+          }).onConflictDoNothing().returning({ id: messageLinks.id });
+          if (link) {
+            messageLinkIds.push(link.id);
+          }
+        }
+      }
+
+      return {
+        messageId: message.id,
+        deduped,
+        activeBinding: Boolean(activeBinding),
+        mediaAssetIds,
+        messageLinkIds,
+      };
     });
 
     if (!result.deduped) {
-      await enqueueKuunaJob(
-        "media_processing",
-        { message_id: result.messageId, trace_id: event.trace_id },
-        `media:${result.messageId}`,
+      for (const mediaAssetId of result.mediaAssetIds) {
+        await enqueueJob(
+          "media_processing",
+          { media_asset_id: mediaAssetId, trace_id: event.trace_id },
+          `media_processing_${jobToken(mediaAssetId)}`,
+        );
+      }
+      await enqueueJob(
+        "retrieval_indexing",
+        { source_type: "message", source_id: result.messageId, trace_id: event.trace_id },
+        `retrieval_indexing_message_${jobToken(result.messageId)}_${jobToken(event.trace_id)}`,
       );
-      await enqueueKuunaJob("retrieval_indexing", { source_type: "message", source_id: result.messageId, trace_id: event.trace_id }, `retrieval:message:${result.messageId}`);
+      for (const messageLinkId of result.messageLinkIds) {
+        await enqueueJob(
+          "retrieval_indexing",
+          { source_type: "message_link", source_id: messageLinkId, trace_id: event.trace_id },
+          `retrieval_indexing_message_link_${jobToken(messageLinkId)}_${jobToken(event.trace_id)}`,
+        );
+      }
       if (event.event_type !== "message_deleted") {
-        await enqueueKuunaJob("passive_message_analysis", { message_id: result.messageId, provider_group_id: event.provider_group_id, trace_id: event.trace_id }, `passive:${result.messageId}`);
+        await enqueueJob(
+          "passive_message_analysis",
+          {
+            message_id: result.messageId,
+            provider_group_id: event.provider_group_id,
+            reason: triggerDecision.reason,
+            trace_id: event.trace_id,
+          },
+          `passive_analysis_${jobToken(result.messageId)}_${jobToken(triggerDecision.reason ?? "message")}_${jobToken(event.trace_id)}`,
+        );
       }
       if (triggerDecision.shouldExecute && event.event_type !== "message_deleted" && result.activeBinding) {
-        await enqueueKuunaJob(
+        await enqueueJob(
           "inbound_execution",
           {
             message_id: result.messageId,
@@ -184,7 +230,7 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
             reason: triggerDecision.reason,
             trace_id: event.trace_id,
           },
-          `inbound:${result.messageId}`,
+          `inbound_execution_${jobToken(result.messageId)}`,
         );
       }
     }
@@ -213,7 +259,7 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
 
   app.post("/gateway/outbound/status", async (request, reply) => {
     const event = outboundStatusSchema.parse(request.body);
-    const [intent] = await db
+    const [intent] = await database
       .select()
       .from(outboundIntents)
       .where(eq(outboundIntents.outboundIntentId, event.outbound_intent_id))
@@ -228,7 +274,7 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
       return reply.code(202).send({ accepted: true, found: false });
     }
 
-    await db
+    await database
       .update(outboundIntents)
       .set({
         status: event.status === "retrying" ? "sending" : event.status,
@@ -265,4 +311,8 @@ function normalizeUrl(url: string): string {
   } catch {
     return url.trim();
   }
+}
+
+function jobToken(value: string): string {
+  return value.replaceAll("-", "_").replaceAll(" ", "_");
 }
