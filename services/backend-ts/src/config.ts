@@ -20,6 +20,12 @@ const envSchema = z.object({
   OPENAI_BASE_URL: z.string().default("https://api.openai.com/v1"),
   OPENAI_TIMEOUT_SECONDS: z.coerce.number().positive().default(30),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  GATEWAY_BASE_URL: z.string().default("http://gateway:8090"),
+  GATEWAY_SERVICE_TOKEN: z.string().optional(),
+  OUTBOUND_DISPATCH_TIMEOUT_SECONDS: z.coerce.number().positive().default(10),
+  TODO_EXPORT_ENABLED: z.coerce.boolean().default(false),
+  TODO_EXPORT_WEBHOOK_URL: z.string().optional(),
+  TODO_EXPORT_TIMEOUT_SECONDS: z.coerce.number().positive().default(20),
 });
 
 export type Settings = z.infer<typeof envSchema>;

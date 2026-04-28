@@ -4,20 +4,34 @@ import { db } from "../db/client.js";
 import { logger } from "../logging.js";
 import { closeQueues, getRedisConnection, type KuunaJobName } from "./queues.js";
 import { processKnowledgeIndexingJob } from "./knowledge-indexing.js";
+import { processOutboundDispatchJob } from "./outbound-dispatch.js";
 import { processRetrievalIndexingJob } from "./retrieval-indexing.js";
+import { processTodoExportJob } from "./todo-export.js";
 
 type Handler = (job: Job<Record<string, unknown>, unknown, KuunaJobName>) => Promise<unknown>;
 
 const handlers: Record<KuunaJobName, Handler> = {
   media_processing: async (job) => recordDeferredJob(job),
   inbound_execution: async (job) => recordDeferredJob(job),
-  outbound_dispatch: async (job) => recordDeferredJob(job),
+  outbound_dispatch: async (job) => processOutboundJob(job),
   template_build: async (job) => recordDeferredJob(job),
   knowledge_indexing: async (job) => processKnowledgeJob(job),
   retrieval_indexing: async (job) => processRetrievalJob(job),
   passive_message_analysis: async (job) => recordDeferredJob(job),
-  todo_export: async (job) => recordDeferredJob(job),
+  todo_export: async (job) => processTodoExport(job),
 };
+
+async function processOutboundJob(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
+  const outboundIntentId = stringField(job.data, "outbound_intent_id");
+  return processOutboundDispatchJob(
+    db,
+    { outboundIntentId },
+    {
+      retryAvailable: retryAvailable(job),
+      retryInSeconds: retryDelaySeconds(job),
+    },
+  );
+}
 
 async function processKnowledgeJob(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
   const knowledgeVersionId = stringField(job.data, "knowledge_version_id");
@@ -30,6 +44,12 @@ async function processRetrievalJob(job: Job<Record<string, unknown>, unknown, Ku
   const sourceId = stringField(job.data, "source_id");
   const traceId = optionalStringField(job.data, "trace_id");
   return db.transaction((tx) => processRetrievalIndexingJob(tx, { sourceType, sourceId, traceId }));
+}
+
+async function processTodoExport(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
+  const limit = optionalNumberField(job.data, "limit");
+  const providerGroupId = optionalStringField(job.data, "provider_group_id");
+  return processTodoExportJob(db, { limit: limit ?? undefined, providerGroupId });
 }
 
 async function recordDeferredJob(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
@@ -58,6 +78,30 @@ function optionalStringField(data: Record<string, unknown>, key: string): string
     throw new Error(`job field '${key}' must be a string when provided`);
   }
   return value;
+}
+
+function optionalNumberField(data: Record<string, unknown>, key: string): number | null {
+  const value = data[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`job field '${key}' must be a finite number when provided`);
+  }
+  return value;
+}
+
+function retryAvailable(job: Job<Record<string, unknown>, unknown, KuunaJobName>): boolean {
+  const attempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+  return job.attemptsMade + 1 < attempts;
+}
+
+function retryDelaySeconds(job: Job<Record<string, unknown>, unknown, KuunaJobName>): number | null {
+  const backoff = job.opts.backoff;
+  if (backoff && typeof backoff === "object" && "delay" in backoff && typeof backoff.delay === "number") {
+    return Math.round(backoff.delay / 1000);
+  }
+  return null;
 }
 
 export function createDefaultWorker(): Worker<Record<string, unknown>, unknown, KuunaJobName> {

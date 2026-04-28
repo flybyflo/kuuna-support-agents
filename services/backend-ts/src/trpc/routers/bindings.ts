@@ -154,7 +154,11 @@ export const bindingsRouter = createTRPCRouter({
         },
       },
     });
-    await enqueueKuunaJob("outbound_dispatch", { outbound_intent_id: outboundIntentId }, `outbound:${outboundIntentId}`);
+    await enqueueKuunaJob(
+      "outbound_dispatch",
+      { outbound_intent_id: outboundIntentId },
+      `outbound_dispatch_${jobToken(outboundIntentId)}`,
+    );
 
     return {
       id: binding.id,
@@ -204,3 +208,7 @@ export const bindingsRouter = createTRPCRouter({
       };
     }),
 });
+
+function jobToken(value: string): string {
+  return value.replaceAll("-", "_").replaceAll(" ", "_");
+}

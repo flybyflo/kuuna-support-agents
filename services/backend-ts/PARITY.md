@@ -44,8 +44,9 @@ Current TypeScript parity status:
   and knowledge lifecycle.
 - Gateway REST persists messages, versions, media, decisions, links, and outbound statuses, with
   inbound accept/dedupe and outbound status covered by TS contract tests.
-- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. `knowledge_indexing`
-  and `retrieval_indexing` now have Python-compatible indexing paths covered by TS contract tests.
+- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. `knowledge_indexing`,
+  `retrieval_indexing`, `outbound_dispatch`, and `todo_export` now have Python-compatible paths
+  covered by TS contract tests.
   The remaining job bodies still need Python behavior parity before that profile can replace the
   Python RQ worker.
 - Ingested knowledge read models are available through tRPC and covered for common and group docs.

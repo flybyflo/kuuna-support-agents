@@ -243,6 +243,25 @@ async function createContractTables(sql: Sql): Promise<void> {
       updated_at timestamptz not null default now()
     );
 
+    create table todos (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      message_id uuid,
+      agent_run_id uuid,
+      title text not null,
+      description text,
+      status text not null default 'open',
+      priority text not null default 'normal',
+      due_at timestamptz,
+      completed_at timestamptz,
+      exported_at timestamptz,
+      export_attempt_count integer not null default 0,
+      external_ref text,
+      last_export_error text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     create table knowledge_common_docs (
       id uuid primary key default gen_random_uuid(),
       doc_key text not null unique,
