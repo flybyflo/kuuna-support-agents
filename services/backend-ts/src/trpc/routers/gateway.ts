@@ -19,7 +19,7 @@ import {
   messageVersions,
   outboundIntents,
 } from "../../db/schema.js";
-import { enqueueRuntimeChatTask, type EnqueueKuunaJob } from "../../jobs/queues.js";
+import { enqueueRuntimeChatTask, type EnqueueKuunaJob, type RuntimeChatTaskQueueClient } from "../../jobs/queues.js";
 import { logger } from "../../logging.js";
 import { publishRuntimeEvent } from "../../runtime/events.js";
 import { evaluateTrigger } from "../../trigger.js";
@@ -50,7 +50,7 @@ const gatewayServiceProcedure = publicProcedure.use(({ ctx, next }) => {
 export const gatewayRouter = createTRPCRouter({
   inbound: createTRPCRouter({
     ingest: gatewayServiceProcedure.input(gatewayInboundEventSchema).mutation(async ({ ctx, input }) =>
-      ingestGatewayInbound(ctx.rootDb, ctx.enqueueJob ?? missingEnqueueJob, input),
+      ingestGatewayInbound(ctx.rootDb, ctx.enqueueJob ?? missingEnqueueJob, input, ctx.runtimeChatQueue),
     ),
   }),
   outbound: createTRPCRouter({
@@ -64,6 +64,7 @@ export async function ingestGatewayInbound(
   database: Database,
   enqueueJob: EnqueueKuunaJob,
   event: GatewayInboundEvent,
+  runtimeChatQueue?: RuntimeChatTaskQueueClient,
 ): Promise<GatewayInboundAck> {
   const occurredAt = new Date(event.occurred_at);
   const triggerDecision = evaluateTrigger(event);
@@ -236,7 +237,7 @@ export async function ingestGatewayInbound(
           reason: triggerDecision.reason,
           traceId: event.trace_id,
         },
-        enqueueJob,
+        { enqueueJob, redis: runtimeChatQueue },
       );
     }
     if (triggerDecision.shouldExecute && event.event_type !== "message_deleted" && result.activeBinding) {
@@ -248,7 +249,7 @@ export async function ingestGatewayInbound(
           reason: triggerDecision.reason,
           traceId: event.trace_id,
         },
-        enqueueJob,
+        { enqueueJob, redis: runtimeChatQueue },
       );
     }
   }

@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { resetSettingsForTests } from "../src/config.js";
 import { mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
 import { processMediaAssetJob } from "../src/jobs/media-processing.js";
+import { parseRuntimeChatTask, type EnqueueRuntimeChatTaskOptions } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -21,11 +22,22 @@ test("contract: media processing inline text writes ready transcript and followu
     mimeType: "text/plain; charset=utf-8",
     metadataJson: { inline_data_base64: Buffer.from("hello transcript", "utf8").toString("base64") },
   });
+  const runtimeChatTasks: string[] = [];
+  const runtimeChatQueue: NonNullable<EnqueueRuntimeChatTaskOptions["redis"]> = {
+    async rpush(_key, value) {
+      runtimeChatTasks.push(value);
+      return runtimeChatTasks.length;
+    },
+    async set() {
+      return "OK";
+    },
+  };
 
   const result = await processMediaAssetJob(
     harness.db,
     { mediaAssetId: seeded.mediaAssetId, traceId: "trace-media" },
     {
+      runtimeChatQueue,
       enqueueJob: async (name, data, jobId) => {
         harness.jobs.push({ name, data, jobId });
         return jobId ?? name;
@@ -46,7 +58,8 @@ test("contract: media processing inline text writes ready transcript and followu
   assert.equal(transcript.status, "ready");
   assert.equal(transcript.textContent, "hello transcript");
   assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "runtime_chat_queue"]);
-  assert.equal((harness.jobs[1]?.data.queued_task as Record<string, unknown> | undefined)?.name, "passive_message_analysis");
+  assert.equal(harness.jobs[1]?.data.queued_task, undefined);
+  assert.equal(parseRuntimeChatTask(runtimeChatTasks[0]).name, "passive_message_analysis");
 });
 
 test("contract: media processing missing download marks failed", { skip: skipReason }, async (t) => {

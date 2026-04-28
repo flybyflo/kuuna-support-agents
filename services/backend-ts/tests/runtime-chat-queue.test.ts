@@ -5,11 +5,22 @@ import {
   enqueueRuntimeChatTask,
   parseRuntimeChatTask,
   runtimeChatDrainJobId,
+  type EnqueueRuntimeChatTaskOptions,
   type KuunaJobName,
 } from "../src/jobs/queues.js";
 
-test("enqueueRuntimeChatTask schedules only the per-chat drain job", async () => {
+test("enqueueRuntimeChatTask appends to the per-chat Redis queue and schedules one drain job", async () => {
   const jobs: Array<{ name: KuunaJobName; data: Record<string, unknown>; jobId?: string }> = [];
+  const queuedTasks: string[] = [];
+  const redis: NonNullable<EnqueueRuntimeChatTaskOptions["redis"]> = {
+    async rpush(_key, value) {
+      queuedTasks.push(value);
+      return queuedTasks.length;
+    },
+    async set() {
+      return "OK";
+    },
+  };
 
   const jobId = await enqueueRuntimeChatTask(
     {
@@ -19,25 +30,32 @@ test("enqueueRuntimeChatTask schedules only the per-chat drain job", async () =>
       reason: "mention",
       traceId: "trace-1",
     },
-    async (name, data, queuedJobId) => {
-      jobs.push({ name, data, jobId: queuedJobId });
-      return queuedJobId ?? name;
+    {
+      redis,
+      tokenFactory: () => "drain-token",
+      enqueueJob: async (name, data, queuedJobId) => {
+        jobs.push({ name, data, jobId: queuedJobId });
+        return queuedJobId ?? name;
+      },
     },
   );
 
   assert.equal(jobId, runtimeChatDrainJobId("group-a@g.us"));
-  assert.equal(jobs.length, 1);
-  assert.equal(jobs[0]?.name, "runtime_chat_queue");
-  assert.equal(jobs[0]?.data.provider_group_id, "group-a@g.us");
-  assert.equal(jobs[0]?.jobId, runtimeChatDrainJobId("group-a@g.us"));
-  assert.deepEqual(parseRuntimeChatTask(jobs[0]?.data.queued_task), {
+  assert.equal(queuedTasks.length, 1);
+  assert.deepEqual(parseRuntimeChatTask(queuedTasks[0]), {
     name: "inbound_execution",
     messageId: "message-1",
     providerGroupId: "group-a@g.us",
     reason: "mention",
     traceId: "trace-1",
-    enqueuedAt: parseRuntimeChatTask(jobs[0]?.data.queued_task).enqueuedAt,
+    enqueuedAt: parseRuntimeChatTask(queuedTasks[0]).enqueuedAt,
   });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0]?.name, "runtime_chat_queue");
+  assert.equal(jobs[0]?.data.provider_group_id, "group-a@g.us");
+  assert.equal(jobs[0]?.data.drain_token, "drain-token");
+  assert.equal(jobs[0]?.jobId, runtimeChatDrainJobId("group-a@g.us"));
+  assert.equal(jobs[0]?.data.queued_task, undefined);
 });
 
 test("runtimeChatDrainJobId is stable per provider group", () => {

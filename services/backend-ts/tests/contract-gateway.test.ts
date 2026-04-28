@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import type { GatewayInboundEvent, GatewayOutboundStatusEvent } from "@kuuna/contracts";
 
 import { outboundIntents, messageLinks, messageVersions } from "../src/db/schema.js";
+import { parseRuntimeChatTask } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -59,7 +60,8 @@ test("contract: gateway inbound accepts and versions event", { skip: skipReason 
     ["retrieval_indexing", "runtime_chat_queue"],
   );
   assert.equal(harness.jobs[1]?.data.provider_group_id, payload.provider_group_id);
-  assert.equal((harness.jobs[1]?.data.queued_task as Record<string, unknown> | undefined)?.name, "passive_message_analysis");
+  assert.equal(harness.jobs[1]?.data.queued_task, undefined);
+  assert.equal(parseRuntimeChatTask(harness.runtimeChatTasks[0]).name, "passive_message_analysis");
 });
 
 test("contract: gateway inbound dedupes duplicate created event", { skip: skipReason }, async (t) => {

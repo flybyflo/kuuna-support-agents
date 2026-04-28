@@ -33,6 +33,23 @@ export type EnqueueKuunaJob = (
   jobId?: string,
 ) => Promise<string>;
 
+export type RuntimeChatTaskQueueClient = {
+  rpush(key: string, value: string): Promise<number>;
+  set(
+    key: string,
+    value: string,
+    expiryMode: "EX",
+    expirySeconds: number,
+    condition: "NX",
+  ): Promise<"OK" | null>;
+};
+
+export type EnqueueRuntimeChatTaskOptions = {
+  enqueueJob?: EnqueueKuunaJob;
+  redis?: RuntimeChatTaskQueueClient;
+  tokenFactory?: () => string;
+};
+
 let redisConnection: Redis | undefined;
 let defaultQueue: Queue<Record<string, unknown>, unknown, KuunaJobName> | undefined;
 
@@ -70,21 +87,16 @@ export async function enqueueKuunaJob(
 
 export async function enqueueRuntimeChatTask(
   input: Omit<RuntimeChatTask, "enqueuedAt">,
-  enqueueJob?: EnqueueKuunaJob,
+  options: EnqueueRuntimeChatTaskOptions = {},
 ): Promise<string> {
   const task: RuntimeChatTask = {
     ...input,
     enqueuedAt: new Date().toISOString(),
   };
   const jobId = runtimeChatDrainJobId(input.providerGroupId);
-
-  if (enqueueJob) {
-    return enqueueJob("runtime_chat_queue", { provider_group_id: input.providerGroupId, queued_task: task }, jobId);
-  }
-
-  const redis = getRedisConnection();
+  const redis = options.redis ?? getRedisConnection();
   await redis.rpush(runtimeChatQueueKey(input.providerGroupId), JSON.stringify(task));
-  await scheduleRuntimeChatDrain(input.providerGroupId);
+  await scheduleRuntimeChatDrain(input.providerGroupId, options);
   return jobId;
 }
 
@@ -182,11 +194,16 @@ async function releaseRuntimeChatDrain(providerGroupId: string, drainToken: stri
   await getRedisConnection().eval(script, 1, runtimeChatActiveKey(providerGroupId), drainToken);
 }
 
-async function scheduleRuntimeChatDrain(providerGroupId: string): Promise<void> {
-  const token = randomUUID();
-  const scheduled = await getRedisConnection().set(runtimeChatActiveKey(providerGroupId), token, "EX", runtimeChatDrainTtlSeconds, "NX");
+async function scheduleRuntimeChatDrain(
+  providerGroupId: string,
+  options: Pick<EnqueueRuntimeChatTaskOptions, "enqueueJob" | "redis" | "tokenFactory"> = {},
+): Promise<void> {
+  const token = options.tokenFactory?.() ?? randomUUID();
+  const redis = options.redis ?? getRedisConnection();
+  const scheduled = await redis.set(runtimeChatActiveKey(providerGroupId), token, "EX", runtimeChatDrainTtlSeconds, "NX");
   if (scheduled !== "OK") return;
-  await enqueueKuunaJob("runtime_chat_queue", { provider_group_id: providerGroupId, drain_token: token }, runtimeChatDrainJobId(providerGroupId));
+  const enqueue = options.enqueueJob ?? enqueueKuunaJob;
+  await enqueue("runtime_chat_queue", { provider_group_id: providerGroupId, drain_token: token }, runtimeChatDrainJobId(providerGroupId));
 }
 
 function requiredString(record: Record<string, unknown>, key: string): string {

@@ -5,7 +5,7 @@ import { ZodError } from "zod";
 
 import { getSettings } from "./config.js";
 import { closeDb, type Database } from "./db/client.js";
-import { closeQueues, type EnqueueKuunaJob } from "./jobs/queues.js";
+import { closeQueues, enqueueKuunaJob, type EnqueueKuunaJob } from "./jobs/queues.js";
 import { logger } from "./logging.js";
 import { initSentry } from "./sentry.js";
 import { createTRPCContext } from "./trpc/init.js";
@@ -71,7 +71,7 @@ export async function buildServer(options: BuildServerOptions = {}) {
             req.socket.remoteAddress ||
             "unknown",
           db: options.db,
-          enqueueJob: options.enqueueJob,
+          enqueueJob: options.enqueueJob ?? enqueueKuunaJob,
         }),
     },
   });

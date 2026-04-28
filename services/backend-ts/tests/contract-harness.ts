@@ -29,6 +29,7 @@ export type ContractHarness = {
   sql: Sql;
   schemaName: string;
   jobs: EnqueuedJob[];
+  runtimeChatTasks: string[];
   caller: (token?: string) => Promise<AppCaller>;
   internalCaller: (internalToken: string) => Promise<AppCaller>;
   seedUser: (input: {
@@ -57,12 +58,26 @@ export async function createContractHarness(): Promise<ContractHarness> {
 
   const db = drizzle(sql, { schema }) as Database;
   const jobs: EnqueuedJob[] = [];
+  const runtimeChatTasks: string[] = [];
+  const activeRuntimeChatDrains = new Set<string>();
+  const runtimeChatQueue = {
+    async rpush(_key: string, value: string) {
+      runtimeChatTasks.push(value);
+      return runtimeChatTasks.length;
+    },
+    async set(key: string) {
+      if (activeRuntimeChatDrains.has(key)) return null;
+      activeRuntimeChatDrains.add(key);
+      return "OK" as const;
+    },
+  };
 
   return {
     db,
     sql,
     schemaName,
     jobs,
+    runtimeChatTasks,
     caller: async (token?: string) => {
       const headers = new Headers();
       if (token) {
@@ -71,7 +86,7 @@ export async function createContractHarness(): Promise<ContractHarness> {
       const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
         jobs.push({ name, data, jobId });
         return jobId ?? name;
-      } });
+      }, runtimeChatQueue });
       return createCaller(context);
     },
     internalCaller: async (internalToken: string) => {
@@ -79,7 +94,7 @@ export async function createContractHarness(): Promise<ContractHarness> {
       const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
         jobs.push({ name, data, jobId });
         return jobId ?? name;
-      } });
+      }, runtimeChatQueue });
       return createCaller(context);
     },
     seedUser: async (input) => {

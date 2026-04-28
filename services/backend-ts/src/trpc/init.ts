@@ -2,7 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 
 import { requireAuth, type AuthContext, type RoleName } from "../auth.js";
 import { db, type Database, type DbLike } from "../db/client.js";
-import type { EnqueueKuunaJob } from "../jobs/queues.js";
+import type { EnqueueKuunaJob, RuntimeChatTaskQueueClient } from "../jobs/queues.js";
 import { applyRlsContext } from "../rls.js";
 
 export type TrpcContext = {
@@ -12,6 +12,7 @@ export type TrpcContext = {
   db: DbLike;
   auth: AuthContext | null;
   enqueueJob?: EnqueueKuunaJob;
+  runtimeChatQueue?: RuntimeChatTaskQueueClient;
 };
 
 export async function createTRPCContext(opts: {
@@ -19,6 +20,7 @@ export async function createTRPCContext(opts: {
   clientIp?: string;
   db?: Database;
   enqueueJob?: EnqueueKuunaJob;
+  runtimeChatQueue?: RuntimeChatTaskQueueClient;
 }): Promise<TrpcContext> {
   const database = opts.db ?? db;
   return {
@@ -28,6 +30,7 @@ export async function createTRPCContext(opts: {
     db: database,
     auth: null,
     enqueueJob: opts.enqueueJob,
+    runtimeChatQueue: opts.runtimeChatQueue,
   };
 }
 
@@ -68,6 +71,7 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
         db: tx,
         auth,
         enqueueJob: ctx.enqueueJob,
+        runtimeChatQueue: ctx.runtimeChatQueue,
       },
     });
   });

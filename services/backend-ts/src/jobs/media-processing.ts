@@ -8,7 +8,12 @@ import { mediaAssets, messages, messageVersions, transcripts } from "../db/schem
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
 import { publishRuntimeEvent } from "../runtime/events.js";
-import { enqueueKuunaJob, enqueueRuntimeChatTask, type EnqueueKuunaJob } from "./queues.js";
+import {
+  enqueueKuunaJob,
+  enqueueRuntimeChatTask,
+  type EnqueueKuunaJob,
+  type RuntimeChatTaskQueueClient,
+} from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -33,6 +38,7 @@ export async function processMediaAssetJob(
     httpClient?: HttpClient;
     uploadBytes?: UploadBytes;
     enqueueJob?: EnqueueKuunaJob;
+    runtimeChatQueue?: RuntimeChatTaskQueueClient;
   } = {},
 ): Promise<MediaProcessingResult> {
   const settings = getSettings();
@@ -155,7 +161,12 @@ async function processPendingAsset(
   database: DbLike,
   asset: MediaAssetRow,
   traceId: string | null,
-  options: { httpClient?: HttpClient; uploadBytes?: UploadBytes; enqueueJob?: EnqueueKuunaJob },
+  options: {
+    httpClient?: HttpClient;
+    uploadBytes?: UploadBytes;
+    enqueueJob?: EnqueueKuunaJob;
+    runtimeChatQueue?: RuntimeChatTaskQueueClient;
+  },
 ): Promise<"ready" | "failed"> {
   const metadata = objectRecord(asset.metadataJson);
   const kind = kindFromMimeType(asset.mimeType);
@@ -212,7 +223,7 @@ async function processPendingAsset(
         entityType: "media_asset",
         payload: { status: "ready", message_id: asset.messageId, kind, processing_mode: "thumbnail-only" },
       });
-      await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
+      await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
       return "ready";
     }
     metadata.error = "download_url_missing";
@@ -281,7 +292,7 @@ async function processPendingAsset(
     entityType: "media_asset",
     payload: { status: "ready", message_id: asset.messageId, kind },
   });
-  await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
+  await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
   logger.info("media_asset_processed", {
     trace_id: traceId,
     media_asset_id: asset.id,
@@ -350,6 +361,7 @@ async function upsertTranscript(
 
 async function enqueueMediaFollowups(
   enqueueJob: EnqueueKuunaJob | undefined,
+  runtimeChatQueue: RuntimeChatTaskQueueClient | undefined,
   asset: MediaAssetRow,
   providerGroupId: string,
   traceId: string | null,
@@ -369,7 +381,7 @@ async function enqueueMediaFollowups(
       reason,
       traceId,
     },
-    enqueue,
+    { enqueueJob: enqueue, redis: runtimeChatQueue },
   );
 }
 
