@@ -50,6 +50,9 @@ require_command curl
 
 log "using compose file: $COMPOSE_FILE"
 
+log "building lazy runtime image"
+docker build -f "${REPO_ROOT}/services/runtime-agent-ts/Dockerfile" -t kuuna-runtime-agent-ts:dev "$REPO_ROOT" >/dev/null
+
 log "ensuring required services are running"
 compose up -d postgres redis minio backend worker gateway >/dev/null
 

@@ -72,7 +72,7 @@ Implementation is targeting a single dev environment first.
 - `apps/dashboard` - Next.js 15 + TypeScript dashboard scaffold
 - `services/backend-ts` - TypeScript control plane API and worker
 - `services/gateway` - TypeScript WhatsApp gateway using Baileys
-- `services/runtime-agent-ts` - TypeScript Pi runtime agent used by Compose and per-group containers
+- `services/runtime-agent-ts` - TypeScript Pi runtime agent image used for lazy per-group containers
 - `packages/api-client-ts` - shared typed backend API client and dashboard read models
 - `packages/contracts` - shared gateway/event contracts
 - `packages/agent-contracts` - shared runtime request/result contracts
@@ -87,6 +87,10 @@ just up
 ```
 
 (or via pnpm wrapper: `pnpm dev`)
+
+`just up` first builds `kuuna-runtime-agent-ts:dev`, then starts the control plane.
+The runtime agent is not a shared Compose service; the worker lazily creates one
+managed container per `provider_group_id` when that chat first needs agent work.
 
 ## TypeScript Monorepo Commands
 

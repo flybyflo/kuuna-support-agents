@@ -5,7 +5,11 @@ compose_file := "infra/compose/docker-compose.dev.yml"
 default:
     @just --list
 
+runtime-image:
+    docker build -f services/runtime-agent-ts/Dockerfile -t kuuna-runtime-agent-ts:dev .
+
 up:
+    just runtime-image
     docker compose -f {{compose_file}} up --build
 
 down:

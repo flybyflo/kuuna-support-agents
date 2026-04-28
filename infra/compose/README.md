@@ -7,6 +7,10 @@ Use Docker for all local runs (frontend + backend + gateway + infra dependencies
 just up
 ```
 
+This builds the `kuuna-runtime-agent-ts:dev` image and then starts the stack.
+Runtime agents are not long-running shared Compose services; they are created
+on demand as per-chat containers by the backend worker.
+
 ## Stop
 ```bash
 just down
