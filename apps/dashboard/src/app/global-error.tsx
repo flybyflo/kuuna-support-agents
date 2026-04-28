@@ -1,6 +1,6 @@
 "use client";
 
-import * as Sentry from "@sentry/browser";
+import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 

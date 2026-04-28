@@ -21,7 +21,7 @@
   "dependencies": {
     "@kuuna/agent-contracts": "workspace:*",
     "@kuuna/pi-runtime": "workspace:*",
-    "@trpc/server": "^11.7.2",
+    "@trpc/server": "11.17.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

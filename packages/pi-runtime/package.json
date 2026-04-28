@@ -34,9 +34,9 @@
   },
   "dependencies": {
     "@kuuna/agent-contracts": "workspace:*",
-    "@mariozechner/pi-agent-core": "0.70.2",
-    "@mariozechner/pi-ai": "0.70.2",
-    "@mariozechner/pi-coding-agent": "0.70.2",
+    "@mariozechner/pi-agent-core": "0.70.6",
+    "@mariozechner/pi-ai": "0.70.6",
+    "@mariozechner/pi-coding-agent": "0.70.6",
     "typebox": "^1.0.55"
   },
   "devDependencies": {

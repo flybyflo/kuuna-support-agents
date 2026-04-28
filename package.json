@@ -2,7 +2,7 @@
   "name": "kuuna-support-agents",
   "private": true,
   "version": "0.1.0",
-  "packageManager": "pnpm@10.19.0",
+  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "just up",
     "dev:down": "just down",
@@ -17,7 +17,7 @@
     "lint": "turbo run lint"
   },
   "devDependencies": {
-    "turbo": "^2.6.3"
+    "turbo": "^2.9.6"
   },
   "pnpm": {
     "overrides": {

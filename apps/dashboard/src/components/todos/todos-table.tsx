@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   CheckSquare,
   Download,
@@ -178,12 +178,11 @@ export function TodosTable({
     [selectedTodoId, todos],
   );
 
-  useEffect(() => {
-    if (selectedTodo) {
-      setStatus(selectedTodo.status);
-      setError(null);
-    }
-  }, [selectedTodo]);
+  function openTodo(todo: TodoItem) {
+    setSelectedTodoId(todo.id);
+    setStatus(todo.status);
+    setError(null);
+  }
 
   function saveStatus() {
     if (!selectedTodo || selectedTodo.status === status) {
@@ -229,11 +228,11 @@ export function TodosTable({
               role="button"
               tabIndex={0}
               className="cursor-pointer"
-              onClick={() => setSelectedTodoId(todo.id)}
+              onClick={() => openTodo(todo)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setSelectedTodoId(todo.id);
+                  openTodo(todo);
                 }
               }}
             >

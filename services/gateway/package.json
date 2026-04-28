@@ -15,9 +15,9 @@
   },
   "dependencies": {
     "@kuuna/contracts": "workspace:*",
-    "@sentry/node": "^10.49.0",
-    "@trpc/client": "^11.7.2",
-    "@trpc/server": "^11.7.2",
+    "@sentry/node": "^10.50.0",
+    "@trpc/client": "11.17.0",
+    "@trpc/server": "11.17.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "fastify": "^5.6.2",
     "pino": "^9.6.0",

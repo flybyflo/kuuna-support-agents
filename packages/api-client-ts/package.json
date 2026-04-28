@@ -18,7 +18,7 @@
     "test": "tsc --noEmit -p tsconfig.json --customConditions development"
   },
   "dependencies": {
-    "@trpc/client": "^11.7.2"
+    "@trpc/client": "11.17.0"
   },
   "devDependencies": {
     "@kuuna/backend-ts": "workspace:*",
