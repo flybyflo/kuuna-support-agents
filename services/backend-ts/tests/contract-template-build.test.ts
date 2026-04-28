@@ -1,0 +1,320 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+
+import { eq } from "drizzle-orm";
+
+import { resetSettingsForTests } from "../src/config.js";
+import { auditEvents, groupTemplates, templateBuilds, templateVersions } from "../src/db/schema.js";
+import { processTemplateBuildJob } from "../src/jobs/template-build.js";
+import { buildServer } from "../src/server.js";
+import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
+
+const skipReason = contractDatabaseUrl
+  ? false
+  : "set BACKEND_TS_CONTRACT_DATABASE_URL to run backend-ts contract tests";
+
+test("contract: internal template build endpoint queues published version", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
+  resetSettingsForTests();
+  t.after(() => {
+    delete process.env.INTERNAL_OPS_TOKEN;
+    resetSettingsForTests();
+  });
+  const app = await buildServer({ db: harness.db, enqueueJob: async (name, data, jobId) => {
+    harness.jobs.push({ name, data, jobId });
+    return jobId ?? name;
+  } });
+  t.after(() => app.close());
+
+  const actor = await harness.seedUser({ email: "builder@example.com", password: "LongPassword123!" });
+  const seeded = await seedTemplate(harness, { status: "published" });
+
+  const response = await app.inject({
+    method: "POST",
+    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
+    headers: { "x-internal-token": "template-build-token" },
+    payload: {
+      actor_user_id: actor.id,
+      base_image: "ghcr.io/kuuna/runtime-base:1",
+      allowed_tools: [" Search ", "SEND_WHATSAPP"],
+    },
+  });
+
+  assert.equal(response.statusCode, 201);
+  const body = response.json() as Record<string, unknown>;
+  assert.equal(body.template_id, seeded.templateId);
+  assert.equal(body.template_version_id, seeded.versionId);
+  assert.equal(body.status, "queued");
+  assert.equal((body.build_inputs as Record<string, unknown>).base_image, "ghcr.io/kuuna/runtime-base:1");
+  assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "send_whatsapp"]);
+
+  assert.equal(harness.jobs.length, 1);
+  assert.equal(harness.jobs[0]?.name, "template_build");
+  assert.deepEqual(harness.jobs[0]?.data, { build_id: body.id });
+  assert.equal(harness.jobs[0]?.jobId, `template_build_${String(body.id).replaceAll("-", "_")}`);
+
+  const [event] = await harness.db
+    .select()
+    .from(auditEvents)
+    .where(eq(auditEvents.eventType, "template_build.queued"))
+    .limit(1);
+  assert.ok(event);
+  assert.equal(event.actorUserId, actor.id);
+  assert.equal(event.entityId, body.id);
+});
+
+test("contract: internal template build endpoint rejects unpublished or missing versions", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
+  resetSettingsForTests();
+  t.after(() => {
+    delete process.env.INTERNAL_OPS_TOKEN;
+    resetSettingsForTests();
+  });
+  const app = await buildServer({ db: harness.db });
+  t.after(() => app.close());
+
+  const actor = await harness.seedUser({ email: "builder2@example.com", password: "LongPassword123!" });
+  const seeded = await seedTemplate(harness, { status: "draft" });
+
+  const unpublished = await app.inject({
+    method: "POST",
+    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
+    headers: { "x-internal-token": "template-build-token" },
+    payload: { actor_user_id: actor.id, base_image: "node:22-alpine" },
+  });
+  assert.equal(unpublished.statusCode, 400);
+  assert.match(unpublished.body, /only published template versions can be built/);
+
+  const missing = await app.inject({
+    method: "GET",
+    url: `/internal/templates/${seeded.templateId}/versions/${randomUUID()}/builds`,
+    headers: { "x-internal-token": "template-build-token" },
+  });
+  assert.equal(missing.statusCode, 404);
+  assert.match(missing.body, /template version not found/);
+});
+
+test("contract: internal template build list and detail mirror response shape", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
+  resetSettingsForTests();
+  t.after(() => {
+    delete process.env.INTERNAL_OPS_TOKEN;
+    resetSettingsForTests();
+  });
+  const app = await buildServer({ db: harness.db });
+  t.after(() => app.close());
+
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "succeeded",
+      imageRef: "kuuna/template-support@sha256:abc",
+      imageTag: "kuuna/template-support:build-abc",
+      buildInputs: { base_image: "node:22-alpine" },
+      logsRef: "{\"returncode\":0}",
+    })
+    .returning();
+  assert.ok(build);
+
+  const list = await app.inject({
+    method: "GET",
+    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
+    headers: { "x-internal-token": "template-build-token" },
+  });
+  assert.equal(list.statusCode, 200);
+  const listBody = list.json() as { items: Array<Record<string, unknown>> };
+  assert.equal(listBody.items.length, 1);
+  assert.equal(listBody.items[0]?.id, build.id);
+  assert.equal(listBody.items[0]?.image_ref, "kuuna/template-support@sha256:abc");
+  assert.equal(typeof listBody.items[0]?.created_at, "string");
+
+  const detail = await app.inject({
+    method: "GET",
+    url: `/internal/template-builds/${build.id}`,
+    headers: { "x-internal-token": "template-build-token" },
+  });
+  assert.equal(detail.statusCode, 200);
+  assert.equal((detail.json() as Record<string, unknown>).id, build.id);
+});
+
+test("contract: template build job invalid or unknown id mutates nothing", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  assert.deepEqual(await processTemplateBuildJob(harness.db, { buildId: "not-a-uuid" }), {
+    processed: false,
+    status: "invalid",
+  });
+  assert.deepEqual(await processTemplateBuildJob(harness.db, { buildId: randomUUID() }), {
+    processed: false,
+    status: "not_found",
+  });
+  assert.equal((await harness.db.select().from(templateBuilds)).length, 0);
+});
+
+test("contract: template build job fails when base image is missing", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: {},
+    })
+    .returning();
+  assert.ok(build);
+
+  const result = await processTemplateBuildJob(harness.db, { buildId: build.id });
+  assert.deepEqual(result, { processed: true, status: "failed" });
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "failed");
+  assert.equal(stored.imageRef, null);
+  const event = await findAuditEvent(harness, "template_build.failed");
+  assert.deepEqual(event.payload, { error: "missing base_image in build_inputs" });
+});
+
+test("contract: template build job records docker failure logs", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: { base_image: "node:22-alpine" },
+    })
+    .returning();
+  assert.ok(build);
+
+  const result = await processTemplateBuildJob(
+    harness.db,
+    { buildId: build.id },
+    { commandRunner: async () => ({ returncode: 17, stdout: "out", stderr: "bad docker" }) },
+  );
+  assert.deepEqual(result, { processed: true, status: "failed" });
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "failed");
+  const logs = JSON.parse(stored.logsRef ?? "{}") as Record<string, unknown>;
+  assert.equal(logs.returncode, 17);
+  assert.equal(logs.stderr_tail, "bad docker");
+  const event = await findAuditEvent(harness, "template_build.failed");
+  assert.deepEqual(event.payload, { error: "docker build failed (exit 17)" });
+});
+
+test("contract: template build job succeeds and uses digest fallback", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  process.env.DOCKER_CLI_PATH = "docker-test";
+  process.env.TEMPLATE_BUILD_CONTEXT_PATH = "/repo";
+  process.env.TEMPLATE_BUILD_DOCKERFILE_PATH = "/repo/Dockerfile";
+  resetSettingsForTests();
+  t.after(() => {
+    delete process.env.DOCKER_CLI_PATH;
+    delete process.env.TEMPLATE_BUILD_CONTEXT_PATH;
+    delete process.env.TEMPLATE_BUILD_DOCKERFILE_PATH;
+    resetSettingsForTests();
+  });
+
+  const seeded = await seedTemplate(harness, { status: "published", key: "Support Bot!" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: { base_image: "node:22-alpine" },
+    })
+    .returning();
+  assert.ok(build);
+
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const result = await processTemplateBuildJob(
+    harness.db,
+    { buildId: build.id },
+    {
+      commandRunner: async (command, args) => {
+        calls.push({ command, args });
+        if (args[0] === "image") {
+          return { returncode: 0, stdout: "[]", stderr: "" };
+        }
+        return { returncode: 0, stdout: "built", stderr: "" };
+      },
+    },
+  );
+
+  assert.deepEqual(result, { processed: true, status: "succeeded" });
+  assert.equal(calls[0]?.command, "docker-test");
+  assert.deepEqual(calls[0]?.args.slice(0, 3), ["build", "-f", "/repo/Dockerfile"]);
+  assert.ok(calls[0]?.args.includes("BASE_IMAGE=node:22-alpine"));
+  assert.equal(calls[0]?.args.at(-1), "/repo");
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "succeeded");
+  assert.equal(stored.imageTag, `kuuna/template-support-bot:build-${build.id.replaceAll("-", "").slice(0, 12)}`);
+  assert.equal(stored.imageRef, stored.imageTag);
+  const event = await findAuditEvent(harness, "template_build.succeeded");
+  assert.equal((event.payload as Record<string, unknown>).image_ref, stored.imageTag);
+});
+
+async function seedTemplate(
+  harness: Awaited<ReturnType<typeof createContractHarness>>,
+  input: { status: "draft" | "ready" | "published" | "archived"; key?: string },
+) {
+  const [template] = await harness.db
+    .insert(groupTemplates)
+    .values({ key: input.key ?? `template-${randomUUID()}`, displayName: "Support Template" })
+    .returning();
+  assert.ok(template);
+
+  const [version] = await harness.db
+    .insert(templateVersions)
+    .values({
+      templateId: template.id,
+      versionNo: 1,
+      status: input.status,
+      modelConfig: { model: "gpt-5-mini" },
+      toolsConfig: { tools: [{ name: "search" }, { name: "disabled", enabled: false }] },
+      egressPolicy: { allow: ["https://example.com"] },
+    })
+    .returning();
+  assert.ok(version);
+  return { templateId: template.id, versionId: version.id };
+}
+
+async function findBuild(harness: Awaited<ReturnType<typeof createContractHarness>>, buildId: string) {
+  const [build] = await harness.db.select().from(templateBuilds).where(eq(templateBuilds.id, buildId)).limit(1);
+  assert.ok(build);
+  return build;
+}
+
+async function findAuditEvent(
+  harness: Awaited<ReturnType<typeof createContractHarness>>,
+  eventType: string,
+) {
+  const [event] = await harness.db.select().from(auditEvents).where(eq(auditEvents.eventType, eventType)).limit(1);
+  assert.ok(event);
+  return event;
+}

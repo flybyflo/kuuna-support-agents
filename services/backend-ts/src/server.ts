@@ -78,7 +78,7 @@ export async function buildServer(options: BuildServerOptions = {}) {
   });
 
   registerGatewayRoutes(app, { database: options.db, enqueueJob: options.enqueueJob });
-  registerInternalRoutes(app);
+  registerInternalRoutes(app, { database: options.db, enqueueJob: options.enqueueJob });
 
   return app;
 }

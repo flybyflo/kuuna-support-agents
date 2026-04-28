@@ -151,11 +151,76 @@ async function createContractTables(sql: Sql): Promise<void> {
       created_at timestamptz not null default now()
     );
 
+    create table group_templates (
+      id uuid primary key default gen_random_uuid(),
+      key text not null unique,
+      display_name text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table template_versions (
+      id uuid primary key default gen_random_uuid(),
+      template_id uuid not null references group_templates(id) on delete cascade,
+      version_no integer not null,
+      status text not null,
+      system_prompt text,
+      model_config jsonb not null default '{}'::jsonb,
+      tools_config jsonb not null default '{}'::jsonb,
+      egress_policy jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (template_id, version_no)
+    );
+
+    create table template_builds (
+      id uuid primary key default gen_random_uuid(),
+      template_id uuid not null references group_templates(id) on delete cascade,
+      template_version_id uuid not null references template_versions(id) on delete cascade,
+      status text not null default 'queued',
+      image_ref text,
+      image_tag text,
+      build_inputs jsonb not null default '{}'::jsonb,
+      logs_ref text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table runtime_runs (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      message_id uuid,
+      binding_id uuid not null,
+      template_version_id uuid not null,
+      template_build_id uuid,
+      image_ref text not null,
+      status text not null,
+      started_at timestamptz not null,
+      finished_at timestamptz,
+      duration_ms integer,
+      error text,
+      execution jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     create table group_bindings (
       id uuid primary key default gen_random_uuid(),
       provider_group_id text not null,
       template_version_id uuid not null,
       status text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table agent_instances (
+      id uuid primary key default gen_random_uuid(),
+      group_binding_id uuid not null references group_bindings(id) on delete cascade,
+      runtime_mode text not null default 'on_demand',
+      status text not null,
+      runtime_container_name text,
+      runtime_base_url text,
+      secrets_ref text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -260,6 +325,38 @@ async function createContractTables(sql: Sql): Promise<void> {
       last_export_error text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
+    );
+
+    create table agent_runs (
+      id uuid primary key default gen_random_uuid(),
+      message_id uuid,
+      provider_group_id text not null,
+      trace_id text,
+      status text not null,
+      model_path jsonb not null default '[]'::jsonb,
+      model_used text,
+      reasoning_effort text not null default 'medium',
+      allowed_tools jsonb not null default '[]'::jsonb,
+      retrieval_refs jsonb not null default '[]'::jsonb,
+      response_text text,
+      error text,
+      started_at timestamptz not null default now(),
+      completed_at timestamptz
+    );
+
+    create table tool_invocations (
+      id uuid primary key default gen_random_uuid(),
+      agent_run_id uuid,
+      message_id uuid,
+      provider_group_id text not null,
+      tool_name text not null,
+      ok boolean not null default false,
+      stdout text not null default '',
+      stderr text not null default '',
+      timed_out boolean not null default false,
+      duration_ms integer not null default 0,
+      details jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
     );
 
     create table knowledge_common_docs (

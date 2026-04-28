@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { auditEvents, mediaAssets, messageVersions, messages, outboundIntents } from "../../db/schema.js";
@@ -30,11 +30,14 @@ export const auditRouter = createTRPCRouter({
       const [message] = await ctx.db
         .select()
         .from(messages)
-        .where(eq(messages.providerMessageId, input.providerMessageId))
+        .where(and(eq(messages.providerGroupId, input.providerGroupId), eq(messages.providerMessageId, input.providerMessageId)))
         .limit(1);
 
-      if (!message || message.providerGroupId !== input.providerGroupId) {
+      if (!message) {
         return {
+          provider_group_id: input.providerGroupId,
+          provider_message_id: input.providerMessageId,
+          message_id: null,
           ingest: null,
           versions: [],
           media: [],
@@ -55,6 +58,9 @@ export const auditRouter = createTRPCRouter({
         .orderBy(desc(outboundIntents.createdAt));
 
       return {
+        provider_group_id: input.providerGroupId,
+        provider_message_id: input.providerMessageId,
+        message_id: message.id,
         ingest: {
           id: message.id,
           provider_group_id: message.providerGroupId,
@@ -68,6 +74,7 @@ export const auditRouter = createTRPCRouter({
           version_no: version.versionNo,
           event_type: version.eventType,
           is_deleted: version.isDeleted,
+          text_content: version.textContent,
           occurred_at: version.occurredAt.toISOString(),
         })),
         media: media.map((asset) => ({
@@ -82,6 +89,8 @@ export const auditRouter = createTRPCRouter({
           mime_type: asset.mimeType,
           file_name: asset.fileName,
           status: asset.status,
+          s3_key: asset.s3Key,
+          metadata_json: asset.metadataJson,
           created_at: asset.createdAt.toISOString(),
           updated_at: asset.updatedAt.toISOString(),
         })),
@@ -93,8 +102,23 @@ export const auditRouter = createTRPCRouter({
           .map((intent) => ({
             id: intent.id,
             outbound_intent_id: intent.outboundIntentId,
+            provider_group_id: intent.providerGroupId,
             status: intent.status,
             attempt_count: intent.attemptCount,
+            payload: intent.payload,
+            trace_id: typeof (intent.payload as Record<string, unknown>).trace_id === "string"
+              ? (intent.payload as Record<string, unknown>).trace_id
+              : null,
+            model_path:
+              typeof (intent.payload as { metadata?: { model_path?: unknown } }).metadata === "object" &&
+              Array.isArray((intent.payload as { metadata?: { model_path?: unknown } }).metadata?.model_path)
+                ? (intent.payload as { metadata: { model_path: unknown[] } }).metadata.model_path
+                : [],
+            retrieval_refs:
+              typeof (intent.payload as { metadata?: { retrieval_refs?: unknown } }).metadata === "object" &&
+              Array.isArray((intent.payload as { metadata?: { retrieval_refs?: unknown } }).metadata?.retrieval_refs)
+                ? (intent.payload as { metadata: { retrieval_refs: unknown[] } }).metadata.retrieval_refs
+                : [],
             provider_message_id:
               typeof (intent.payload as Record<string, unknown>)._dispatch === "object" &&
               (intent.payload as { _dispatch?: { provider_message_id?: unknown } })._dispatch

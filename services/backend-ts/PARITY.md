@@ -45,11 +45,12 @@ Current TypeScript parity status:
 - Gateway REST persists messages, versions, media, decisions, links, and outbound statuses, with
   inbound accept/dedupe and outbound status covered by TS contract tests.
 - BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. `knowledge_indexing`,
-  `retrieval_indexing`, `outbound_dispatch`, and `todo_export` now have Python-compatible paths
-  covered by TS contract tests.
-  The remaining job bodies still need Python behavior parity before that profile can replace the
-  Python RQ worker.
+  `retrieval_indexing`, `outbound_dispatch`, `todo_export`, `template_build`, `media_processing`,
+  `passive_message_analysis`, and `inbound_execution` now have functional TS paths covered by TS
+  contract tests. Runtime provisioning and Dashboard cutover still need final hardening before that
+  profile can replace the Python RQ worker.
 - Ingested knowledge read models are available through tRPC and covered for common and group docs.
+- Internal template-build, media-reconcile, and runtime-run Ops endpoints are implemented in TS.
 
 Run the Postgres-backed TS contract subset with:
 
