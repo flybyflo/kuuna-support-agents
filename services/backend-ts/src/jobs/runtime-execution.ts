@@ -697,10 +697,25 @@ function buildUserPrompt(userText: string, retrievalHits: RetrievalHit[]): strin
   return `Nutzeranfrage:\n${userText}\n\n${lines.join("\n")}`;
 }
 
-function buildFallbackReply(userText: string, retrievalHits: RetrievalHit[]): string {
-  const base = userText ? `Danke, ich habe deine Nachricht erhalten: ${userText}` : inboundConfirmationText;
-  const context = retrievalHits[0]?.content;
-  return context ? `${base}\n\nRelevanter Kontext: ${context.slice(0, 300)}` : base;
+function buildFallbackReply(userText: string, _retrievalHits: RetrievalHit[]): string {
+  if (isSensitiveSupportRequest(userText)) {
+    return "Es tut mir leid, dass dir das passiert ist. Wenn du gerade in Gefahr bist, kontaktiere bitte sofort den Notruf oder eine vertraute Person vor Ort. Deine Nachricht wurde aufgenommen.";
+  }
+  return "Danke, ich habe deine Nachricht erhalten. Ich konnte gerade keine vollständige Agent-Antwort erstellen, aber die Nachricht ist im System erfasst.";
+}
+
+function isSensitiveSupportRequest(userText: string): boolean {
+  const normalized = userText.trim().toLowerCase();
+  if (!normalized) return false;
+  return [
+    "vergewalt",
+    "missbrauch",
+    "sexuell",
+    "sexual",
+    "gewalt",
+    "notfall",
+    "gefahr",
+  ].some((needle) => normalized.includes(needle));
 }
 
 function extractAttemptModels(payload: Record<string, unknown>): string[] {

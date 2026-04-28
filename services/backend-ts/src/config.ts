@@ -43,7 +43,7 @@ const envSchema = z.object({
   TEMPLATE_BUILD_CONTEXT_PATH: z.string().default("."),
   TEMPLATE_BUILD_DOCKERFILE_PATH: z.string().default("services/runtime-agent-ts/Dockerfile"),
   RUNTIME_AGENT_BASE_URL: z.string().default("http://runtime-agent:8100"),
-  RUNTIME_AGENT_TIMEOUT_SECONDS: z.coerce.number().positive().default(12),
+  RUNTIME_AGENT_TIMEOUT_SECONDS: z.coerce.number().positive().default(45),
   RUNTIME_PROVISIONING_ENABLED: z.coerce.boolean().default(false),
   RUNTIME_DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   RUNTIME_DOCKER_NETWORK: z.string().optional(),

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { FastifyInstance } from "fastify";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db, type Database } from "../db/client.js";
@@ -63,6 +63,10 @@ function mediaKindFromMimeType(mimeType: string | null | undefined): string {
   return "file";
 }
 
+function hasInboundContent(event: z.infer<typeof inboundEventSchema>): boolean {
+  return Boolean((event.message.text ?? "").trim()) || event.message.media.length > 0;
+}
+
 export function registerGatewayRoutes(
   app: FastifyInstance,
   deps: { database?: Database; enqueueJob?: EnqueueKuunaJob } = {},
@@ -87,7 +91,32 @@ export function registerGatewayRoutes(
         )
         .limit(1);
 
-      const deduped = Boolean(existing && event.event_type === "message_created");
+      const [latestVersion] = existing
+        ? await tx
+            .select()
+            .from(messageVersions)
+            .where(eq(messageVersions.messageId, existing.id))
+            .orderBy(desc(messageVersions.versionNo))
+            .limit(1)
+        : [];
+      const [existingMedia] = existing
+        ? await tx
+            .select({ id: mediaAssets.id })
+            .from(mediaAssets)
+            .where(eq(mediaAssets.messageId, existing.id))
+            .limit(1)
+        : [];
+      const existingHasContent = Boolean((latestVersion?.textContent ?? "").trim()) || Boolean(existingMedia);
+      const shouldFillContentlessDuplicate =
+        Boolean(existing) &&
+        event.event_type === "message_created" &&
+        !existingHasContent &&
+        hasInboundContent(event);
+      const deduped = Boolean(
+        existing &&
+          event.event_type === "message_created" &&
+          !shouldFillContentlessDuplicate,
+      );
       const message =
         existing ??
         (
