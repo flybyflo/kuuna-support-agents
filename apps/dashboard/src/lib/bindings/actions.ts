@@ -52,24 +52,39 @@ function rethrowRedirectError(error: unknown): void {
   }
 }
 
+function bindErrorRedirectFor(
+  origin: string | null,
+  providerGroupId: string | null,
+  reason: string,
+): string {
+  const encodedReason = encodeURIComponent(shortReason(reason));
+  if (origin === "settings" && providerGroupId) {
+    return `/inbox/${encodeURIComponent(providerGroupId)}/settings?bind=error&reason=${encodedReason}`;
+  }
+  return `/inbox/create?bind=error&reason=${encodedReason}`;
+}
+
 export async function createBindingAction(formData: FormData): Promise<void> {
   await requireAuthorized("bindings", "write");
 
   const providerGroupId = cleanGroupId(formData.get("providerGroupId"));
   const templateVersionId = cleanGroupId(formData.get("templateVersionId"));
+  const origin = cleanGroupId(formData.get("origin"));
 
   if (!providerGroupId || !templateVersionId) {
-    redirect("/bindings/create?bind=error&reason=missing-fields");
+    redirect(bindErrorRedirectFor(origin, providerGroupId, "missing-fields"));
   }
 
   try {
     const client = await createSessionBackendTrpcClient();
     await client.bindings.create.mutate({ providerGroupId, templateVersionId });
-    redirect(`/bindings?created=1&group=${encodeURIComponent(providerGroupId)}`);
+    redirect(
+      `/inbox/${encodeURIComponent(providerGroupId)}/settings?created=1`,
+    );
   } catch (error) {
     rethrowRedirectError(error);
     const reason = error instanceof Error ? error.message : String(error);
-    redirect(`/bindings/create?bind=error&reason=${encodeURIComponent(shortReason(reason))}`);
+    redirect(bindErrorRedirectFor(origin, providerGroupId, reason));
   }
 }
 
@@ -80,21 +95,34 @@ export async function unbindBindingAction(formData: FormData): Promise<void> {
   const providerGroupId = cleanGroupId(formData.get("providerGroupId"));
 
   if (!bindingId) {
-    redirect("/bindings?unbind=error&reason=missing-binding-id");
+    if (providerGroupId) {
+      redirect(
+        `/inbox/${encodeURIComponent(providerGroupId)}/settings?unbind=error&reason=missing-binding-id`,
+      );
+    }
+    redirect("/inbox?unbind=error&reason=missing-binding-id");
   }
 
   try {
     const client = await createSessionBackendTrpcClient();
     await client.bindings.unbind.mutate({ bindingId });
-    const params = new URLSearchParams({ unbound: "1" });
     if (providerGroupId) {
-      params.set("group", providerGroupId);
+      redirect(
+        `/inbox/${encodeURIComponent(providerGroupId)}/settings?unbound=1`,
+      );
     }
-    redirect(`/bindings?${params.toString()}`);
+    redirect("/inbox?unbound=1");
   } catch (error) {
     rethrowRedirectError(error);
     const reason = error instanceof Error ? error.message : String(error);
-    redirect(`/bindings?unbind=error&reason=${encodeURIComponent(shortReason(reason))}`);
+    if (providerGroupId) {
+      redirect(
+        `/inbox/${encodeURIComponent(providerGroupId)}/settings?unbind=error&reason=${encodeURIComponent(shortReason(reason))}`,
+      );
+    }
+    redirect(
+      `/inbox?unbind=error&reason=${encodeURIComponent(shortReason(reason))}`,
+    );
   }
 }
 
@@ -103,7 +131,7 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
 
   const groupName = cleanGroupId(formData.get("groupName"));
   if (!groupName) {
-    redirect("/bindings/create?createGroup=error&reason=missing-group-name");
+    redirect("/inbox/create?createGroup=error&reason=missing-group-name");
   }
 
   const participants = parseParticipants(formData.get("participants"));
@@ -113,7 +141,7 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
     process.env.DASHBOARD_INTERNAL_OPS_TOKEN;
 
   if (!gatewayOpsToken) {
-    redirect("/bindings/create?createGroup=error&reason=missing-gateway-token");
+    redirect("/inbox/create?createGroup=error&reason=missing-gateway-token");
   }
 
   const networkErrors: string[] = [];
@@ -138,7 +166,7 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
       if (!response.ok) {
         const body = await response.text();
         const detail = `${normalizedBaseUrl} -> ${response.status}: ${body}`;
-        redirect(`/bindings/create?createGroup=error&reason=${encodeURIComponent(shortReason(detail))}`);
+        redirect(`/inbox/create?createGroup=error&reason=${encodeURIComponent(shortReason(detail))}`);
       }
 
       const data = (await response.json()) as WhatsAppGroupResponse;
@@ -147,7 +175,7 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
         providerGroupId: data.group.jid,
         groupName: data.group.name,
       });
-      redirect(`/bindings/create?${params.toString()}`);
+      redirect(`/inbox/create?${params.toString()}`);
     } catch (error) {
       rethrowRedirectError(error);
       const reason = error instanceof Error ? error.message : String(error);
@@ -158,5 +186,5 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
   const fallbackError = networkErrors.length
     ? `network: ${networkErrors.join(" | ")}`
     : "no-gateway-url";
-  redirect(`/bindings/create?createGroup=error&reason=${encodeURIComponent(shortReason(fallbackError))}`);
+  redirect(`/inbox/create?createGroup=error&reason=${encodeURIComponent(shortReason(fallbackError))}`);
 }

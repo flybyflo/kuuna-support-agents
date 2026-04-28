@@ -94,7 +94,7 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
             <div className="border-b border-border/70 py-3">
               <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Group</p>
               <Link
-                href={`/messages/${encodeURIComponent(run.providerGroupId)}`}
+                href={`/inbox/${encodeURIComponent(run.providerGroupId)}`}
                 className="inline-flex items-center gap-2 text-sm text-foreground hover:underline"
               >
                 <MessageSquare aria-hidden className="size-4" />

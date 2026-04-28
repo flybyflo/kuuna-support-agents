@@ -48,7 +48,7 @@ export default async function AgentRunsPage() {
             header: "Group",
             cell: (run) => (
               <Link
-                href={`/messages/${encodeURIComponent(run.providerGroupId)}`}
+                href={`/inbox/${encodeURIComponent(run.providerGroupId)}`}
                 className="text-sm text-foreground hover:underline"
               >
                 {run.groupTitle}

@@ -39,7 +39,7 @@ export default async function ToolInvocationsPage() {
             header: "Group",
             cell: (invocation) => (
               <Link
-                href={`/messages/${encodeURIComponent(invocation.providerGroupId)}`}
+                href={`/inbox/${encodeURIComponent(invocation.providerGroupId)}`}
                 className="text-sm text-foreground hover:underline"
               >
                 {invocation.groupTitle}

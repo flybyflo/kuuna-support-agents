@@ -41,7 +41,7 @@ export default async function DecisionsPage() {
             header: "Group",
             cell: (decision) => (
               <Link
-                href={`/messages/${encodeURIComponent(decision.providerGroupId)}`}
+                href={`/inbox/${encodeURIComponent(decision.providerGroupId)}`}
                 className="text-sm text-foreground hover:underline"
               >
                 {decision.groupTitle}

@@ -106,7 +106,7 @@ export default async function OverviewPage() {
               </Link>
             </Button>
             <Button size="sm" asChild>
-              <Link href="/bindings/create">
+              <Link href="/inbox/create">
                 <Plug aria-hidden />
                 <span>Bind group</span>
               </Link>
@@ -187,7 +187,7 @@ export default async function OverviewPage() {
               </CardDescription>
             </div>
             <Button variant="ghost" size="sm" asChild>
-              <Link href="/bindings">
+              <Link href="/inbox?filter=bound">
                 <span>View all</span>
                 <ArrowRight aria-hidden />
               </Link>
@@ -214,7 +214,7 @@ export default async function OverviewPage() {
                     <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <Link
-                          href={`/bindings/${binding.id}`}
+                          href={`/inbox/${encodeURIComponent(binding.providerGroupId)}/settings`}
                           className="truncate text-sm font-medium text-foreground hover:underline"
                         >
                           {binding.groupTitle}

@@ -149,7 +149,7 @@ export default async function TemplatesPage({
 
                   return (
                     <Button variant="outline" size="sm" asChild>
-                      <Link href="/bindings/create">Bind a group</Link>
+                      <Link href="/inbox/create">Bind a group</Link>
                     </Button>
                   );
                 },

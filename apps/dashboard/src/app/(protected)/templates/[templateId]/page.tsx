@@ -146,7 +146,7 @@ export default async function TemplateDetailPage({
         description={`Template key: ${template.key}`}
         actions={
           <Button variant="outline" asChild>
-            <Link href="/bindings/create">
+            <Link href="/inbox/create">
               <span>Go to binding</span>
             </Link>
           </Button>

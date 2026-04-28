@@ -26,5 +26,5 @@ export async function updateTodoStatusAction(input: {
 
   const client = await createSessionBackendTrpcClient();
   await client.agentState.updateTodoStatus.mutate(input);
-  revalidatePath("/todos");
+  revalidatePath("/inbox", "layout");
 }

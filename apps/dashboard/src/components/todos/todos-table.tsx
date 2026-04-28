@@ -41,6 +41,7 @@ type TodoStatus = TodoItem["status"];
 type TodosTableProps = {
   todos: TodoItem[];
   canUpdateStatus: boolean;
+  hideGroupColumn?: boolean;
 };
 
 const STATUS_OPTIONS: Array<{ value: TodoStatus; label: string }> = [
@@ -161,7 +162,11 @@ function AttachmentList({ attachments }: { attachments: MediaAsset[] }) {
   );
 }
 
-export function TodosTable({ todos, canUpdateStatus }: TodosTableProps) {
+export function TodosTable({
+  todos,
+  canUpdateStatus,
+  hideGroupColumn = false,
+}: TodosTableProps) {
   const router = useRouter();
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [status, setStatus] = useState<TodoStatus>("open");
@@ -206,7 +211,9 @@ export function TodosTable({ todos, canUpdateStatus }: TodosTableProps) {
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="bg-muted/40">Todo</TableHead>
-            <TableHead className="bg-muted/40">Group</TableHead>
+            {hideGroupColumn ? null : (
+              <TableHead className="bg-muted/40">Group</TableHead>
+            )}
             <TableHead className="bg-muted/40">Status</TableHead>
             <TableHead className="bg-muted/40">Priority</TableHead>
             <TableHead className="bg-muted/40">Files</TableHead>
@@ -247,15 +254,17 @@ export function TodosTable({ todos, canUpdateStatus }: TodosTableProps) {
                   </div>
                 </div>
               </TableCell>
-              <TableCell>
-                <Link
-                  href={`/messages/${encodeURIComponent(todo.providerGroupId)}`}
-                  className="text-sm text-foreground hover:underline"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {todo.groupTitle}
-                </Link>
-              </TableCell>
+              {hideGroupColumn ? null : (
+                <TableCell>
+                  <Link
+                    href={`/inbox/${encodeURIComponent(todo.providerGroupId)}`}
+                    className="text-sm text-foreground hover:underline"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {todo.groupTitle}
+                  </Link>
+                </TableCell>
+              )}
               <TableCell>
                 <Badge variant="outline">{statusLabel(todo.status)}</Badge>
               </TableCell>
@@ -376,7 +385,7 @@ export function TodosTable({ todos, canUpdateStatus }: TodosTableProps) {
                       </dt>
                       <dd className="max-w-[65%] text-right text-sm">
                         <Link
-                          href={`/messages/${encodeURIComponent(selectedTodo.providerGroupId)}`}
+                          href={`/inbox/${encodeURIComponent(selectedTodo.providerGroupId)}`}
                           className="text-foreground hover:underline"
                         >
                           {selectedTodo.groupTitle}
