@@ -10,6 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const roleName = pgEnum("role_name", ["owner", "admin", "operator", "viewer"]);
 export const templateVersionStatus = pgEnum("template_version_status", [
@@ -27,6 +28,7 @@ export const bindingStatus = pgEnum("binding_status", [
 ]);
 export const runtimeMode = pgEnum("runtime_mode", ["on_demand", "hot"]);
 export const runtimeStatus = pgEnum("runtime_status", [
+  "pending",
   "provisioning",
   "healthy",
   "degraded",
@@ -148,17 +150,25 @@ export const groupBindings = pgTable("group_bindings", {
   updatedAt,
 });
 
-export const agentInstances = pgTable("agent_instances", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  groupBindingId: uuid("group_binding_id").notNull(),
-  runtimeMode: runtimeMode("runtime_mode").default("on_demand").notNull(),
-  status: runtimeStatus("status").notNull(),
-  runtimeContainerName: text("runtime_container_name"),
-  runtimeBaseUrl: text("runtime_base_url"),
-  secretsRef: text("secrets_ref"),
-  createdAt,
-  updatedAt,
-});
+export const agentInstances = pgTable(
+  "agent_instances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    groupBindingId: uuid("group_binding_id").notNull(),
+    runtimeMode: runtimeMode("runtime_mode").default("on_demand").notNull(),
+    status: runtimeStatus("status").notNull(),
+    runtimeContainerName: text("runtime_container_name"),
+    runtimeBaseUrl: text("runtime_base_url"),
+    secretsRef: text("secrets_ref"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    runtimeContainerNameUnique: uniqueIndex("uq_agent_instances_runtime_container_name")
+      .on(table.runtimeContainerName)
+      .where(sql`runtime_container_name is not null`),
+  }),
+);
 
 export const messages = pgTable(
   "messages",

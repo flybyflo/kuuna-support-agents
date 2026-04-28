@@ -20,8 +20,6 @@ services:
       - dashboard_next:/workspace/apps/dashboard/.next
       - dashboard_next:/workspace/apps/dashboard/.next
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
-      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
-      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
 
   dashboard:
     build:
@@ -79,8 +77,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
-      runtime-agent:
-        condition: service_started
     healthcheck:
       test:
         [
@@ -96,20 +92,21 @@ services:
 
   migrate:
     build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c "uv sync && uv run alembic upgrade head"
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile.dev
+    working_dir: /workspace
+    command: sh -c "npm run db:migrate --workspace @kuuna/backend-ts"
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
-    environment:
-      UV_LINK_MODE: copy
     volumes:
-      - ../../backend:/app
-      - backend_venv:/app/.venv
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -139,8 +136,6 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
-      runtime-agent:
         condition: service_started
 
   worker:
@@ -172,8 +167,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      runtime-agent:
-        condition: service_started
 
   worker-python:
     profiles: ["legacy-python-backend"]
@@ -202,8 +195,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      runtime-agent:
-        condition: service_started
 
   todo-exporter:
     profiles: ["legacy-python-backend"]
@@ -225,33 +216,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-
-  runtime-agent:
-    image: kuuna-runtime-agent-ts:dev
-    build:
-      context: ../..
-      dockerfile: services/runtime-agent-ts/Dockerfile.dev
-    working_dir: /workspace/services/runtime-agent-ts
-    command: sh -c "npm run dev"
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-      RUNTIME_AGENT_DEFAULT_MODEL: "gpt-5.5"
-      RUNTIME_AGENT_REASONING_EFFORT: "medium"
-    ports:
-      - "127.0.0.1:8100:8100"
-    volumes:
-      - ../..:/workspace
-      - workspace_node_modules:/workspace/node_modules
-      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
-      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
-    depends_on:
-      node-deps:
-        condition: service_completed_successfully
 
   gateway:
     build:
@@ -321,8 +285,6 @@ volumes:
   backend_venv:
   worker_venv:
   todo_exporter_venv:
-  runtime_agent_node_modules:
-  runtime_agent_contracts_node_modules:
   gateway_venv:
   gateway_session:
   postgres_data:

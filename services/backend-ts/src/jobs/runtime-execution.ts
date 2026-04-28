@@ -22,6 +22,7 @@ import {
   transcripts,
 } from "../db/schema.js";
 import { logger } from "../logging.js";
+import { ensureRuntimeForChat, type RuntimeProvisioner } from "../runtime/provisioning.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,6 +38,7 @@ type MessageRow = typeof messages.$inferSelect;
 type MessageVersionRow = typeof messageVersions.$inferSelect;
 type TemplateVersionRow = typeof templateVersions.$inferSelect;
 type AgentInstanceRow = typeof agentInstances.$inferSelect;
+type GroupBindingRow = typeof groupBindings.$inferSelect;
 
 type RuntimeResult = {
   text: string;
@@ -58,7 +60,7 @@ type RetrievalHit = {
 export async function processInboundExecutionJob(
   database: DbLike,
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
-  options: { httpClient?: HttpClient; enqueueJob?: EnqueueKuunaJob } = {},
+  options: { httpClient?: HttpClient; enqueueJob?: EnqueueKuunaJob; runtimeProvisioner?: RuntimeProvisioner } = {},
 ): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "enqueued" }> {
   const resolved = await resolveMessageAndRuntime(database, input, "inbound_execution");
   if (!resolved.ok) return resolved.result;
@@ -89,7 +91,8 @@ export async function processInboundExecutionJob(
         allowedTools,
         retrievalRefs,
         retrievalHits,
-        runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+        bindingId: resolved.binding.id,
+        agentInstanceId: resolved.agentInstance.id,
       },
       options,
     );
@@ -98,7 +101,12 @@ export async function processInboundExecutionJob(
       replyModelPath = runtimeResult.modelPath;
       agentRunId = runtimeResult.agentRunId;
     } else {
-      reply = buildFallbackReply(userText, retrievalHits);
+      logger.warn("inbound_execution_strict_runtime_failed", {
+        trace_id: input.traceId,
+        message_id: input.messageId,
+        provider_group_id: input.providerGroupId,
+      });
+      return { processed: false, status: "skipped" };
     }
   }
 
@@ -145,7 +153,7 @@ export async function processInboundExecutionJob(
 export async function processPassiveMessageAnalysisJob(
   database: DbLike,
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
-  options: { httpClient?: HttpClient } = {},
+  options: { httpClient?: HttpClient; runtimeProvisioner?: RuntimeProvisioner } = {},
 ): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "analyzed" | "failed" }> {
   const resolved = await resolveMessageAndRuntime(database, input, "passive_analysis");
   if (!resolved.ok) return resolved.result;
@@ -177,7 +185,8 @@ export async function processPassiveMessageAnalysisJob(
       allowedTools,
       retrievalRefs,
       retrievalHits,
-      runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+      bindingId: resolved.binding.id,
+      agentInstanceId: resolved.agentInstance.id,
     },
     options,
   );
@@ -215,7 +224,7 @@ async function resolveMessageAndRuntime(
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
   logPrefix: string,
 ): Promise<
-  | { ok: true; message: MessageRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
+  | { ok: true; message: MessageRow; binding: GroupBindingRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
   | { ok: false; result: { processed: false; status: "invalid" | "not_found" | "skipped" } }
 > {
   if (!uuidPattern.test(input.messageId)) {
@@ -265,7 +274,7 @@ async function resolveMessageAndRuntime(
     });
     return { ok: false, result: { processed: false, status: "skipped" } };
   }
-  return { ok: true, message, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
+  return { ok: true, message, binding: row.binding, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
 }
 
 async function runViaRuntimeAgent(
@@ -281,9 +290,10 @@ async function runViaRuntimeAgent(
     allowedTools: string[];
     retrievalRefs: Array<Record<string, unknown>>;
     retrievalHits: RetrievalHit[];
-    runtimeBaseUrl: string | null;
+    bindingId: string;
+    agentInstanceId: string;
   },
-  options: { httpClient?: HttpClient },
+  options: { httpClient?: HttpClient; runtimeProvisioner?: RuntimeProvisioner },
 ): Promise<RuntimeResult | null> {
   const [agentRun] = await database
     .insert(agentRuns)
@@ -302,8 +312,13 @@ async function runViaRuntimeAgent(
     throw new Error("agent run creation failed");
   }
 
-  const runtimeBaseUrl = (input.runtimeBaseUrl?.trim() || getSettings().RUNTIME_AGENT_BASE_URL).replace(/\/$/, "");
+  const settings = getSettings();
   try {
+    const runtimeBaseUrl = (await (options.runtimeProvisioner ?? ensureRuntimeForChat)(database, {
+      providerGroupId: input.providerGroupId,
+      messageId: input.message.id,
+      traceId: input.traceId,
+    })).runtimeBaseUrl.replace(/\/$/, "");
     const response = await (options.httpClient ?? fetch)(`${runtimeBaseUrl}/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -313,6 +328,8 @@ async function runViaRuntimeAgent(
         user_prompt: input.userPrompt,
         context: {
           provider_group_id: input.providerGroupId,
+          binding_id: input.bindingId,
+          agent_instance_id: input.agentInstanceId,
           retrieval_refs: input.retrievalRefs,
           retrieval_hits: input.retrievalHits,
           recent_messages: await recentMessagesContext(database, input.providerGroupId, 15),
@@ -323,7 +340,7 @@ async function runViaRuntimeAgent(
         allowed_tools: input.allowedTools,
         tool_requests: [],
       }),
-      signal: AbortSignal.timeout(getSettings().RUNTIME_AGENT_TIMEOUT_SECONDS * 1000),
+      signal: AbortSignal.timeout(settings.RUNTIME_AGENT_TIMEOUT_SECONDS * 1000),
     });
     if (!response.ok) {
       throw new Error(`runtime_agent_http_${response.status}`);
@@ -695,27 +712,6 @@ function buildUserPrompt(userText: string, retrievalHits: RetrievalHit[]): strin
     lines.push(`- [${hit.source_scope}] ${snippet}`);
   }
   return `Nutzeranfrage:\n${userText}\n\n${lines.join("\n")}`;
-}
-
-function buildFallbackReply(userText: string, _retrievalHits: RetrievalHit[]): string {
-  if (isSensitiveSupportRequest(userText)) {
-    return "Es tut mir leid, dass dir das passiert ist. Wenn du gerade in Gefahr bist, kontaktiere bitte sofort den Notruf oder eine vertraute Person vor Ort. Deine Nachricht wurde aufgenommen.";
-  }
-  return "Danke, ich habe deine Nachricht erhalten. Ich konnte gerade keine vollständige Agent-Antwort erstellen, aber die Nachricht ist im System erfasst.";
-}
-
-function isSensitiveSupportRequest(userText: string): boolean {
-  const normalized = userText.trim().toLowerCase();
-  if (!normalized) return false;
-  return [
-    "vergewalt",
-    "missbrauch",
-    "sexuell",
-    "sexual",
-    "gewalt",
-    "notfall",
-    "gefahr",
-  ].some((needle) => normalized.includes(needle));
 }
 
 function extractAttemptModels(payload: Record<string, unknown>): string[] {

@@ -55,16 +55,15 @@ Current TypeScript parity status:
 - Dashboard auth now uses backend `auth.login` through tRPC and stores the backend token in an
   encrypted httpOnly cookie. Regular dashboard data paths no longer import direct Postgres
   repositories.
-- Compose now runs TS as `backend` on port 8000, uses a Python `migrate` task for Alembic, and keeps
+- Compose now runs TS as `backend` on port 8000, uses a TS/Drizzle `migrate` task, and keeps
   Python backend/worker services under the `legacy-python-backend` profile.
 
 Remaining live-verification gates:
 
 - Run the TS-only Docker smoke for `login -> template -> build -> bind -> ingest -> media ->
   retrieval -> runtime -> outbound -> trace`.
-- Exercise runtime provisioning with `RUNTIME_PROVISIONING_ENABLED=true` against the Docker socket.
-- Decide post-cutover migration ownership: keep Alembic archived as legacy or move new migrations to
-  Drizzle-Kit.
+- Exercise runtime provisioning against the Docker socket.
+- Keep new schema changes on the TS/Drizzle migration path.
 
 Run the Postgres-backed TS contract subset with:
 

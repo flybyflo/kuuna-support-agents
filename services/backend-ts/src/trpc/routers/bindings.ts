@@ -127,8 +127,9 @@ export const bindingsRouter = createTRPCRouter({
       .values({
         groupBindingId: binding.id,
         runtimeMode: "on_demand",
-        status: "healthy",
+        status: "pending",
         runtimeContainerName: `kuuna-runtime-${safeGroup}`,
+        runtimeBaseUrl: null,
         secretsRef: `runtime/${safeGroup}`,
       })
       .returning();

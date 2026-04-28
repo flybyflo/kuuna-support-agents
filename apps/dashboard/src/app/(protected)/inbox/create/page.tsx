@@ -48,14 +48,16 @@ export default async function InboxCreatePage({
   const session = await requireAuthorized("bindings", "write");
   const params = await searchParams;
 
-  const [bindings, templates, knownGroups, gatewayGroups, gatewayConnection] =
+  const [bindings, templates, knownGroups, gatewayConnection] =
     await Promise.all([
       listBindings(),
       listTemplates(),
       listKnownProviderGroups(),
-      listWhatsAppGatewayGroups(),
       getWhatsAppGatewayConnectionStatus(),
     ]);
+  const gatewayGroups = gatewayConnection?.connected
+    ? await listWhatsAppGatewayGroups()
+    : [];
 
   const templateOptions = (
     await Promise.all(
@@ -232,7 +234,12 @@ export default async function InboxCreatePage({
                 </FormRow>
 
                 <FormActions>
-                  <Button type="submit">Create WhatsApp group</Button>
+                  <Button
+                    type="submit"
+                    disabled={!gatewayConnection?.connected}
+                  >
+                    Create WhatsApp group
+                  </Button>
                 </FormActions>
               </form>
             </CardContent>

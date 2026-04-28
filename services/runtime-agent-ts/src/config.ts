@@ -50,3 +50,18 @@ export function defaultReasoningEffort(): ReasoningEffort {
   }
   return DEFAULT_REASONING_EFFORT;
 }
+
+export function kuunaProviderGroupId(): string | undefined {
+  const value = process.env.KUUNA_PROVIDER_GROUP_ID?.trim();
+  return value || undefined;
+}
+
+export function kuunaBindingId(): string | undefined {
+  const value = process.env.KUUNA_BINDING_ID?.trim();
+  return value || undefined;
+}
+
+export function kuunaAgentInstanceId(): string | undefined {
+  const value = process.env.KUUNA_AGENT_INSTANCE_ID?.trim();
+  return value || undefined;
+}

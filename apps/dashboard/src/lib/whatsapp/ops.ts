@@ -51,7 +51,7 @@ export async function listWhatsAppGatewayGroups(): Promise<WhatsAppGatewayGroup[
       });
 
       if (!response.ok) {
-        continue;
+        return [];
       }
 
       const payload = (await response.json()) as {

@@ -17,7 +17,9 @@ import {
   todos,
   toolInvocations,
 } from "../src/db/schema.js";
+import { resetSettingsForTests } from "../src/config.js";
 import { processInboundExecutionJob, processPassiveMessageAnalysisJob } from "../src/jobs/runtime-execution.js";
+import { RuntimeProvisioningError } from "../src/runtime/provisioning.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -161,6 +163,94 @@ test("contract: inbound execution invalid or unbound message is skipped without 
   assert.equal((await harness.db.select().from(outboundIntents)).length, 0);
 });
 
+test("contract: inbound execution provisions strict per-chat runtime", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const seeded = await seedRuntimeScenario(harness, { messageText: "@agent use my isolated runtime" });
+  const provisioned: string[] = [];
+
+  const result = await processInboundExecutionJob(
+    harness.db,
+    {
+      messageId: seeded.messageId,
+      providerGroupId: seeded.providerGroupId,
+      reason: "mention",
+      traceId: "trace-provisioned",
+    },
+    {
+      enqueueJob: async (name, data, jobId) => {
+        harness.jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      },
+      runtimeProvisioner: async (_database, input) => {
+        provisioned.push(`${input.providerGroupId}:${input.messageId}`);
+        return {
+          containerId: "container-chat",
+          containerName: "kuuna-runtime-chat",
+          runtimeBaseUrl: "http://kuuna-runtime-chat:8100",
+          dockerNetwork: "kuuna-dev_default",
+        };
+      },
+      httpClient: async (url, init) => {
+        assert.equal(url, "http://kuuna-runtime-chat:8100/run");
+        const body = JSON.parse(String(init.body)) as { context: Record<string, unknown> };
+        assert.equal(body.context.provider_group_id, seeded.providerGroupId);
+        assert.equal(body.context.binding_id, seeded.bindingId);
+        assert.equal(body.context.agent_instance_id, seeded.agentInstanceId);
+        return new Response(JSON.stringify({
+          success: true,
+          prompt: "prompt",
+          system_prompt: "system",
+          user_prompt: "user",
+          model_used: "gpt-5.5",
+          attempts: [{ model: "gpt-5.5", success: true }],
+          response_text: "I am isolated.",
+          tool_results: [],
+          error: null,
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    },
+  );
+
+  assert.deepEqual(result, { processed: true, status: "enqueued" });
+  assert.deepEqual(provisioned, [`${seeded.providerGroupId}:${seeded.messageId}`]);
+});
+
+test("contract: provisioning failure fails run without fallback", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const seeded = await seedRuntimeScenario(harness, { messageText: "@agent do not use fallback" });
+  let httpCalled = false;
+
+  const result = await processInboundExecutionJob(
+    harness.db,
+    {
+      messageId: seeded.messageId,
+      providerGroupId: seeded.providerGroupId,
+      reason: "mention",
+      traceId: "trace-provisioning-failed",
+    },
+    {
+      runtimeProvisioner: async () => {
+        throw new RuntimeProvisioningError("runtime_container_identity_mismatch", "wrong chat container");
+      },
+      httpClient: async () => {
+        httpCalled = true;
+        return new Response("{}", { status: 500 });
+      },
+    },
+  );
+
+  assert.deepEqual(result, { processed: false, status: "skipped" });
+  assert.equal(httpCalled, false);
+  const [run] = await harness.db.select().from(agentRuns).where(eq(agentRuns.traceId, "trace-provisioning-failed")).limit(1);
+  assert.ok(run);
+  assert.equal(run.status, "failed");
+  assert.match(run.error ?? "", /wrong chat container/);
+  const intents = await harness.db.select().from(outboundIntents).where(eq(outboundIntents.providerGroupId, seeded.providerGroupId));
+  assert.equal(intents.length, 0);
+});
+
 async function seedRuntimeScenario(
   harness: Awaited<ReturnType<typeof createContractHarness>>,
   input: { messageText: string },
@@ -190,12 +280,13 @@ async function seedRuntimeScenario(
     .values({ providerGroupId, templateVersionId: version.id, status: "active" })
     .returning();
   assert.ok(binding);
-  await harness.db.insert(agentInstances).values({
+  const [agentInstance] = await harness.db.insert(agentInstances).values({
     groupBindingId: binding.id,
     runtimeMode: "on_demand",
     status: "healthy",
     runtimeBaseUrl: "http://runtime.test",
-  });
+  }).returning();
+  assert.ok(agentInstance);
   const [message] = await harness.db
     .insert(messages)
     .values({
@@ -215,5 +306,5 @@ async function seedRuntimeScenario(
     rawEvent: {},
     occurredAt: new Date(),
   });
-  return { providerGroupId, providerMessageId, messageId: message.id };
+  return { providerGroupId, providerMessageId, messageId: message.id, bindingId: binding.id, agentInstanceId: agentInstance.id };
 }

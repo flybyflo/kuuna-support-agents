@@ -61,7 +61,6 @@ _PASSIVE_ANALYSIS_SYSTEM_PROMPT = (
 )
 _DEFAULT_MODEL = "gpt-5.5"
 _DEFAULT_REASONING_EFFORT = "medium"
-_DEFAULT_RUNTIME_AGENT_BASE_URL = "http://runtime-agent:8100"
 _DEFAULT_RUNTIME_AGENT_TIMEOUT_SECONDS = 12.0
 _PROVIDER_TOKENS = {"openai", "anthropic", "google", "azure-openai"}
 _TOOL_COMMAND_PATTERN = re.compile(r"^\s*/tool\s+([a-zA-Z0-9_-]+)(?:\s+(.*))?$")
@@ -827,7 +826,7 @@ def _media_transcript_texts(db, *, message_id: UUID) -> list[str]:
 def _runtime_agent_base_url(runtime_base_url: str | None = None) -> str:
     if runtime_base_url and runtime_base_url.strip():
         return runtime_base_url.strip().rstrip("/")
-    return os.getenv("RUNTIME_AGENT_BASE_URL", _DEFAULT_RUNTIME_AGENT_BASE_URL).rstrip("/")
+    raise RuntimeError("runtime_base_url is required; shared runtime fallback has been removed")
 
 
 def _runtime_agent_timeout_seconds() -> float:

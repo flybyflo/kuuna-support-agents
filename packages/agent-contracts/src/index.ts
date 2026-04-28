@@ -18,11 +18,43 @@ export const toolInvocationSchema = z.object({
   timeout_seconds: z.number().nonnegative().nullable().optional(),
 });
 
+export const runtimeMediaAttachmentSchema = z.object({
+  media_asset_id: z.string().min(1),
+  mime_type: z.string().min(1),
+  file_name: z.string().nullable().optional(),
+  status: z.string().min(1),
+  transcript: z.string().nullable().optional(),
+  object_url: z.string().nullable().optional(),
+  preview_url: z.string().nullable().optional(),
+});
+
+export const runtimeLinkSchema = z.object({
+  url: z.string().min(1),
+  normalized_url: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
+});
+
+export const runtimeAgentContextSchema = z
+  .object({
+    provider_group_id: z.string().optional(),
+    binding_id: z.string().optional(),
+    agent_instance_id: z.string().optional(),
+    retrieval_refs: z.array(z.record(z.unknown())).optional(),
+    retrieval_hits: z.array(z.record(z.unknown())).optional(),
+    recent_messages: z.array(z.record(z.unknown())).optional(),
+    todos: z.array(z.record(z.unknown())).optional(),
+    links: z.array(runtimeLinkSchema).optional(),
+    media_attachments: z.array(runtimeMediaAttachmentSchema).optional(),
+    todo_required: z.boolean().optional(),
+    todo_required_reason: z.string().optional(),
+  })
+  .catchall(z.unknown());
+
 export const runtimeAgentRequestSchema = z.object({
   trace_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   user_prompt: z.string(),
-  context: z.record(z.unknown()).default({}),
+  context: runtimeAgentContextSchema.default({}),
   model_path: z.array(z.string().min(1)).default([]),
   reasoning_effort: reasoningEffortSchema.default(DEFAULT_REASONING_EFFORT),
   allowed_tools: z.array(z.string().min(1)).default([]),
@@ -61,6 +93,9 @@ export const runtimeAgentResultSchema = z.object({
 
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 export type ToolInvocation = z.infer<typeof toolInvocationSchema>;
+export type RuntimeMediaAttachment = z.infer<typeof runtimeMediaAttachmentSchema>;
+export type RuntimeLink = z.infer<typeof runtimeLinkSchema>;
+export type RuntimeAgentContext = z.infer<typeof runtimeAgentContextSchema>;
 export type RuntimeAgentRequest = z.infer<typeof runtimeAgentRequestSchema>;
 export type ModelAttempt = z.infer<typeof modelAttemptSchema>;
 export type ToolExecutionResult = z.infer<typeof toolExecutionResultSchema>;

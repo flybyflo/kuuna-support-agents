@@ -65,3 +65,57 @@ test("uses the default OpenAI base URL when OPENAI_BASE_URL is blank", () => {
     }
   }
 });
+
+test("rejects runtime requests for another provider group", async () => {
+  const previousProviderGroupId = process.env.KUUNA_PROVIDER_GROUP_ID;
+  process.env.KUUNA_PROVIDER_GROUP_ID = "group-a@g.us";
+  try {
+    await assert.rejects(
+      () =>
+        runAgent({
+          user_prompt: "hello",
+          context: { provider_group_id: "group-b@g.us" },
+        }),
+      /runtime identity mismatch: provider_group_id/,
+    );
+  } finally {
+    if (previousProviderGroupId === undefined) {
+      delete process.env.KUUNA_PROVIDER_GROUP_ID;
+    } else {
+      process.env.KUUNA_PROVIDER_GROUP_ID = previousProviderGroupId;
+    }
+  }
+});
+
+test("accepts runtime requests matching container identity", async () => {
+  const previousApiKey = process.env.OPENAI_API_KEY;
+  const previousProviderGroupId = process.env.KUUNA_PROVIDER_GROUP_ID;
+  const previousBindingId = process.env.KUUNA_BINDING_ID;
+  const previousAgentInstanceId = process.env.KUUNA_AGENT_INSTANCE_ID;
+  delete process.env.OPENAI_API_KEY;
+  process.env.KUUNA_PROVIDER_GROUP_ID = "group-a@g.us";
+  process.env.KUUNA_BINDING_ID = "binding-1";
+  process.env.KUUNA_AGENT_INSTANCE_ID = "agent-1";
+  try {
+    const result = await runAgent({
+      user_prompt: "hello",
+      context: {
+        provider_group_id: "group-a@g.us",
+        binding_id: "binding-1",
+        agent_instance_id: "agent-1",
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.model_used, "gpt-5.5");
+  } finally {
+    if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousApiKey;
+    if (previousProviderGroupId === undefined) delete process.env.KUUNA_PROVIDER_GROUP_ID;
+    else process.env.KUUNA_PROVIDER_GROUP_ID = previousProviderGroupId;
+    if (previousBindingId === undefined) delete process.env.KUUNA_BINDING_ID;
+    else process.env.KUUNA_BINDING_ID = previousBindingId;
+    if (previousAgentInstanceId === undefined) delete process.env.KUUNA_AGENT_INSTANCE_ID;
+    else process.env.KUUNA_AGENT_INSTANCE_ID = previousAgentInstanceId;
+  }
+});

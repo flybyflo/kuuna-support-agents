@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/jobs/worker.ts",
+    "db:migrate": "tsx src/db/migrate.ts",
     "serve": "tsx src/server.ts",
     "worker": "tsx src/jobs/worker.ts",
     "start": "node dist/server.js",
@@ -22,6 +23,7 @@
     "@aws-sdk/client-s3": "^3.1038.0",
     "@aws-sdk/s3-request-presigner": "^3.1038.0",
     "@fastify/cors": "^11.0.1",
+    "@kuuna/agent-contracts": "file:../../packages/agent-contracts",
     "@sentry/node": "^10.49.0",
     "@trpc/server": "^11.7.2",
     "bullmq": "^5.65.1",

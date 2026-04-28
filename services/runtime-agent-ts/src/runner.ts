@@ -14,7 +14,14 @@ import {
   type RuntimeAgentResult,
   type ToolExecutionResult,
 } from "@kuuna/agent-contracts";
-import { defaultModel, defaultReasoningEffort, openAiApiKey } from "./config.js";
+import {
+  defaultModel,
+  defaultReasoningEffort,
+  kuunaAgentInstanceId,
+  kuunaBindingId,
+  kuunaProviderGroupId,
+  openAiApiKey,
+} from "./config.js";
 import { getOpenAiModel, modelPath, piThinkingLevel } from "./model.js";
 import { buildPrompt } from "./prompt.js";
 import { createKuunaTools, executeExplicitTool, sanitizeAllowedTools } from "./tools.js";
@@ -72,6 +79,33 @@ function lastAssistantError(messages: unknown[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function contextString(context: Record<string, unknown>, key: string): string | undefined {
+  const value = context[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function assertRuntimeIdentity(request: RuntimeAgentRequest): void {
+  const expectedProviderGroupId = kuunaProviderGroupId();
+  const expectedBindingId = kuunaBindingId();
+  const expectedAgentInstanceId = kuunaAgentInstanceId();
+  const context = request.context ?? {};
+
+  const providerGroupId = contextString(context, "provider_group_id");
+  if (expectedProviderGroupId && providerGroupId !== expectedProviderGroupId) {
+    throw new Error("runtime identity mismatch: provider_group_id");
+  }
+
+  const bindingId = contextString(context, "binding_id");
+  if (expectedBindingId && bindingId !== expectedBindingId) {
+    throw new Error("runtime identity mismatch: binding_id");
+  }
+
+  const agentInstanceId = contextString(context, "agent_instance_id");
+  if (expectedAgentInstanceId && agentInstanceId !== expectedAgentInstanceId) {
+    throw new Error("runtime identity mismatch: agent_instance_id");
+  }
 }
 
 async function runPiAttempt(
@@ -149,6 +183,7 @@ async function runPiAttempt(
 
 export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
   const request = runtimeAgentRequestSchema.parse(input);
+  assertRuntimeIdentity(request);
   const prompt = buildPrompt(request);
   const selectedModelPath = modelPath(request.model_path);
   const reasoningEffort = request.reasoning_effort ?? defaultReasoningEffort() ?? DEFAULT_REASONING_EFFORT;
