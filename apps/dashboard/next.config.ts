@@ -32,11 +32,6 @@ const nextConfig: NextConfig = {
         destination: "/inbox",
         permanent: false,
       },
-      {
-        source: "/todos",
-        destination: "/inbox?filter=open-todos",
-        permanent: false,
-      },
     ];
   },
 };
