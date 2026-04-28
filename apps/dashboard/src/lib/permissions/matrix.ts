@@ -2,6 +2,7 @@ export type StaffRole = "owner" | "admin" | "operator" | "viewer";
 
 export type PermissionResource =
   | "overview"
+  | "todos"
   | "templates"
   | "bindings"
   | "prompts"
@@ -18,6 +19,7 @@ type PermissionMap = Record<PermissionResource, PermissionAction[]>;
 
 const OWNER_PERMISSIONS: PermissionMap = {
   overview: ["read"],
+  todos: ["read", "write"],
   templates: ["read", "write", "publish"],
   bindings: ["read", "write", "delete"],
   prompts: ["read", "write", "publish"],
@@ -35,6 +37,7 @@ const ADMIN_PERMISSIONS: PermissionMap = {
 
 const OPERATOR_PERMISSIONS: PermissionMap = {
   overview: ["read"],
+  todos: ["read", "write"],
   templates: ["read", "write"],
   bindings: ["read"],
   prompts: ["read", "write"],
@@ -48,6 +51,7 @@ const OPERATOR_PERMISSIONS: PermissionMap = {
 
 const VIEWER_PERMISSIONS: PermissionMap = {
   overview: ["read"],
+  todos: ["read"],
   templates: ["read"],
   bindings: ["read"],
   prompts: ["read"],
