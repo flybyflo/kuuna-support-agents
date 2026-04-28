@@ -29,13 +29,13 @@ services:
       dockerfile: apps/dashboard/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/dashboard -- --hostname 0.0.0.0 --port 3000'
+      sh -c 'npm run dev --workspace @kuuna/dashboard -- --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local
         required: false
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -58,12 +58,11 @@ services:
       - path: ../env/backend.env.local
         required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
-      HOST: "0.0.0.0"
+      HOST: "::"
       PORT: "8000"
       WATCHFILES_FORCE_POLLING: "true"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -120,7 +119,7 @@ services:
       context: ../../backend
       dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c "uv sync && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c 'uv sync && uv run python -m kuuna_backend.main'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -129,7 +128,7 @@ services:
       WATCHFILES_FORCE_POLLING: "true"
       UV_LINK_MODE: copy
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     volumes:
       - ../../backend:/app
       - backend_venv:/app/.venv
@@ -156,7 +155,6 @@ services:
       - path: ../env/backend.env.local
         required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
       WATCHFILES_FORCE_POLLING: "true"
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
       TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
@@ -245,7 +243,7 @@ services:
       RUNTIME_AGENT_DEFAULT_MODEL: "gpt-5.5"
       RUNTIME_AGENT_REASONING_EFFORT: "medium"
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -268,7 +266,7 @@ services:
     environment:
       WATCHFILES_FORCE_POLLING: "true"
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       - ../../services/gateway:/app
       - gateway_venv:/app/.venv
@@ -284,7 +282,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -296,7 +294,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -310,8 +308,8 @@ services:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniopassword
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
 
@@ -329,3 +327,9 @@ volumes:
   gateway_session:
   postgres_data:
   minio_data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"

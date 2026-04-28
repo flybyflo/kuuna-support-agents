@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import socket
 import threading
 from typing import Any
 
@@ -20,6 +21,10 @@ _SENSITIVE_KEY_PARTS = {
     "text_content",
 }
 _OPENAI_KEY_PATTERN = re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")
+
+
+def _default_bind_host() -> str:
+    return socket.gethostbyname(socket.gethostname())
 
 
 class _StructuredFormatter(logging.Formatter):
@@ -182,7 +187,7 @@ def main() -> None:
         connection_status_provider=connection_status.snapshot,
         qr_status_provider=qr_status.snapshot,
     )
-    host = os.getenv("GATEWAY_OPS_HOST", "0.0.0.0")
+    host = os.getenv("GATEWAY_OPS_HOST") or _default_bind_host()
     port = int(os.getenv("GATEWAY_OPS_PORT", "8090"))
 
     logging.getLogger(__name__).info(

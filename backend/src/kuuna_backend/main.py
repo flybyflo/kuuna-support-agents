@@ -184,6 +184,14 @@ app = create_app()
 
 
 def run() -> None:
+    import os
+    import socket
+
     import uvicorn
 
-    uvicorn.run("kuuna_backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("HOST") or socket.gethostbyname(socket.gethostname())
+    uvicorn.run("kuuna_backend.main:app", host=host, port=8000, reload=True)
+
+
+if __name__ == "__main__":
+    run()

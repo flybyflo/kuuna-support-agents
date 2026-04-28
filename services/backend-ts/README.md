@@ -27,7 +27,7 @@ Contract tests that need a disposable Postgres target are gated by
 `BACKEND_TS_CONTRACT_DATABASE_URL`. They create and drop an isolated schema per test case:
 
 ```bash
-BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kuuna \
+BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/kuuna \
   npm run test --workspace @kuuna/backend-ts
 ```
 
