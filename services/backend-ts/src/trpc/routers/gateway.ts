@@ -19,7 +19,7 @@ import {
   messageVersions,
   outboundIntents,
 } from "../../db/schema.js";
-import type { EnqueueKuunaJob } from "../../jobs/queues.js";
+import { enqueueRuntimeChatTask, type EnqueueKuunaJob } from "../../jobs/queues.js";
 import { logger } from "../../logging.js";
 import { publishRuntimeEvent } from "../../runtime/events.js";
 import { evaluateTrigger } from "../../trigger.js";
@@ -228,27 +228,27 @@ export async function ingestGatewayInbound(
       );
     }
     if (event.event_type !== "message_deleted") {
-      await enqueueJob(
-        "passive_message_analysis",
+      await enqueueRuntimeChatTask(
         {
-          message_id: result.messageId,
-          provider_group_id: event.provider_group_id,
+          name: "passive_message_analysis",
+          messageId: result.messageId,
+          providerGroupId: event.provider_group_id,
           reason: triggerDecision.reason,
-          trace_id: event.trace_id,
+          traceId: event.trace_id,
         },
-        `passive_analysis_${jobToken(result.messageId)}_${jobToken(triggerDecision.reason ?? "message")}_${jobToken(event.trace_id)}`,
+        enqueueJob,
       );
     }
     if (triggerDecision.shouldExecute && event.event_type !== "message_deleted" && result.activeBinding) {
-      await enqueueJob(
-        "inbound_execution",
+      await enqueueRuntimeChatTask(
         {
-          message_id: result.messageId,
-          provider_group_id: event.provider_group_id,
+          name: "inbound_execution",
+          messageId: result.messageId,
+          providerGroupId: event.provider_group_id,
           reason: triggerDecision.reason,
-          trace_id: event.trace_id,
+          traceId: event.trace_id,
         },
-        `inbound_execution_${jobToken(result.messageId)}`,
+        enqueueJob,
       );
     }
   }

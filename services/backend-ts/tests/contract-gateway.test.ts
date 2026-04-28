@@ -56,8 +56,10 @@ test("contract: gateway inbound accepts and versions event", { skip: skipReason 
   assert.equal((storedVersion.rawEvent as Record<string, { kind?: string }>).provider_payload.kind, "MessageEv");
   assert.deepEqual(
     harness.jobs.map((job) => job.name),
-    ["retrieval_indexing", "passive_message_analysis"],
+    ["retrieval_indexing", "runtime_chat_queue"],
   );
+  assert.equal(harness.jobs[1]?.data.provider_group_id, payload.provider_group_id);
+  assert.equal((harness.jobs[1]?.data.queued_task as Record<string, unknown> | undefined)?.name, "passive_message_analysis");
 });
 
 test("contract: gateway inbound dedupes duplicate created event", { skip: skipReason }, async (t) => {

@@ -225,6 +225,10 @@ async function createContractTables(sql: Sql): Promise<void> {
       updated_at timestamptz not null default now()
     );
 
+    create unique index uq_group_bindings_active_provider_group
+      on group_bindings (provider_group_id)
+      where status = 'active';
+
     create table agent_instances (
       id uuid primary key default gen_random_uuid(),
       group_binding_id uuid not null references group_bindings(id) on delete cascade,

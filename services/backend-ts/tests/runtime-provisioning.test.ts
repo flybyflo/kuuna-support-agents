@@ -169,10 +169,12 @@ test("provisionRuntimeContainer creates a lazy per-chat container and volume", a
     assert.equal(docker.createdPayloads.length, 1);
     assert.equal(docker.startedContainers[0], "container-new");
     const payload = docker.createdPayloads[0] as {
+      Cmd?: string[];
       HostConfig: { Binds: string[]; NetworkMode: string };
       Labels: Record<string, string>;
       Env: string[];
     };
+    assert.equal(payload.Cmd, undefined);
     assert.deepEqual(payload.HostConfig.Binds, [`${dataVolumeName(runtimeIdentity.containerName, baseSettings)}:/runtime-data`]);
     assert.equal(payload.HostConfig.NetworkMode, "kuuna-dev_default");
     assert.equal(payload.Labels["dev.kuuna.provider-group-id"], runtimeIdentity.providerGroupId);
@@ -259,6 +261,18 @@ test("provisionRuntimeContainer recreates stale managed containers", async () =>
     assert.equal(docker.createdPayloads.length, 1);
     assert.deepEqual(docker.startedContainers, ["container-new"]);
   });
+});
+
+test("buildRuntimeEnv refuses extra env overrides for reserved runtime identity", () => {
+  const settings: Settings = {
+    ...baseSettings,
+    RUNTIME_CONTAINER_EXTRA_ENV_JSON: JSON.stringify({ KUUNA_PROVIDER_GROUP_ID: "group-b@g.us" }),
+  };
+
+  assert.throws(
+    () => buildRuntimeEnv(identity("group-a@g.us"), settings),
+    (error: unknown) => error instanceof RuntimeProvisioningError && error.code === "runtime_extra_env_invalid",
+  );
 });
 
 test("safeContainerSuffix and dataVolumeName are stable per chat", () => {

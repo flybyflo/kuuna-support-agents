@@ -18,6 +18,19 @@ const defaultHealthcheckAttempts = 20;
 const defaultHealthcheckIntervalMs = 250;
 const defaultRuntimeModel = "gpt-5.5";
 const defaultReasoningEffort = "medium";
+const reservedRuntimeEnvKeys = new Set([
+  "PORT",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_TIMEOUT_SECONDS",
+  "RUNTIME_AGENT_DEFAULT_MODEL",
+  "RUNTIME_AGENT_REASONING_EFFORT",
+  "KUUNA_PROVIDER_GROUP_ID",
+  "KUUNA_BINDING_ID",
+  "KUUNA_AGENT_INSTANCE_ID",
+  "KUUNA_SECRETS_REF",
+  "KUUNA_RUNTIME_DATA_DIR",
+]);
 
 export type RuntimeProvisioningErrorCode =
   | "runtime_binding_not_found"
@@ -78,7 +91,6 @@ export type DockerImageInspect = {
 
 type DockerCreateContainerPayload = {
   Image: string;
-  Cmd: string[];
   Env: string[];
   Labels: Record<string, string>;
   ExposedPorts: Record<string, Record<string, never>>;
@@ -331,6 +343,9 @@ export function parseExtraEnv(rawValue: string | undefined): Record<string, stri
     if (!key || key.includes("=")) {
       throw new RuntimeProvisioningError("runtime_extra_env_invalid", "RUNTIME_CONTAINER_EXTRA_ENV_JSON contains an invalid key");
     }
+    if (reservedRuntimeEnvKeys.has(key) || key.startsWith("KUUNA_")) {
+      throw new RuntimeProvisioningError("runtime_extra_env_invalid", `RUNTIME_CONTAINER_EXTRA_ENV_JSON cannot override reserved key ${key}`);
+    }
     if (value === null || value === undefined) continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       env[key] = String(value);
@@ -384,7 +399,6 @@ function buildCreateContainerPayload(input: {
   const exposedPort = `${input.port}/tcp`;
   const payload: DockerCreateContainerPayload = {
     Image: input.image,
-    Cmd: ["npm", "run", "serve"],
     Env: input.env,
     Labels: input.labels,
     ExposedPorts: { [exposedPort]: {} },

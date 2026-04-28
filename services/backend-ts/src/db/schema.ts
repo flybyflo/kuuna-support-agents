@@ -141,14 +141,22 @@ export const toolCatalogEntries = pgTable("tool_catalog_entries", {
   updatedAt,
 });
 
-export const groupBindings = pgTable("group_bindings", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  providerGroupId: text("provider_group_id").notNull(),
-  templateVersionId: uuid("template_version_id").notNull(),
-  status: bindingStatus("status").notNull(),
-  createdAt,
-  updatedAt,
-});
+export const groupBindings = pgTable(
+  "group_bindings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    providerGroupId: text("provider_group_id").notNull(),
+    templateVersionId: uuid("template_version_id").notNull(),
+    status: bindingStatus("status").notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    activeProviderGroupUnique: uniqueIndex("uq_group_bindings_active_provider_group")
+      .on(table.providerGroupId)
+      .where(sql`status = 'active'`),
+  }),
+);
 
 export const agentInstances = pgTable(
   "agent_instances",

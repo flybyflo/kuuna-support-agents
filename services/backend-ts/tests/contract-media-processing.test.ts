@@ -45,7 +45,8 @@ test("contract: media processing inline text writes ready transcript and followu
   const transcript = await findTranscript(harness, seeded.mediaAssetId);
   assert.equal(transcript.status, "ready");
   assert.equal(transcript.textContent, "hello transcript");
-  assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "passive_message_analysis"]);
+  assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "runtime_chat_queue"]);
+  assert.equal((harness.jobs[1]?.data.queued_task as Record<string, unknown> | undefined)?.name, "passive_message_analysis");
 });
 
 test("contract: media processing missing download marks failed", { skip: skipReason }, async (t) => {

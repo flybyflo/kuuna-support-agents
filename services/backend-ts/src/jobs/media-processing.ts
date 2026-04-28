@@ -8,7 +8,7 @@ import { mediaAssets, messages, messageVersions, transcripts } from "../db/schem
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
 import { publishRuntimeEvent } from "../runtime/events.js";
-import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
+import { enqueueKuunaJob, enqueueRuntimeChatTask, type EnqueueKuunaJob } from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -361,10 +361,15 @@ async function enqueueMediaFollowups(
     { source_type: "media_asset", source_id: asset.id, trace_id: traceId },
     `retrieval_indexing_media_asset_${jobToken(asset.id)}_${jobToken(traceId)}`,
   );
-  await enqueue(
-    "passive_message_analysis",
-    { message_id: asset.messageId, provider_group_id: providerGroupId, reason, trace_id: traceId },
-    `passive_analysis_${jobToken(asset.messageId)}_${jobToken(reason)}_${jobToken(traceId)}`,
+  await enqueueRuntimeChatTask(
+    {
+      name: "passive_message_analysis",
+      messageId: asset.messageId,
+      providerGroupId,
+      reason,
+      traceId,
+    },
+    enqueue,
   );
 }
 
