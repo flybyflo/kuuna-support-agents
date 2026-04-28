@@ -18,6 +18,7 @@ import {
   listBindings,
 } from "@/lib/api-client";
 import { requireSession, canAccessGroup } from "@/lib/auth/session";
+import { unbindBindingAction } from "@/lib/bindings/actions";
 import { formatDateTime } from "@/lib/utils/format";
 import { resolveGroupTitle } from "@/lib/utils/group-title";
 import { listWhatsAppGatewayGroups } from "@/lib/whatsapp/ops";
@@ -60,10 +61,22 @@ export default async function BindingDetailPage({
         title={resolvedGroupTitle}
         description={`Provider group ID: ${binding.providerGroupId}`}
         actions={
-          <Button variant="destructive">
-            <Unlink2 aria-hidden />
-            <span>Unbind group</span>
-          </Button>
+          <form action={unbindBindingAction}>
+            <input type="hidden" name="bindingId" value={binding.id} />
+            <input
+              type="hidden"
+              name="providerGroupId"
+              value={binding.providerGroupId}
+            />
+            <Button
+              type="submit"
+              variant="destructive"
+              disabled={binding.status === "inactive"}
+            >
+              <Unlink2 aria-hidden />
+              <span>Unbind group</span>
+            </Button>
+          </form>
         }
       />
 
