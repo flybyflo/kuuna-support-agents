@@ -9,6 +9,7 @@ import { resetSettingsForTests } from "../src/config.js";
 import type { Database } from "../src/db/client.js";
 import { appRouter } from "../src/trpc/routers/_app.js";
 import { createCallerFactory, createTRPCContext } from "../src/trpc/init.js";
+import { closeQueues } from "../src/jobs/queues.js";
 import * as schema from "../src/db/schema.js";
 
 export const contractDatabaseUrl = process.env.BACKEND_TS_CONTRACT_DATABASE_URL;
@@ -124,6 +125,7 @@ export async function createContractHarness(): Promise<ContractHarness> {
       return user;
     },
     close: async () => {
+      await closeQueues();
       await sql.unsafe(`drop schema if exists ${schemaName} cascade`);
       await sql.end({ timeout: 5 });
     },

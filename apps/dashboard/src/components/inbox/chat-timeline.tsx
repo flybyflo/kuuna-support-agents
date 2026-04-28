@@ -111,6 +111,16 @@ function inboundDisplayText(entry: InboundEntry): string {
   return "(no text)";
 }
 
+function inboundTextContent(entry: InboundEntry): string | null {
+  const latest = entry.versions[0]?.text?.trim();
+  if (latest) return latest;
+
+  const preview = entry.message.preview.trim();
+  if (preview && preview !== "(no text)") return preview;
+
+  return null;
+}
+
 function findScrollableAncestor(element: HTMLElement): HTMLElement | null {
   let current: HTMLElement | null = element.parentElement;
   while (current) {
@@ -431,6 +441,9 @@ function InboundBubble({
   item: InboundItem;
   onSelect: () => void;
 }) {
+  const text = inboundTextContent(item.entry);
+  const hasImage = item.entry.media.some((asset) => asset.kind === "image");
+
   return (
     <div
       className={cn(
@@ -467,7 +480,8 @@ function InboundBubble({
           type="button"
           onClick={onSelect}
           className={cn(
-            "group flex w-[min(640px,85%)] flex-col gap-1 border border-border/70 bg-card px-3 py-2 text-left text-foreground shadow-xs transition-colors",
+            "group flex flex-col gap-1 border border-border/70 bg-card text-left text-foreground shadow-xs transition-colors",
+            hasImage ? "w-[min(420px,85vw)] p-1.5" : "w-[min(640px,85%)] px-3 py-2",
             "hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
             item.showSenderHeader
               ? "rounded-2xl rounded-tl-md"
@@ -475,14 +489,21 @@ function InboundBubble({
             item.isLastInGroup ? "rounded-bl-md" : null,
           )}
         >
-          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {inboundDisplayText(item.entry)}
-          </p>
+          {text ? (
+            <p className="whitespace-pre-wrap break-words px-1.5 py-1 text-sm leading-relaxed">
+              {text}
+            </p>
+          ) : !hasImage ? (
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+              {inboundDisplayText(item.entry)}
+            </p>
+          ) : null}
 
           <MediaAttachments
             assets={item.entry.media}
             showStatus={false}
             showDownload={false}
+            compactImages
           />
         </button>
       </div>
@@ -641,10 +662,12 @@ function MediaAttachments({
   assets,
   showStatus,
   showDownload,
+  compactImages = false,
 }: {
   assets: MediaAsset[];
   showStatus: boolean;
   showDownload: boolean;
+  compactImages?: boolean;
 }) {
   if (assets.length === 0) return null;
 
@@ -665,7 +688,10 @@ function MediaAttachments({
                 <img
                   src={asset.previewUrl}
                   alt={asset.filename}
-                  className="mx-auto block h-auto max-h-80 max-w-full object-contain"
+                  className={cn(
+                    "mx-auto block h-auto max-w-full object-contain",
+                    compactImages ? "max-h-[360px] rounded-sm" : "max-h-80",
+                  )}
                 />
               ) : (
                 <div className="grid min-h-[140px] place-items-center bg-muted text-xs text-muted-foreground">
@@ -674,7 +700,12 @@ function MediaAttachments({
               )
             ) : null}
 
-            <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+            <div
+              className={cn(
+                "flex items-center justify-between gap-2 px-2.5 py-2",
+                compactImages && asset.kind === "image" ? "sr-only" : null,
+              )}
+            >
               <div className="flex min-w-0 items-center gap-2">
                 <span className="text-muted-foreground">
                   <MediaKindIcon kind={asset.kind} />

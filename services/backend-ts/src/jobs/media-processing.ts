@@ -8,6 +8,7 @@ import { mediaAssets, messages, messageVersions, transcripts } from "../db/schem
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
 import { publishRuntimeEvent } from "../runtime/events.js";
+import { ensureAutomaticFollowupTodo } from "./followup-todos.js";
 import {
   enqueueKuunaJob,
   enqueueRuntimeChatTask,
@@ -75,9 +76,17 @@ export async function processMediaAssetJob(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markMediaFailed(database, asset, message);
+    const providerGroupId = await providerGroupIdForMessage(database, asset.messageId);
+    if (providerGroupId) {
+      await ensureAutomaticFollowupTodo(database, {
+        providerGroupId,
+        messageId: asset.messageId,
+        traceId: input.traceId ?? null,
+      });
+    }
     await publishRuntimeEvent({
       type: "media.updated",
-      providerGroupId: null,
+      providerGroupId,
       traceId: input.traceId ?? null,
       entityId: asset.id,
       entityType: "media_asset",
@@ -223,6 +232,7 @@ async function processPendingAsset(
         entityType: "media_asset",
         payload: { status: "ready", message_id: asset.messageId, kind, processing_mode: "thumbnail-only" },
       });
+      await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
       await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
       return "ready";
     }
@@ -236,6 +246,7 @@ async function processPendingAsset(
       entityType: "media_asset",
       payload: { status: "failed", message_id: asset.messageId, kind, error: "download_url_missing" },
     });
+    await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
     return "failed";
   }
 
@@ -292,6 +303,7 @@ async function processPendingAsset(
     entityType: "media_asset",
     payload: { status: "ready", message_id: asset.messageId, kind },
   });
+  await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
   await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
   logger.info("media_asset_processed", {
     trace_id: traceId,
@@ -357,6 +369,15 @@ async function upsertTranscript(
     return;
   }
   await database.insert(transcripts).values({ mediaAssetId, ...values });
+}
+
+async function providerGroupIdForMessage(database: DbLike, messageId: string): Promise<string | null> {
+  const [message] = await database
+    .select({ providerGroupId: messages.providerGroupId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+  return message?.providerGroupId ?? null;
 }
 
 async function enqueueMediaFollowups(

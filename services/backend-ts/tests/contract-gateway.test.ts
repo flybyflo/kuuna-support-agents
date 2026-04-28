@@ -5,7 +5,7 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 import type { GatewayInboundEvent, GatewayOutboundStatusEvent } from "@kuuna/contracts";
 
-import { outboundIntents, messageLinks, messageVersions } from "../src/db/schema.js";
+import { outboundIntents, messageLinks, messageVersions, todos } from "../src/db/schema.js";
 import { parseRuntimeChatTask } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
@@ -120,6 +120,10 @@ test("contract: gateway inbound strips closing URL delimiters", { skip: skipReas
   assert.ok(link);
   assert.equal(link.url, "https://example.com/path");
   assert.equal(link.normalizedUrl, "https://example.com/path");
+  const [todo] = await harness.db.select().from(todos).limit(1);
+  assert.ok(todo);
+  assert.equal(todo.title, "Review shared link");
+  assert.equal(todo.messageId, link.messageId);
 });
 
 test("contract: gateway outbound status persists dispatch status", { skip: skipReason }, async (t) => {

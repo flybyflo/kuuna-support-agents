@@ -196,7 +196,7 @@ export async function processPassiveMessageAnalysisJob(
   const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
   const retrievalRefs = buildRetrievalRefs(retrievalHits);
   const allowedTools = todoRequired
-    ? ensureAllowedTool(extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig), "todo_create")
+    ? withoutAllowedTool(extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig), "todo_create")
     : extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
   const result = await runViaRuntimeAgent(
     database,
@@ -219,7 +219,7 @@ export async function processPassiveMessageAnalysisJob(
         todo_required: todoRequired,
         todo_required_reason: todoRequired ? todoRequiredReason(links, mediaAttachments) : undefined,
       },
-      toolRequests: todoRequired ? [requiredTodoCreateRequest(resolved.message, latest, links, mediaAttachments)] : [],
+      toolRequests: [],
     },
     options,
   );
@@ -734,7 +734,7 @@ function buildPassiveAnalysisUserPrompt(
   lines.push(
     "",
     "Decision policy:",
-    "- If todo_required is true, call todo_create exactly once for staff review of the media or link.",
+    "- If todo_required is true, the dashboard follow-up todo has already been created automatically; do not call todo_create.",
     "- Media attachments and links always require a todo, even when the image has no text caption yet.",
     "- For images, use the media URL/context available to you in the runtime context and summarize what staff should inspect.",
     "- Create a todo for concrete staff work, deadlines, evidence review, missing documents, legal/accounting questions, or client follow-up.",
@@ -792,36 +792,6 @@ function todoRequiredReason(links: RuntimeLink[], mediaAttachments: RuntimeMedia
   return "message contains links";
 }
 
-function requiredTodoCreateRequest(
-  message: MessageRow,
-  latest: MessageVersionRow,
-  links: RuntimeLink[],
-  mediaAttachments: RuntimeMediaAttachment[],
-): ToolInvocation {
-  const hasImages = mediaAttachments.some((asset) => asset.mime_type.startsWith("image/"));
-  const title = hasImages
-    ? "Review image attachment"
-    : mediaAttachments.length
-      ? "Review media attachment"
-      : "Review shared link";
-  const lines = [
-    `Provider message: ${message.providerMessageId}`,
-    `Sender: ${message.senderProviderUserId || "unknown"}`,
-    `Occurred at: ${latest.occurredAt.toISOString()}`,
-    (latest.textContent || "").trim() ? `Message text: ${(latest.textContent || "").trim()}` : "",
-    links.length ? `Links: ${links.map((link) => link.normalized_url || link.url).join(", ")}` : "",
-    mediaAttachments.length ? `Media: ${mediaAttachments.map((asset) => mediaAttachmentText(asset)).join("; ")}` : "",
-  ];
-  return {
-    name: "todo_create",
-    arguments: {
-      title,
-      description: lines.filter(Boolean).join("\n"),
-      priority: "normal",
-    },
-  };
-}
-
 function safePreviewUrl(value: unknown): string | null {
   const preview = optionalString(value);
   if (!preview) return null;
@@ -861,8 +831,8 @@ function extractPassiveAnalysisTools(toolsConfig: unknown): string[] {
   return configured.length ? configured.filter((tool) => passiveAnalysisTools.has(tool)) : defaults;
 }
 
-function ensureAllowedTool(tools: string[], tool: string): string[] {
-  return tools.includes(tool) ? tools : [...tools, tool];
+function withoutAllowedTool(tools: string[], tool: string): string[] {
+  return tools.filter((item) => item !== tool);
 }
 
 function extractModelCandidates(modelConfig: unknown): string[] {

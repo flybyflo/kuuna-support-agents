@@ -6,7 +6,7 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 
 import { resetSettingsForTests } from "../src/config.js";
-import { mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
+import { mediaAssets, messages, messageVersions, todos, transcripts } from "../src/db/schema.js";
 import { processMediaAssetJob } from "../src/jobs/media-processing.js";
 import { parseRuntimeChatTask, type EnqueueRuntimeChatTaskOptions } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
@@ -57,6 +57,9 @@ test("contract: media processing inline text writes ready transcript and followu
   const transcript = await findTranscript(harness, seeded.mediaAssetId);
   assert.equal(transcript.status, "ready");
   assert.equal(transcript.textContent, "hello transcript");
+  const [todo] = await harness.db.select().from(todos).where(eq(todos.messageId, seeded.messageId));
+  assert.ok(todo);
+  assert.equal(todo.title, "Review media attachment");
   assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "runtime_chat_queue"]);
   assert.equal(harness.jobs[1]?.data.queued_task, undefined);
   assert.equal(parseRuntimeChatTask(runtimeChatTasks[0]).name, "passive_message_analysis");

@@ -19,6 +19,7 @@ import {
   messageVersions,
   outboundIntents,
 } from "../../db/schema.js";
+import { ensureAutomaticFollowupTodo } from "../../jobs/followup-todos.js";
 import { enqueueRuntimeChatTask, type EnqueueKuunaJob, type RuntimeChatTaskQueueClient } from "../../jobs/queues.js";
 import { logger } from "../../logging.js";
 import { publishRuntimeEvent } from "../../runtime/events.js";
@@ -35,6 +36,16 @@ function mediaKindFromMimeType(mimeType: string | null | undefined): string {
 
 function hasInboundContent(event: GatewayInboundEvent): boolean {
   return Boolean((event.message.text ?? "").trim()) || event.message.media.length > 0;
+}
+
+function inboundMediaPreviewUrl(event: GatewayInboundEvent, mimeType: string | null | undefined): string | null {
+  if (!mimeType?.startsWith("image/")) return null;
+  for (const container of [objectRecord(event.raw_event?.Message), objectRecord(event.raw_event?.Raw), objectRecord(event.raw_event)]) {
+    const image = objectRecord(container.imageMessage ?? container.ImageMessage);
+    const thumbnail = stringField(image, "jpegThumbnail") ?? stringField(image, "JPEGThumbnail");
+    if (thumbnail) return `data:image/jpeg;base64,${thumbnail}`;
+  }
+  return null;
 }
 
 const gatewayServiceProcedure = publicProcedure.use(({ ctx, next }) => {
@@ -173,6 +184,7 @@ export async function ingestGatewayInbound(
               kind: mediaKindFromMimeType(media.mime_type),
               download_url: media.download_url ?? null,
               inline_data_base64: media.inline_data_base64 ?? null,
+              preview_url: inboundMediaPreviewUrl(event, media.mime_type),
             },
           })
           .returning({ id: mediaAssets.id });
@@ -228,7 +240,14 @@ export async function ingestGatewayInbound(
         `retrieval_indexing_message_link_${jobToken(messageLinkId)}_${jobToken(event.trace_id)}`,
       );
     }
-    if (event.event_type !== "message_deleted") {
+    if (event.event_type !== "message_deleted" && (result.mediaAssetIds.length > 0 || result.messageLinkIds.length > 0)) {
+      await ensureAutomaticFollowupTodo(database, {
+        providerGroupId: event.provider_group_id,
+        messageId: result.messageId,
+        traceId: event.trace_id,
+      });
+    }
+    if (event.event_type !== "message_deleted" && result.mediaAssetIds.length === 0) {
       await enqueueRuntimeChatTask(
         {
           name: "passive_message_analysis",
@@ -375,6 +394,15 @@ function normalizeUrl(url: string): string {
   } catch {
     return url.trim();
   }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function jobToken(value: string): string {

@@ -88,8 +88,12 @@ export async function GET(
   }
 
   const filename = fallbackFilename(asset);
-  const downloadUrl =
-    asset.download_url ?? (asset.mime_type.startsWith("image/") ? asset.preview_url : null);
+  const isInlineImage = disposition === "inline" && asset.mime_type.startsWith("image/");
+  const downloadUrl = isInlineImage
+    ? asset.status === "ready" && asset.download_url
+      ? asset.download_url
+      : asset.preview_url ?? asset.download_url
+    : asset.download_url ?? (asset.mime_type.startsWith("image/") ? asset.preview_url : null);
   if (!downloadUrl) {
     return NextResponse.json({ detail: "download unavailable" }, { status: 404 });
   }
