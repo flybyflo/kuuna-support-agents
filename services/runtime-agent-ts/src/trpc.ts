@@ -1,7 +1,6 @@
 import { runtimeAgentRequestSchema } from "@kuuna/agent-contracts";
+import { runAgent } from "@kuuna/pi-runtime";
 import { initTRPC } from "@trpc/server";
-
-import { runAgent } from "./runner.js";
 
 const t = initTRPC.create();
 

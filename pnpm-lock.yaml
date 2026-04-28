@@ -146,6 +146,34 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/pi-runtime:
+    dependencies:
+      '@kuuna/agent-contracts':
+        specifier: workspace:*
+        version: link:../agent-contracts
+      '@mariozechner/pi-agent-core':
+        specifier: 0.70.2
+        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-ai':
+        specifier: 0.70.2
+        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-coding-agent':
+        specifier: 0.70.2
+        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
+      typebox:
+        specifier: ^1.0.55
+        version: 1.1.34
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.0
+        version: 22.19.17
+      tsx:
+        specifier: ^4.20.6
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   services/backend-ts:
     dependencies:
       '@aws-sdk/client-s3':
@@ -258,21 +286,12 @@ importers:
       '@kuuna/agent-contracts':
         specifier: workspace:*
         version: link:../../packages/agent-contracts
-      '@mariozechner/pi-agent-core':
-        specifier: 0.70.2
-        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
-      '@mariozechner/pi-ai':
-        specifier: 0.70.2
-        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
-      '@mariozechner/pi-coding-agent':
-        specifier: 0.70.2
-        version: 0.70.2(ws@8.20.0)(zod@3.25.76)
+      '@kuuna/pi-runtime':
+        specifier: workspace:*
+        version: link:../../packages/pi-runtime
       '@trpc/server':
         specifier: 11.17.0
         version: 11.17.0(typescript@5.9.3)
-      typebox:
-        specifier: ^1.0.55
-        version: 1.1.34
       zod:
         specifier: ^3.25.76
         version: 3.25.76

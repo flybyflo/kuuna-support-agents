@@ -1,7 +1,8 @@
 # Kuuna Runtime Agent TS
 
-TypeScript runtime-agent implementation built on Pi SDK.
+TypeScript runtime-agent container host.
 
-It preserves the existing `/run` HTTP contract while using Pi sessions with
-OpenAI `gpt-5.5`, reasoning effort `medium`, in-memory state, and Kuuna-only
-custom tools.
+The service owns the HTTP/tRPC server, health/debug endpoints, and container
+host/port config. Pi SDK integration, model selection, prompt assembly, runtime
+identity checks, and Kuuna-only custom tools live in the `@kuuna/pi-runtime`
+workspace package so Turbo can build and test that adapter independently.

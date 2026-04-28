@@ -8,8 +8,8 @@
     "serve": "tsx --conditions=development src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit",
-    "test": "node --conditions=development --import tsx --test tests/*.test.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.json --customConditions development",
+    "test": "tsc --noEmit -p tsconfig.json --customConditions development"
   },
   "exports": {
     "./trpc": {
@@ -20,11 +20,8 @@
   },
   "dependencies": {
     "@kuuna/agent-contracts": "workspace:*",
-    "@mariozechner/pi-agent-core": "0.70.2",
-    "@mariozechner/pi-ai": "0.70.2",
-    "@mariozechner/pi-coding-agent": "0.70.2",
+    "@kuuna/pi-runtime": "workspace:*",
     "@trpc/server": "^11.7.2",
-    "typebox": "^1.0.55",
     "zod": "^3.25.76"
   },
   "devDependencies": {

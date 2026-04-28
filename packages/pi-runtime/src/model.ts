@@ -1,4 +1,4 @@
-import { getModel, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import type { ReasoningEffort } from "@kuuna/agent-contracts";
 import { defaultModel, defaultReasoningEffort, MAX_MODEL_ATTEMPTS, openAiBaseUrl } from "./config.js";
 
@@ -28,8 +28,8 @@ export function piThinkingLevel(effort: ReasoningEffort | undefined): "off" | "m
   return selected === "none" ? "off" : selected;
 }
 
-export function getOpenAiModel(modelName: string): Model<any> | undefined {
-  const model = getModel("openai", normalizeModelName(modelName) as any);
+export function getOpenAiModel(modelName: string): Model<Api> | undefined {
+  const model = getModel("openai", normalizeModelName(modelName) as never);
   if (!model) {
     return undefined;
   }

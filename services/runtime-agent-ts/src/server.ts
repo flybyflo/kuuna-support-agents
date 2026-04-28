@@ -1,7 +1,14 @@
 import { createServer, type ServerResponse } from "node:http";
 import { createHTTPHandler } from "@trpc/server/adapters/standalone";
+import {
+  defaultModel,
+  defaultReasoningEffort,
+  openAiApiKey,
+  openAiBaseUrl,
+  openAiTimeoutSeconds,
+} from "@kuuna/pi-runtime";
 
-import { defaultModel, defaultReasoningEffort, host, openAiApiKey, openAiBaseUrl, openAiTimeoutSeconds, port } from "./config.js";
+import { host, port } from "./config.js";
 import { runtimeAgentRouter } from "./trpc.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

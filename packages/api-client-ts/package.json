@@ -14,8 +14,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json --customConditions development",
+    "test": "tsc --noEmit -p tsconfig.json --customConditions development"
   },
   "dependencies": {
     "@trpc/client": "^11.7.2"

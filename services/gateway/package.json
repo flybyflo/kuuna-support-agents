@@ -10,7 +10,7 @@
     "serve": "tsx --conditions=development src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json --customConditions development",
     "test": "node --conditions=development --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
