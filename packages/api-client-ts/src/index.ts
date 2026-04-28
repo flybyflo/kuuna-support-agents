@@ -284,6 +284,21 @@ export type AgentRunRecord = {
   completedAt?: string;
 };
 
+export type OutboundIntentRecord = {
+  id: string;
+  outboundIntentId: string;
+  providerGroupId: string;
+  status: "pending" | "sending" | "sent" | "failed";
+  attemptCount: number;
+  text: string;
+  replyToProviderMessageId?: string;
+  agentRunId?: string;
+  agentInstanceId?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MessageDecisionRecord = {
   id: string;
   messageId: string;

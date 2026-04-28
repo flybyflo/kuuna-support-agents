@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { StatusBadge } from "@/components/status/status-badge";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { getRuntimeRun } from "@/lib/api-client";
@@ -29,9 +30,11 @@ export default async function RuntimeRunDetailPage({ params }: { params: Params 
   }
 
   const execJson = JSON.stringify(run.execution ?? {}, null, 2);
+  const refreshIntervalMs = run.status === "started" ? 4000 : 8000;
 
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={refreshIntervalMs} />
       <PageHeader
         title="Runtime run"
         description="Detailed execution record for one container run."

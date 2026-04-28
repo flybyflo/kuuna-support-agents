@@ -2,6 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 
+import {
+  AUTO_REFRESH_INTERVALS,
+  AutoRefresh,
+} from "@/components/system/auto-refresh";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { listAgentRuns, listToolInvocations } from "@/lib/api-client";
@@ -53,8 +57,14 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
     toolInvocations,
   };
 
+  const refreshIntervalMs =
+    run.status === "running"
+      ? AUTO_REFRESH_INTERVALS.fast
+      : AUTO_REFRESH_INTERVALS.slow;
+
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={refreshIntervalMs} />
       <PageHeader
         title="Agent run"
         description={`Execution log for ${run.groupTitle}.`}
@@ -94,7 +104,7 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
             <div className="border-b border-border/70 py-3">
               <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Group</p>
               <Link
-                href={`/messages/${encodeURIComponent(run.providerGroupId)}`}
+                href={`/inbox/${encodeURIComponent(run.providerGroupId)}`}
                 className="inline-flex items-center gap-2 text-sm text-foreground hover:underline"
               >
                 <MessageSquare aria-hidden className="size-4" />

@@ -27,6 +27,7 @@ import type {
   MessageDecisionRecord,
   MessageRecord,
   MessageVersion,
+  OutboundIntentRecord,
   PromptAsset,
   RuntimeDebugStatus,
   RuntimeRun,
@@ -515,6 +516,42 @@ export async function listAgentRuns(providerGroupId?: string): Promise<AgentRunR
         error: row.error ?? undefined,
         startedAt: row.started_at,
         completedAt: row.completed_at ?? undefined,
+      }));
+    },
+    () => [],
+  );
+}
+
+export async function listOutboundIntents(
+  providerGroupId?: string,
+): Promise<OutboundIntentRecord[]> {
+  return withOptionalMock(
+    "listOutboundIntents",
+    async () => {
+      const client = await createSessionBackendTrpcClient();
+      const rows = await client.agentState.outboundIntents.query({
+        providerGroupId,
+        limit: 100,
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        outboundIntentId: row.outbound_intent_id,
+        providerGroupId: row.provider_group_id,
+        status:
+          row.status === "pending" ||
+          row.status === "sending" ||
+          row.status === "sent" ||
+          row.status === "failed"
+            ? row.status
+            : "pending",
+        attemptCount: row.attempt_count,
+        text: row.text ?? "",
+        replyToProviderMessageId: row.reply_to_provider_message_id ?? undefined,
+        agentRunId: row.agent_run_id ?? undefined,
+        agentInstanceId: row.agent_instance_id ?? undefined,
+        lastError: row.last_error ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       }));
     },
     () => [],

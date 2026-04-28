@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import {
   Card,
   CardContent,
@@ -47,6 +48,7 @@ export default async function RuntimeDebugPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <AutoRefresh intervalMs={8000} />
       <PageHeader
         title="Runtime debug"
         description="Quick health and model wiring checks for the runtime agent and OpenAI settings."
