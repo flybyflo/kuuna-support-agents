@@ -6,7 +6,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from kuuna_backend.db.models import GroupTemplate, TemplateVersion, TemplateVersionStatus
+from kuuna_backend.db.models import (
+    BindingStatus,
+    GroupBinding,
+    GroupTemplate,
+    TemplateVersion,
+    TemplateVersionStatus,
+)
 
 
 class TemplateServiceError(Exception):
@@ -119,6 +125,11 @@ def publish_template_version(db: Session, template_id: UUID, version_id: UUID) -
 
     _archive_other_published_versions(db, template_id, version.id)
     version.status = TemplateVersionStatus.PUBLISHED
+    _retarget_active_bindings_to_template_version(
+        db,
+        template_id=template_id,
+        target_version_id=version.id,
+    )
     db.commit()
     db.refresh(version)
     return version
@@ -131,6 +142,11 @@ def rollback_template_version(db: Session, template_id: UUID, version_id: UUID) 
 
     _archive_other_published_versions(db, template_id, version.id)
     version.status = TemplateVersionStatus.PUBLISHED
+    _retarget_active_bindings_to_template_version(
+        db,
+        template_id=template_id,
+        target_version_id=version.id,
+    )
     db.commit()
     db.refresh(version)
     return version
@@ -161,3 +177,23 @@ def _archive_other_published_versions(db: Session, template_id: UUID, target_ver
 
     for published_version in published_versions:
         published_version.status = TemplateVersionStatus.ARCHIVED
+
+
+def _retarget_active_bindings_to_template_version(
+    db: Session,
+    *,
+    template_id: UUID,
+    target_version_id: UUID,
+) -> None:
+    bindings = db.scalars(
+        select(GroupBinding)
+        .join(TemplateVersion, TemplateVersion.id == GroupBinding.template_version_id)
+        .where(
+            TemplateVersion.template_id == template_id,
+            GroupBinding.status == BindingStatus.ACTIVE,
+            GroupBinding.template_version_id != target_version_id,
+        )
+    ).all()
+
+    for binding in bindings:
+        binding.template_version_id = target_version_id

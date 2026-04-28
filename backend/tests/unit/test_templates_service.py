@@ -3,8 +3,10 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from kuuna_backend.db.models import BindingStatus, GroupBinding
 from kuuna_backend.domain.templates.service import (
     TemplateConflictError,
     TemplateLifecycleError,
@@ -52,6 +54,73 @@ def test_publish_archives_previous_published(test_session_factory: sessionmaker[
         by_no = {version.version_no: version for version in versions}
         assert by_no[2].status.value == "published"
         assert by_no[1].status.value == "archived"
+
+
+def test_publish_retargets_active_bindings_for_template(
+    test_session_factory: sessionmaker[Session],
+) -> None:
+    with test_session_factory() as db:
+        template = create_template(db, key="pub-bindings", display_name="Publish Bindings")
+        v1 = create_template_version_draft(db, template.id)
+        v2 = create_template_version_draft(db, template.id)
+        publish_template_version(db, template.id, v1.id)
+
+        other_template = create_template(db, key="other-bindings", display_name="Other Bindings")
+        other_version = create_template_version_draft(db, other_template.id)
+        publish_template_version(db, other_template.id, other_version.id)
+
+        active_binding = GroupBinding(
+            provider_group_id="active@g.us",
+            template_version_id=v1.id,
+            status=BindingStatus.ACTIVE,
+        )
+        inactive_binding = GroupBinding(
+            provider_group_id="inactive@g.us",
+            template_version_id=v1.id,
+            status=BindingStatus.INACTIVE,
+        )
+        other_binding = GroupBinding(
+            provider_group_id="other@g.us",
+            template_version_id=other_version.id,
+            status=BindingStatus.ACTIVE,
+        )
+        db.add_all([active_binding, inactive_binding, other_binding])
+        db.commit()
+
+        publish_template_version(db, template.id, v2.id)
+
+        bindings = {
+            binding.provider_group_id: binding
+            for binding in db.scalars(select(GroupBinding)).all()
+        }
+        assert bindings["active@g.us"].template_version_id == v2.id
+        assert bindings["inactive@g.us"].template_version_id == v1.id
+        assert bindings["other@g.us"].template_version_id == other_version.id
+
+
+def test_rollback_retargets_active_bindings_for_template(
+    test_session_factory: sessionmaker[Session],
+) -> None:
+    with test_session_factory() as db:
+        template = create_template(db, key="rb-bindings", display_name="Rollback Bindings")
+        v1 = create_template_version_draft(db, template.id)
+        v2 = create_template_version_draft(db, template.id)
+        publish_template_version(db, template.id, v1.id)
+        publish_template_version(db, template.id, v2.id)
+
+        binding = GroupBinding(
+            provider_group_id="rollback@g.us",
+            template_version_id=v2.id,
+            status=BindingStatus.ACTIVE,
+        )
+        db.add(binding)
+        db.commit()
+
+        rollback_template_version(db, template.id, v1.id)
+
+        refreshed = db.scalar(select(GroupBinding).where(GroupBinding.provider_group_id == "rollback@g.us"))
+        assert refreshed is not None
+        assert refreshed.template_version_id == v1.id
 
 
 def test_rollback_rules(test_session_factory: sessionmaker[Session]) -> None:

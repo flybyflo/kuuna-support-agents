@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/status/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { listBindings, listTemplates, listTemplateVersions } from "@/lib/api-client";
 import { requireSession, canAccessGroup } from "@/lib/auth/session";
@@ -13,7 +14,23 @@ import { formatDateTime } from "@/lib/utils/format";
 import { resolveGroupTitle } from "@/lib/utils/group-title";
 import { listWhatsAppGatewayGroups } from "@/lib/whatsapp/ops";
 
-export default async function BindingsPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function getSingleParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function BindingsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const params = await searchParams;
+  const created = getSingleParam(params.created);
+  const unbound = getSingleParam(params.unbound);
+  const unbindError = getSingleParam(params.unbind);
+  const reason = getSingleParam(params.reason);
+  const group = getSingleParam(params.group);
   const session = await requireSession();
   const [allBindings, gatewayGroups, templates] = await Promise.all([
     listBindings(),
@@ -61,6 +78,24 @@ export default async function BindingsPage() {
           </Button>
         }
       />
+
+      {created === "1" ? (
+        <Notice title="Binding created" tone="success">
+          {group ? `Group ${group} is now bound to the selected template version.` : "Group binding is active."}
+        </Notice>
+      ) : null}
+
+      {unbound === "1" ? (
+        <Notice title="Group unbound" tone="success">
+          {group ? `Group ${group} is no longer routed to an agent.` : "The binding is inactive now."}
+        </Notice>
+      ) : null}
+
+      {unbindError === "error" ? (
+        <Notice title="Unbind failed" tone="warning">
+          {reason ?? "The binding could not be deactivated."}
+        </Notice>
+      ) : null}
 
       <Card className="overflow-hidden">
         <CardContent className="p-0 pt-0">

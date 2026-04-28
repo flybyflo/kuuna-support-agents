@@ -110,6 +110,55 @@ export async function createBindingAction(formData: FormData): Promise<void> {
   redirect(`/bindings/create?bind=error&reason=${encodeURIComponent(shortReason(fallbackError))}`);
 }
 
+export async function unbindBindingAction(formData: FormData): Promise<void> {
+  await requireAuthorized("bindings", "delete");
+
+  const bindingId = cleanGroupId(formData.get("bindingId"));
+  const providerGroupId = cleanGroupId(formData.get("providerGroupId"));
+
+  if (!bindingId) {
+    redirect("/bindings?unbind=error&reason=missing-binding-id");
+  }
+
+  const networkErrors: string[] = [];
+
+  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
+    const normalizedBaseUrl = backendBaseUrl.replace(/\/$/, "");
+
+    try {
+      const response = await fetch(`${normalizedBaseUrl}/bindings/${encodeURIComponent(bindingId)}`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        const detail = `${normalizedBaseUrl} -> ${response.status}: ${body}`;
+        redirect(
+          `/bindings?unbind=error&reason=${encodeURIComponent(shortReason(detail))}`,
+        );
+      }
+
+      const params = new URLSearchParams({ unbound: "1" });
+      if (providerGroupId) {
+        params.set("group", providerGroupId);
+      }
+      redirect(`/bindings?${params.toString()}`);
+    } catch (error) {
+      rethrowRedirectError(error);
+      const reason = error instanceof Error ? error.message : String(error);
+      networkErrors.push(`${normalizedBaseUrl} -> ${reason}`);
+    }
+  }
+
+  const fallbackError = networkErrors.length
+    ? `network: ${networkErrors.join(" | ")}`
+    : "no-backend-url";
+  redirect(
+    `/bindings?unbind=error&reason=${encodeURIComponent(shortReason(fallbackError))}`,
+  );
+}
+
 export async function createWhatsAppGroupAction(formData: FormData): Promise<void> {
   await requireAuthorized("bindings", "write");
 

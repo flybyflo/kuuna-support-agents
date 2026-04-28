@@ -28,6 +28,7 @@ import {
   createTemplateDraftVersionAction,
   publishTemplateVersionAction,
 } from "@/lib/templates/actions";
+import { PI_OPENAI_MODELS, isPiOpenAiModel } from "@/lib/templates/pi-models";
 import { queueTemplateBuildAction } from "@/lib/templates/template-build-actions";
 import { formatDateTime } from "@/lib/utils/format";
 
@@ -42,18 +43,22 @@ function getSingleParam(
 
 function defaultModelChain(
   versions: Array<{ modelChain: string[] }>,
-): string {
+): string[] {
   const latestWithChain = versions.find(
     (version) => version.modelChain.length > 0,
   );
   if (!latestWithChain) {
-    return "gpt-5.5";
+    return ["gpt-5.5"];
   }
-  return latestWithChain.modelChain.join(", ");
+  return latestWithChain.modelChain;
 }
 
 function csvOrEmpty(values: string[] | undefined): string {
   return values?.length ? values.join(", ") : "";
+}
+
+function firstSupportedPiModel(modelChain: string[] | undefined): string | undefined {
+  return modelChain?.find((model) => isPiOpenAiModel(model));
 }
 
 export default async function TemplateDetailPage({
@@ -88,16 +93,16 @@ export default async function TemplateDetailPage({
 
   const template = templateMaybe;
 
-  const modelChainDefault = defaultModelChain(versions);
   const cloneSource = cloneFromVersionId
     ? versions.find((version) => version.id === cloneFromVersionId)
     : undefined;
   const systemPromptDefault =
     cloneSource?.systemPrompt ??
     "You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps.";
-  const modelChainPrefill = cloneSource?.modelChain?.length
-    ? csvOrEmpty(cloneSource.modelChain)
-    : modelChainDefault;
+  const modelChainPrefill =
+    firstSupportedPiModel(cloneSource?.modelChain) ??
+    firstSupportedPiModel(defaultModelChain(versions)) ??
+    "gpt-5.5";
   const allowedToolsPrefill = cloneSource?.allowedTools?.length
     ? csvOrEmpty(cloneSource.allowedTools)
     : "uppercase, knowledge_search, message_history, todo_create, todo_update, todo_list";
@@ -179,7 +184,10 @@ export default async function TemplateDetailPage({
               </code>
             </p>
           ) : null}
-          <p>You can now bind a group using this version.</p>
+          <p>
+            Existing active group bindings for this template now use this version.
+            New groups can also be bound to it.
+          </p>
         </Notice>
       ) : null}
 
@@ -249,16 +257,21 @@ export default async function TemplateDetailPage({
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <FormRow
-                label="Model chain"
+                label="Model"
                 htmlFor="modelChain"
-                hint="Comma-separated, in failover order."
+                hint="Pi OpenAI model used by this template."
               >
-                <Input
+                <Select
                   id="modelChain"
                   name="modelChain"
                   defaultValue={modelChainPrefill}
-                  placeholder="gpt-5.5"
-                />
+                >
+                  {PI_OPENAI_MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name} - {model.id}
+                    </option>
+                  ))}
+                </Select>
               </FormRow>
 
               <FormRow
