@@ -27,11 +27,11 @@ Implementation is still targeting a single dev environment first.
 
 ## Planned Tech Stack (MVP)
 - **Dashboard:** Next.js 15 + TypeScript
-- **Control Plane:** FastAPI + Pydantic v2 + SQLAlchemy + Alembic
+- **Control Plane:** TypeScript Fastify + tRPC + Drizzle, with Alembic still owning current migrations
 - **Agent runtime framework:** TypeScript Pi runtime
-- **WhatsApp gateway:** neonize
+- **WhatsApp gateway:** Baileys
 - **DB:** PostgreSQL 16 + pgvector + RLS
-- **Queue:** Redis + RQ
+- **Queue:** Redis + BullMQ
 - **Storage:** S3-compatible object storage
 - **Observability:** Sentry + structured JSON logs
 - **Deployment:** Docker Compose on single host
@@ -70,15 +70,16 @@ Implementation is still targeting a single dev environment first.
 - Dashboard initializes Sentry for client/server/edge via `@sentry/nextjs`.
 
 ## Repository Layout (Scaffold)
-- `apps/dashboard` — Next.js 15 + TypeScript dashboard scaffold
-- `backend` — FastAPI + domain/worker scaffold (managed with `uv`)
-- `services/gateway` — WhatsApp gateway adapter scaffold
-- `services/runtime-agent-ts` — TypeScript Pi runtime agent used by Compose and per-group containers
-- `packages/api-client-ts` — shared typed backend API client and dashboard read models
-- `packages/contracts` — shared gateway/event contracts
-- `packages/agent-contracts` — shared runtime request/result contracts
-- `infra` — compose/env/scripts placeholders
-- `docs` — architecture/runbooks/ADR placeholders
+- `apps/dashboard` - Next.js 15 + TypeScript dashboard scaffold
+- `backend` - Python Alembic migrations and legacy backend reference
+- `services/backend-ts` - TypeScript control plane API and worker
+- `services/gateway` - TypeScript WhatsApp gateway using Baileys
+- `services/runtime-agent-ts` - TypeScript Pi runtime agent used by Compose and per-group containers
+- `packages/api-client-ts` - shared typed backend API client and dashboard read models
+- `packages/contracts` - shared gateway/event contracts
+- `packages/agent-contracts` - shared runtime request/result contracts
+- `infra` - compose/env/scripts placeholders
+- `docs` - architecture/runbooks/ADR placeholders
 
 ## Local Setup (Docker-only via Just)
 Run everything through the dev stack:
@@ -105,8 +106,8 @@ These commands cover `apps/dashboard`, `services/runtime-agent-ts`, and shared p
 Services:
 - Dashboard: http://localhost:3000
 - Backend API: http://localhost:8000
-- Worker: background service (RQ)
-- Gateway: background service (Neonize)
+- Worker: background service (BullMQ)
+- Gateway: background service (Baileys)
 - MinIO: http://localhost:9001
 
 For WhatsApp mentions, set `AGENT_MENTION_IDS` in `infra/env/backend.env.local` to the actual bot JID(s), comma-separated. Text aliases such as `@agent` and `@kuuna` are controlled by `AGENT_MENTION_ALIASES`.
@@ -141,15 +142,18 @@ See also: `infra/compose/DR_RUNBOOK.md`.
 
 ## Hot Reload
 - Frontend: Next.js HMR (`next dev`) in container.
-- Backend API: `uvicorn --reload` in container.
-- Worker: `watchfiles` restarts `rq worker` on Python changes.
-- Gateway: `watchfiles` restarts Neonize bridge on Python changes.
+- Backend API: `tsx watch` in container.
+- Worker: `tsx watch` in container.
+- Gateway: `tsx watch` runs the Baileys gateway in container.
 - Source code is bind-mounted into containers.
 
 ## WhatsApp Session Persistence
-- Gateway stores Neonize auth/session state in Docker volume `gateway_session`.
-- Session DB path is `NEONIZE_DATABASE_PATH=/data/neonize.db`.
+- Gateway stores Baileys auth/session state in Docker volume `gateway_session`.
+- Auth state path is `BAILEYS_AUTH_DIR=/data/baileys-auth`.
 - Restarting containers keeps the WhatsApp session; removing the volume resets it.
+- Existing Neonize sessions in `/data/neonize.db` cannot be reused by Baileys.
+  On first Baileys start, scan the QR printed in the gateway logs or read it from
+  `GET /ops/qr`.
 
 ## Next Step
 1. Replace the remaining dashboard direct-DB fallback paths with generated OpenAPI calls.

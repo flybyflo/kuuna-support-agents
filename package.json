@@ -7,6 +7,7 @@
     "apps/*",
     "packages/*",
     "services/backend-ts",
+    "services/gateway",
     "services/runtime-agent-ts"
   ],
   "scripts": {
