@@ -243,6 +243,48 @@ async function createContractTables(sql: Sql): Promise<void> {
       updated_at timestamptz not null default now()
     );
 
+    create table knowledge_common_docs (
+      id uuid primary key default gen_random_uuid(),
+      doc_key text not null unique,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table knowledge_group_docs (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      doc_key text not null,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (provider_group_id, doc_key)
+    );
+
+    create table knowledge_versions (
+      id uuid primary key default gen_random_uuid(),
+      scope text not null,
+      doc_ref_id uuid not null,
+      version_no integer not null,
+      status text not null,
+      content_markdown text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (scope, doc_ref_id, version_no)
+    );
+
+    create table embeddings (
+      id uuid primary key default gen_random_uuid(),
+      scope text not null,
+      source_version_id uuid not null references knowledge_versions(id) on delete cascade,
+      chunk_no integer not null,
+      content text not null,
+      token_count integer not null,
+      embedding text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     create table retrieval_chunks (
       id uuid primary key default gen_random_uuid(),
       scope text not null,

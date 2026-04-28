@@ -2,7 +2,16 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { knowledgeCommonDocs, knowledgeGroupDocs, knowledgeVersions } from "../../db/schema.js";
+import {
+  knowledgeCommonDocs,
+  knowledgeGroupDocs,
+  knowledgeVersions,
+  mediaAssets,
+  messages,
+  messageVersions,
+  transcripts,
+} from "../../db/schema.js";
+import type { DbLike } from "../../db/client.js";
 import { enqueueKuunaJob } from "../../jobs/queues.js";
 import { createTRPCRouter, protectedProcedure, roleProcedure } from "../init.js";
 
@@ -27,6 +36,14 @@ const versionTargetInput = z.object({
   versionId: z.string().uuid(),
 });
 
+type GroupIngestStats = {
+  providerGroupId: string;
+  chunkCount: number;
+  updatedAt: Date | null;
+  hasPendingMedia: boolean;
+  hasFailedMedia: boolean;
+};
+
 export const knowledgeRouter = createTRPCRouter({
   commonDocs: protectedProcedure.query(async ({ ctx }) => {
     const rows = await ctx.db
@@ -43,6 +60,66 @@ export const knowledgeRouter = createTRPCRouter({
       updated_at: doc.updatedAt.toISOString(),
     }));
   }),
+
+  ingestedCommonDocs: protectedProcedure.query(async ({ ctx }) => {
+    const statsByGroup = await collectIngestStats(ctx.db);
+    const populated = Array.from(statsByGroup.values()).filter((stats) => stats.chunkCount > 0 && stats.updatedAt);
+    if (populated.length === 0) {
+      return [];
+    }
+
+    const updatedAt = populated.reduce<Date | null>(
+      (current, stats) => maxDate(current, stats.updatedAt),
+      null,
+    );
+    if (!updatedAt) {
+      return [];
+    }
+
+    const aggregate: GroupIngestStats = {
+      providerGroupId: "common-ingested",
+      chunkCount: populated.reduce((sum, stats) => sum + stats.chunkCount, 0),
+      updatedAt,
+      hasPendingMedia: populated.some((stats) => stats.hasPendingMedia),
+      hasFailedMedia: populated.some((stats) => stats.hasFailedMedia),
+    };
+
+    return [
+      {
+        id: "common-ingested",
+        doc_key: "ingested-chat-history",
+        scope: "common",
+        provider_group_id: null,
+        title: "Common Knowledge (Ingested)",
+        status: deriveIngestedStatus(aggregate),
+        updated_at: updatedAt.toISOString(),
+        updated_by: "ingest-pipeline",
+        chunk_count: aggregate.chunkCount,
+      },
+    ];
+  }),
+
+  ingestedGroupDocs: protectedProcedure
+    .input(z.object({ providerGroupId: z.string().optional() }).default({}))
+    .query(async ({ ctx, input }) => {
+      const statsByGroup = await collectIngestStats(ctx.db);
+      const eligible = Array.from(statsByGroup.values())
+        .filter((stats) => stats.chunkCount > 0 && stats.updatedAt)
+        .filter((stats) => !input.providerGroupId || stats.providerGroupId === input.providerGroupId)
+        .sort((left, right) => (right.updatedAt?.getTime() ?? 0) - (left.updatedAt?.getTime() ?? 0));
+
+      return eligible.map((stats) => ({
+        id: stats.providerGroupId,
+        doc_key: "ingested-chat-history",
+        scope: "group",
+        provider_group_id: stats.providerGroupId,
+        title: stats.providerGroupId,
+        status: deriveIngestedStatus(stats),
+        updated_at: stats.updatedAt?.toISOString(),
+        updated_by: "ingest-pipeline",
+        chunk_count: stats.chunkCount,
+      }));
+    }),
 
   createCommonDoc: roleProcedure("owner", "admin").input(commonDocInput).mutation(async ({ ctx, input }) => {
     const [existing] = await ctx.db
@@ -180,7 +257,7 @@ export const knowledgeRouter = createTRPCRouter({
       .set({ status: "published", updatedAt: new Date() })
       .where(eq(knowledgeVersions.id, input.versionId))
       .returning();
-    await enqueueKuunaJob("knowledge_indexing", { knowledge_version_id: input.versionId }, `knowledge:${input.versionId}`);
+    await enqueueKuunaJob("knowledge_indexing", { knowledge_version_id: input.versionId }, `knowledge_indexing_${jobToken(input.versionId)}`);
     return version;
   }),
 
@@ -221,7 +298,119 @@ export const knowledgeRouter = createTRPCRouter({
       .set({ status: "published", updatedAt: new Date() })
       .where(eq(knowledgeVersions.id, input.versionId))
       .returning();
-    await enqueueKuunaJob("knowledge_indexing", { knowledge_version_id: input.versionId }, `knowledge:${input.versionId}`);
+    await enqueueKuunaJob("knowledge_indexing", { knowledge_version_id: input.versionId }, `knowledge_indexing_${jobToken(input.versionId)}`);
     return version;
   }),
 });
+
+async function collectIngestStats(database: DbLike): Promise<Map<string, GroupIngestStats>> {
+  const statsByGroup = new Map<string, GroupIngestStats>();
+
+  const latestVersions = await database
+    .select({
+      providerGroupId: messages.providerGroupId,
+      occurredAt: messageVersions.occurredAt,
+      textContent: messageVersions.textContent,
+    })
+    .from(messages)
+    .innerJoin(
+      messageVersions,
+      and(
+        eq(messageVersions.messageId, messages.id),
+        eq(messageVersions.versionNo, messages.latestVersionNo),
+      ),
+    )
+    .where(eq(messageVersions.isDeleted, false));
+
+  for (const row of latestVersions) {
+    if (!row.textContent?.trim()) {
+      continue;
+    }
+    const stats = getStats(statsByGroup, row.providerGroupId);
+    stats.chunkCount += 1;
+    stats.updatedAt = maxDate(stats.updatedAt, row.occurredAt);
+  }
+
+  const transcriptRows = await database
+    .select({
+      providerGroupId: messages.providerGroupId,
+      messageUpdatedAt: messages.updatedAt,
+      mediaUpdatedAt: mediaAssets.updatedAt,
+      transcriptUpdatedAt: transcripts.updatedAt,
+      textContent: transcripts.textContent,
+    })
+    .from(messages)
+    .innerJoin(mediaAssets, eq(mediaAssets.messageId, messages.id))
+    .innerJoin(transcripts, eq(transcripts.mediaAssetId, mediaAssets.id));
+
+  for (const row of transcriptRows) {
+    if (!row.textContent?.trim()) {
+      continue;
+    }
+    const stats = getStats(statsByGroup, row.providerGroupId);
+    stats.chunkCount += 1;
+    stats.updatedAt = maxDate(
+      stats.updatedAt,
+      row.transcriptUpdatedAt ?? row.mediaUpdatedAt ?? row.messageUpdatedAt,
+    );
+  }
+
+  const mediaRows = await database
+    .select({
+      providerGroupId: messages.providerGroupId,
+      status: mediaAssets.status,
+    })
+    .from(messages)
+    .innerJoin(mediaAssets, eq(mediaAssets.messageId, messages.id));
+
+  for (const row of mediaRows) {
+    const stats = getStats(statsByGroup, row.providerGroupId);
+    if (row.status === "pending") {
+      stats.hasPendingMedia = true;
+    } else if (row.status === "failed") {
+      stats.hasFailedMedia = true;
+    }
+  }
+
+  return statsByGroup;
+}
+
+function getStats(statsByGroup: Map<string, GroupIngestStats>, providerGroupId: string): GroupIngestStats {
+  const existing = statsByGroup.get(providerGroupId);
+  if (existing) {
+    return existing;
+  }
+  const created: GroupIngestStats = {
+    providerGroupId,
+    chunkCount: 0,
+    updatedAt: null,
+    hasPendingMedia: false,
+    hasFailedMedia: false,
+  };
+  statsByGroup.set(providerGroupId, created);
+  return created;
+}
+
+function deriveIngestedStatus(stats: GroupIngestStats): "processing" | "failed" | "ready" {
+  if (stats.hasPendingMedia) {
+    return "processing";
+  }
+  if (stats.hasFailedMedia) {
+    return "failed";
+  }
+  return "ready";
+}
+
+function maxDate(current: Date | null, candidate: Date | null): Date | null {
+  if (!candidate) {
+    return current;
+  }
+  if (!current || candidate.getTime() > current.getTime()) {
+    return candidate;
+  }
+  return current;
+}
+
+function jobToken(value: string): string {
+  return value.replaceAll("-", "_").replaceAll(" ", "_");
+}

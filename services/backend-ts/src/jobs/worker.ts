@@ -3,6 +3,7 @@ import { Worker, type Job } from "bullmq";
 import { db } from "../db/client.js";
 import { logger } from "../logging.js";
 import { closeQueues, getRedisConnection, type KuunaJobName } from "./queues.js";
+import { processKnowledgeIndexingJob } from "./knowledge-indexing.js";
 import { processRetrievalIndexingJob } from "./retrieval-indexing.js";
 
 type Handler = (job: Job<Record<string, unknown>, unknown, KuunaJobName>) => Promise<unknown>;
@@ -12,11 +13,17 @@ const handlers: Record<KuunaJobName, Handler> = {
   inbound_execution: async (job) => recordDeferredJob(job),
   outbound_dispatch: async (job) => recordDeferredJob(job),
   template_build: async (job) => recordDeferredJob(job),
-  knowledge_indexing: async (job) => recordDeferredJob(job),
+  knowledge_indexing: async (job) => processKnowledgeJob(job),
   retrieval_indexing: async (job) => processRetrievalJob(job),
   passive_message_analysis: async (job) => recordDeferredJob(job),
   todo_export: async (job) => recordDeferredJob(job),
 };
+
+async function processKnowledgeJob(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
+  const knowledgeVersionId = stringField(job.data, "knowledge_version_id");
+  const traceId = optionalStringField(job.data, "trace_id");
+  return db.transaction((tx) => processKnowledgeIndexingJob(tx, { knowledgeVersionId, traceId }));
+}
 
 async function processRetrievalJob(job: Job<Record<string, unknown>, unknown, KuunaJobName>) {
   const sourceType = stringField(job.data, "source_type");

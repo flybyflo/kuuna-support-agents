@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { and, eq } from "drizzle-orm";
 
 import type { DbLike } from "../db/client.js";
@@ -12,9 +10,7 @@ import {
   transcripts,
 } from "../db/schema.js";
 import { logger } from "../logging.js";
-
-const embeddingDimensions = 1536;
-const maxChunkChars = 1000;
+import { chunkMarkdown, createEmbeddings, tokenCount, vectorLiteral } from "./indexing-utils.js";
 
 export async function processRetrievalIndexingJob(
   database: DbLike,
@@ -159,6 +155,9 @@ async function replaceSourceChunks(
   },
 ) {
   const chunks = chunkMarkdown(input.content);
+  const embeddings = await createEmbeddings(chunks, {
+    fallbackLogMessage: "retrieval_embedding_failed_using_pseudo_embeddings",
+  });
   await deleteSourceChunks(database, input.sourceType, input.sourceId);
 
   let chunkCount = 0;
@@ -176,7 +175,7 @@ async function replaceSourceChunks(
       chunkNo: index + 1,
       content: normalizedContent,
       tokenCount: tokenCount(normalizedContent),
-      embedding: vectorLiteral(pseudoEmbedding(normalizedContent)),
+      embedding: vectorLiteral(embeddings[index] ?? []),
       metadataJson: { ...input.metadata, indexed_at: new Date().toISOString() },
     });
   }
@@ -188,81 +187,4 @@ async function deleteSourceChunks(database: DbLike, sourceType: string, sourceId
   await database
     .delete(retrievalChunks)
     .where(and(eq(retrievalChunks.sourceType, sourceType), eq(retrievalChunks.sourceId, sourceId)));
-}
-
-export function chunkMarkdown(content: string, maxLength = maxChunkChars): string[] {
-  const normalized = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim();
-  if (!normalized) return [""];
-
-  const paragraphs = normalized.split("\n\n").map((paragraph) => paragraph.trim()).filter(Boolean);
-  if (paragraphs.length === 0) return [splitText(normalized, maxLength)[0] ?? ""];
-
-  const chunks: string[] = [];
-  let currentChunk = "";
-  for (const paragraph of paragraphs) {
-    for (const part of splitText(paragraph, maxLength)) {
-      if (!currentChunk) {
-        currentChunk = part;
-        continue;
-      }
-      const candidate = `${currentChunk}\n\n${part}`;
-      if (candidate.length <= maxLength) {
-        currentChunk = candidate;
-        continue;
-      }
-      chunks.push(currentChunk);
-      currentChunk = part;
-    }
-  }
-  if (currentChunk) chunks.push(currentChunk);
-  return chunks.length ? chunks : [normalized.slice(0, maxLength)];
-}
-
-function splitText(text: string, maxLength: number): string[] {
-  let remaining = text.trim();
-  if (!remaining) return [""];
-
-  const parts: string[] = [];
-  while (remaining) {
-    if (remaining.length <= maxLength) {
-      parts.push(remaining);
-      break;
-    }
-    let splitAt = remaining.lastIndexOf("\n", maxLength);
-    if (splitAt <= 0) splitAt = remaining.lastIndexOf(" ", maxLength);
-    if (splitAt <= 0) splitAt = maxLength;
-
-    const part = remaining.slice(0, splitAt).trim();
-    if (part) parts.push(part);
-    remaining = remaining.slice(splitAt).trim();
-  }
-  return parts.length ? parts : [text.slice(0, maxLength)];
-}
-
-function tokenCount(content: string): number {
-  const stripped = content.trim();
-  return stripped ? stripped.split(/\s+/).length : 0;
-}
-
-function pseudoEmbedding(content: string): number[] {
-  const seed = content.trim() || "__empty__";
-  const vector: number[] = [];
-  let counter = 0;
-
-  while (vector.length < embeddingDimensions) {
-    const digest = createHash("sha256").update(`${seed}:${counter}`).digest();
-    for (let index = 0; index < digest.length; index += 4) {
-      const value = digest.readUInt32BE(index);
-      vector.push((value / 0xffffffff) * 2 - 1);
-      if (vector.length === embeddingDimensions) break;
-    }
-    counter += 1;
-  }
-
-  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
-  return vector.map((value) => value / magnitude);
-}
-
-function vectorLiteral(vector: number[]): string {
-  return `[${vector.map((value) => Number(value.toFixed(8))).join(",")}]`;
 }

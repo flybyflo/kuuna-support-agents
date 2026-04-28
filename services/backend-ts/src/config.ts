@@ -19,6 +19,7 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().default("https://api.openai.com/v1"),
   OPENAI_TIMEOUT_SECONDS: z.coerce.number().positive().default(30),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
 });
 
 export type Settings = z.infer<typeof envSchema>;
