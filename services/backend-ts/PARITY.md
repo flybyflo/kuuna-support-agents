@@ -32,3 +32,15 @@ Contract suites to port or mirror for the TypeScript service:
 
 Cutover is blocked until the TypeScript service can satisfy the Staff API, Gateway REST API,
 internal Ops API, and worker behavior covered by those suites.
+
+Current TypeScript parity status:
+
+- Auth token/password primitives are covered by TS unit tests.
+- Trigger decision logic is covered by TS unit tests.
+- Drizzle schema is aligned to the current Python SQLAlchemy model names for auth, runtime,
+  messages, media, knowledge, outbound, agent state, retrieval chunks, and links.
+- tRPC has functional mutations for templates, template versions, tools, users, bindings,
+  and knowledge lifecycle.
+- Gateway REST persists messages, versions, media, decisions, links, and outbound statuses.
+- BullMQ worker entry exists behind the `backend-ts-cutover` Compose profile. Job bodies still
+  need Python behavior parity before that profile can replace the Python RQ worker.

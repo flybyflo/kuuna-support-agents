@@ -72,7 +72,13 @@ export const auditRouter = createTRPCRouter({
         })),
         media: media.map((asset) => ({
           id: asset.id,
-          kind: asset.kind,
+          kind: asset.mimeType.startsWith("image/")
+            ? "image"
+            : asset.mimeType.startsWith("audio/")
+              ? "audio"
+              : asset.mimeType.startsWith("video/")
+                ? "video"
+                : "file",
           mime_type: asset.mimeType,
           file_name: asset.fileName,
           status: asset.status,
@@ -89,7 +95,14 @@ export const auditRouter = createTRPCRouter({
             outbound_intent_id: intent.outboundIntentId,
             status: intent.status,
             attempt_count: intent.attemptCount,
-            provider_message_id: intent.providerMessageId,
+            provider_message_id:
+              typeof (intent.payload as Record<string, unknown>)._dispatch === "object" &&
+              (intent.payload as { _dispatch?: { provider_message_id?: unknown } })._dispatch
+                ? String(
+                    (intent.payload as { _dispatch: { provider_message_id?: unknown } })._dispatch
+                      .provider_message_id ?? "",
+                  ) || null
+                : null,
             created_at: intent.createdAt.toISOString(),
             updated_at: intent.updatedAt.toISOString(),
           })),

@@ -5,9 +5,18 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db } from "../db/client.js";
-import { mediaAssets, messages, messageVersions, outboundIntents } from "../db/schema.js";
+import {
+  groupBindings,
+  mediaAssets,
+  messageDecisions,
+  messageLinks,
+  messages,
+  messageVersions,
+  outboundIntents,
+} from "../db/schema.js";
 import { enqueueKuunaJob } from "../jobs/queues.js";
 import { logger } from "../logging.js";
+import { evaluateTrigger } from "../trigger.js";
 
 const inboundEventSchema = z.object({
   trace_id: z.string().uuid().default(() => randomUUID()),
@@ -58,6 +67,7 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
   app.post("/gateway/inbound", async (request, reply) => {
     const event = inboundEventSchema.parse(request.body);
     const occurredAt = new Date(event.occurred_at);
+    const triggerDecision = evaluateTrigger(event);
 
     const result = await db.transaction(async (tx) => {
       const [existing] = await tx
@@ -97,7 +107,7 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
           versionNo,
           eventType: event.event_type,
           isDeleted: event.event_type === "message_deleted",
-          text: event.message.text ?? null,
+          textContent: event.message.text ?? null,
           rawEvent: event.raw_event ?? {},
           occurredAt,
         });
@@ -111,19 +121,48 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
           await tx.insert(mediaAssets).values({
             messageId: message.id,
             providerMediaId: media.provider_media_id,
-            kind: mediaKindFromMimeType(media.mime_type),
-            mimeType: media.mime_type ?? null,
+            mimeType: media.mime_type ?? "application/octet-stream",
             fileName: media.file_name ?? null,
             byteSize: media.byte_size ?? null,
             status: "pending",
-            metadata: {
+            metadataJson: {
+              kind: mediaKindFromMimeType(media.mime_type),
               download_url: media.download_url ?? null,
             },
           });
         }
+
+        await tx.insert(messageDecisions).values({
+          messageId: message.id,
+          providerGroupId: event.provider_group_id,
+          decisionType: triggerDecision.triggerType ?? "ignore",
+          reason: triggerDecision.reason,
+          shouldExecute: triggerDecision.shouldExecute,
+          payload: {
+            trace_id: event.trace_id,
+            provider_message_id: event.provider_message_id,
+            event_type: event.event_type,
+          },
+        });
+
+        for (const url of extractUrls(event.message.text ?? null)) {
+          await tx.insert(messageLinks).values({
+            messageId: message.id,
+            providerGroupId: event.provider_group_id,
+            url,
+            normalizedUrl: normalizeUrl(url),
+            metadataJson: { trace_id: event.trace_id },
+          }).onConflictDoNothing();
+        }
       }
 
-      return { messageId: message.id, deduped };
+      const [activeBinding] = await tx
+        .select({ id: groupBindings.id })
+        .from(groupBindings)
+        .where(and(eq(groupBindings.providerGroupId, event.provider_group_id), eq(groupBindings.status, "active")))
+        .limit(1);
+
+      return { messageId: message.id, deduped, activeBinding: Boolean(activeBinding) };
     });
 
     if (!result.deduped) {
@@ -132,15 +171,22 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
         { message_id: result.messageId, trace_id: event.trace_id },
         `media:${result.messageId}`,
       );
-      await enqueueKuunaJob(
-        "inbound_execution",
-        {
-          message_id: result.messageId,
-          provider_group_id: event.provider_group_id,
-          trace_id: event.trace_id,
-        },
-        `inbound:${result.messageId}`,
-      );
+      await enqueueKuunaJob("retrieval_indexing", { source_type: "message", source_id: result.messageId, trace_id: event.trace_id }, `retrieval:message:${result.messageId}`);
+      if (event.event_type !== "message_deleted") {
+        await enqueueKuunaJob("passive_message_analysis", { message_id: result.messageId, provider_group_id: event.provider_group_id, trace_id: event.trace_id }, `passive:${result.messageId}`);
+      }
+      if (triggerDecision.shouldExecute && event.event_type !== "message_deleted" && result.activeBinding) {
+        await enqueueKuunaJob(
+          "inbound_execution",
+          {
+            message_id: result.messageId,
+            provider_group_id: event.provider_group_id,
+            reason: triggerDecision.reason,
+            trace_id: event.trace_id,
+          },
+          `inbound:${result.messageId}`,
+        );
+      }
     }
 
     logger.info("gateway_inbound_accepted", {
@@ -149,12 +195,19 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
       provider_message_id: event.provider_message_id,
       event_type: event.event_type,
       deduped: result.deduped,
+      trigger_reason: triggerDecision.reason,
+      trigger_type: triggerDecision.triggerType,
     });
 
     return reply.code(202).send({
       accepted: true,
       trace_id: event.trace_id,
       deduped: result.deduped,
+      execution_enqueued:
+        !result.deduped &&
+        result.activeBinding &&
+        event.event_type !== "message_deleted" &&
+        triggerDecision.shouldExecute,
     });
   });
 
@@ -179,13 +232,37 @@ export function registerGatewayRoutes(app: FastifyInstance): void {
       .update(outboundIntents)
       .set({
         status: event.status === "retrying" ? "sending" : event.status,
-        providerMessageId: event.provider_message_id ?? null,
-        lastErrorCode: event.error_code ?? null,
-        lastErrorMessage: event.error_message ?? null,
+        payload: {
+          ...(intent.payload as Record<string, unknown>),
+          _dispatch: {
+            provider_message_id: event.provider_message_id ?? null,
+            last_error_code: event.error_code ?? null,
+            last_error_message: event.error_message ?? null,
+            last_status: event.status,
+            occurred_at: event.occurred_at,
+          },
+        },
         updatedAt: new Date(event.occurred_at),
       })
       .where(eq(outboundIntents.id, intent.id));
 
     return reply.code(202).send({ accepted: true, found: true });
   });
+}
+
+function extractUrls(text: string | null): string[] {
+  if (!text) return [];
+  const matches = text.match(/https?:\/\/[^\s<>()]+/gi) ?? [];
+  return Array.from(new Set(matches.map((url) => url.replace(/[.,;:!?)]}]+$/, ""))));
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url.trim());
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    return parsed.toString();
+  } catch {
+    return url.trim();
+  }
 }

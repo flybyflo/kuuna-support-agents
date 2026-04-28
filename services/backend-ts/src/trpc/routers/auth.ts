@@ -48,17 +48,17 @@ export const authRouter = createTRPCRouter({
     }
 
     if (!verifyPassword(input.password, user.passwordHash)) {
-      const failedLoginCount = user.failedLoginCount + 1;
+      const failedLoginAttempts = user.failedLoginAttempts + 1;
       const settings = getSettings();
       const lockedUntil =
-        failedLoginCount >= settings.AUTH_LOCKOUT_THRESHOLD
+        failedLoginAttempts >= settings.AUTH_LOCKOUT_THRESHOLD
           ? new Date(Date.now() + settings.AUTH_LOCKOUT_SECONDS * 1000)
           : null;
 
       await ctx.db
         .update(users)
         .set({
-          failedLoginCount: lockedUntil ? 0 : failedLoginCount,
+          failedLoginAttempts: lockedUntil ? 0 : failedLoginAttempts,
           lockedUntil,
           updatedAt: new Date(),
         })
@@ -81,7 +81,7 @@ export const authRouter = createTRPCRouter({
 
     await ctx.db
       .update(users)
-      .set({ failedLoginCount: 0, lockedUntil: null, updatedAt: new Date() })
+      .set({ failedLoginAttempts: 0, lockedUntil: null, updatedAt: new Date() })
       .where(eq(users.id, user.id));
 
     const scope = await resolveScopeForUser(ctx.db, user.id);

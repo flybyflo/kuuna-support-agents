@@ -103,6 +103,33 @@ services:
       redis:
         condition: service_healthy
 
+  worker-ts:
+    profiles: ["backend-ts-cutover"]
+    build:
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile.dev
+    working_dir: /workspace
+    command: >
+      sh -c '
+        npm install --include=optional &&
+        npm run dev:worker --workspace @kuuna/backend-ts
+      '
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   worker:
     build:
       context: ../../backend

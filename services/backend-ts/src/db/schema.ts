@@ -25,21 +25,28 @@ export const bindingStatus = pgEnum("binding_status", [
   "inactive",
   "failed",
 ]);
-export const runtimeMode = pgEnum("runtime_mode", ["on-demand", "hot"]);
+export const runtimeMode = pgEnum("runtime_mode", ["on_demand", "hot"]);
 export const runtimeStatus = pgEnum("runtime_status", [
-  "draft",
   "provisioning",
-  "active",
-  "inactive",
-  "failed",
+  "healthy",
+  "degraded",
+  "stopped",
 ]);
 export const messageEventType = pgEnum("message_event_type", [
   "message_created",
   "message_edited",
   "message_deleted",
 ]);
-export const mediaStatus = pgEnum("media_status", ["pending", "processing", "ready", "failed"]);
+export const mediaStatus = pgEnum("media_status", ["pending", "ready", "failed"]);
+export const transcriptStatus = pgEnum("transcript_status", ["pending", "ready", "failed"]);
 export const knowledgeScope = pgEnum("knowledge_scope", ["common", "group"]);
+export const knowledgeVersionStatus = pgEnum("knowledge_version_status", [
+  "draft",
+  "ready",
+  "published",
+  "archived",
+]);
+export const embeddingScope = pgEnum("embedding_scope", ["common", "group"]);
 export const outboundStatus = pgEnum("outbound_status", [
   "pending",
   "sending",
@@ -73,8 +80,9 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   mustChangePassword: boolean("must_change_password").default(true).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
-  failedLoginCount: integer("failed_login_count").default(0).notNull(),
+  failedLoginAttempts: integer("failed_login_attempts").default(0).notNull(),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
   createdAt,
   updatedAt,
 });
@@ -85,6 +93,7 @@ export const roles = pgTable("roles", {
 });
 
 export const userRoles = pgTable("user_roles", {
+  id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").notNull(),
   roleId: uuid("role_id").notNull(),
 });
@@ -93,7 +102,6 @@ export const groupAssignments = pgTable("group_assignments", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").notNull(),
   providerGroupId: text("provider_group_id").notNull(),
-  groupTitle: text("group_title").default("").notNull(),
   createdAt,
   updatedAt,
 });
@@ -102,7 +110,6 @@ export const groupTemplates = pgTable("group_templates", {
   id: uuid("id").defaultRandom().primaryKey(),
   key: text("key").notNull(),
   displayName: text("display_name").notNull(),
-  description: text("description").default("").notNull(),
   createdAt,
   updatedAt,
 });
@@ -116,8 +123,6 @@ export const templateVersions = pgTable("template_versions", {
   modelConfig: jsonb("model_config").default({}).notNull(),
   toolsConfig: jsonb("tools_config").default({}).notNull(),
   egressPolicy: jsonb("egress_policy").default({}).notNull(),
-  createdBy: uuid("created_by"),
-  updatedBy: uuid("updated_by"),
   createdAt,
   updatedAt,
 });
@@ -137,13 +142,8 @@ export const toolCatalogEntries = pgTable("tool_catalog_entries", {
 export const groupBindings = pgTable("group_bindings", {
   id: uuid("id").defaultRandom().primaryKey(),
   providerGroupId: text("provider_group_id").notNull(),
-  groupTitle: text("group_title").default("").notNull(),
   templateVersionId: uuid("template_version_id").notNull(),
   status: bindingStatus("status").notNull(),
-  runtimeMode: runtimeMode("runtime_mode").default("on-demand").notNull(),
-  runtimeContainerName: text("runtime_container_name"),
-  runtimeBaseUrl: text("runtime_base_url"),
-  secretsRef: text("secrets_ref"),
   createdAt,
   updatedAt,
 });
@@ -151,7 +151,7 @@ export const groupBindings = pgTable("group_bindings", {
 export const agentInstances = pgTable("agent_instances", {
   id: uuid("id").defaultRandom().primaryKey(),
   groupBindingId: uuid("group_binding_id").notNull(),
-  runtimeMode: runtimeMode("runtime_mode").default("on-demand").notNull(),
+  runtimeMode: runtimeMode("runtime_mode").default("on_demand").notNull(),
   status: runtimeStatus("status").notNull(),
   runtimeContainerName: text("runtime_container_name"),
   runtimeBaseUrl: text("runtime_base_url"),
@@ -167,8 +167,6 @@ export const messages = pgTable(
     providerGroupId: text("provider_group_id").notNull(),
     providerMessageId: text("provider_message_id").notNull(),
     senderProviderUserId: text("sender_provider_user_id"),
-    senderPhone: text("sender_phone"),
-    senderPushName: text("sender_push_name"),
     latestVersionNo: integer("latest_version_no").default(1).notNull(),
     createdAt,
     updatedAt,
@@ -191,7 +189,7 @@ export const messageVersions = pgTable("message_versions", {
   versionNo: integer("version_no").notNull(),
   eventType: messageEventType("event_type").notNull(),
   isDeleted: boolean("is_deleted").default(false).notNull(),
-  text: text("text"),
+  textContent: text("text_content"),
   rawEvent: jsonb("raw_event").default({}).notNull(),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   createdAt,
@@ -200,15 +198,13 @@ export const messageVersions = pgTable("message_versions", {
 export const mediaAssets = pgTable("media_assets", {
   id: uuid("id").defaultRandom().primaryKey(),
   messageId: uuid("message_id").notNull(),
-  providerMediaId: text("provider_media_id"),
-  kind: text("kind").default("file").notNull(),
-  mimeType: text("mime_type"),
+  providerMediaId: text("provider_media_id").notNull(),
+  mimeType: text("mime_type").notNull(),
   fileName: text("file_name"),
   byteSize: integer("byte_size"),
   s3Key: text("s3_key"),
-  previewS3Key: text("preview_s3_key"),
   status: mediaStatus("status").default("pending").notNull(),
-  metadata: jsonb("metadata").default({}).notNull(),
+  metadataJson: jsonb("metadata_json").default({}).notNull(),
   createdAt,
   updatedAt,
 });
@@ -216,9 +212,9 @@ export const mediaAssets = pgTable("media_assets", {
 export const transcripts = pgTable("transcripts", {
   id: uuid("id").defaultRandom().primaryKey(),
   mediaAssetId: uuid("media_asset_id").notNull(),
-  textContent: text("text_content").notNull(),
+  textContent: text("text_content"),
   language: text("language"),
-  status: mediaStatus("status").default("pending").notNull(),
+  status: transcriptStatus("status").default("pending").notNull(),
   createdAt,
   updatedAt,
 });
@@ -245,9 +241,21 @@ export const knowledgeVersions = pgTable("knowledge_versions", {
   scope: knowledgeScope("scope").notNull(),
   docRefId: uuid("doc_ref_id").notNull(),
   versionNo: integer("version_no").notNull(),
-  status: templateVersionStatus("status").notNull(),
+  status: knowledgeVersionStatus("status").notNull(),
   contentMarkdown: text("content_markdown").notNull(),
-  updatedBy: uuid("updated_by"),
+  createdAt,
+  updatedAt,
+});
+
+export const embeddings = pgTable("embeddings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  scope: embeddingScope("scope").notNull(),
+  sourceVersionId: uuid("source_version_id").notNull(),
+  chunkNo: integer("chunk_no").notNull(),
+  content: text("content").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  // pgvector is queried with raw SQL in TS until a typed vector helper is introduced.
+  embedding: text("embedding").notNull(),
   createdAt,
   updatedAt,
 });
@@ -259,9 +267,6 @@ export const outboundIntents = pgTable("outbound_intents", {
   status: outboundStatus("status").default("pending").notNull(),
   attemptCount: integer("attempt_count").default(0).notNull(),
   payload: jsonb("payload").default({}).notNull(),
-  providerMessageId: text("provider_message_id"),
-  lastErrorCode: text("last_error_code"),
-  lastErrorMessage: text("last_error_message"),
   createdAt,
   updatedAt,
 });
@@ -367,4 +372,31 @@ export const toolInvocations = pgTable("tool_invocations", {
   durationMs: integer("duration_ms").default(0).notNull(),
   details: jsonb("details").default({}).notNull(),
   createdAt,
+});
+
+export const retrievalChunks = pgTable("retrieval_chunks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  scope: text("scope").notNull(),
+  providerGroupId: text("provider_group_id"),
+  sourceType: text("source_type").notNull(),
+  sourceId: uuid("source_id").notNull(),
+  chunkNo: integer("chunk_no").notNull(),
+  content: text("content").notNull(),
+  tokenCount: integer("token_count").default(0).notNull(),
+  embedding: text("embedding"),
+  metadataJson: jsonb("metadata_json").default({}).notNull(),
+  createdAt,
+  updatedAt,
+});
+
+export const messageLinks = pgTable("message_links", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  messageId: uuid("message_id").notNull(),
+  providerGroupId: text("provider_group_id").notNull(),
+  url: text("url").notNull(),
+  normalizedUrl: text("normalized_url").notNull(),
+  title: text("title"),
+  metadataJson: jsonb("metadata_json").default({}).notNull(),
+  createdAt,
+  updatedAt,
 });

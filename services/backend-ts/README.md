@@ -22,3 +22,11 @@ npm run dev --workspace @kuuna/backend-ts
 npm run typecheck --workspace @kuuna/backend-ts
 npm run test --workspace @kuuna/backend-ts
 ```
+
+The TypeScript worker is intentionally not part of the default Compose profile yet, because the
+Python RQ worker remains the behavioral owner during parity work. To start the TS worker during
+cutover experiments:
+
+```bash
+docker compose -f infra/compose/docker-compose.dev.yml --profile backend-ts-cutover up worker-ts
+```
