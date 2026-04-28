@@ -2,10 +2,20 @@ import { desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { mediaAssets, messageVersions, messages, transcripts } from "../../db/schema.js";
+import { createPresignedGetUrl } from "../../integrations/s3.js";
 import { createTRPCRouter, protectedProcedure } from "../init.js";
 
 type MessageRow = typeof messages.$inferSelect;
 type MessageVersionRow = typeof messageVersions.$inferSelect;
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
 
 function mapMessageListRow(
   message: MessageRow,
@@ -121,20 +131,32 @@ export const messagesRouter = createTRPCRouter({
               .where(inArray(transcripts.mediaAssetId, rows.map((row) => row.id)))
           : [];
       const transcriptByMediaId = new Map(transcriptRows.map((row) => [row.mediaAssetId, row]));
-      return rows.map((asset) => {
+      return Promise.all(rows.map(async (asset) => {
         const transcript = transcriptByMediaId.get(asset.id);
+        const metadata = objectRecord(asset.metadataJson);
+        const objectUrl = stringField(metadata, "object_url");
+        const downloadUrl =
+          objectUrl && asset.s3Key
+            ? (await createPresignedGetUrl({ objectKey: asset.s3Key })) ?? objectUrl
+            : objectUrl;
+        const previewUrl =
+          stringField(metadata, "preview_url") ??
+          (asset.mimeType.startsWith("image/") ? downloadUrl : null);
         return {
           id: asset.id,
           message_id: asset.messageId,
           provider_media_id: asset.providerMediaId,
           mime_type: asset.mimeType,
           file_name: asset.fileName,
+          byte_size: asset.byteSize,
           status: asset.status,
           s3_key: asset.s3Key,
+          preview_url: previewUrl,
+          download_url: downloadUrl,
           transcript: transcript?.textContent ?? null,
           created_at: asset.createdAt.toISOString(),
           updated_at: asset.updatedAt.toISOString(),
         };
-      });
+      }));
     }),
 });

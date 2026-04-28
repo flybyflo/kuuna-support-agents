@@ -184,9 +184,12 @@ export type MediaAsset = {
   messageId: string;
   kind: "image" | "audio" | "video" | "file";
   filename: string;
+  mimeType?: string;
+  byteSize?: number;
   status: WorkflowStatus;
   transcript?: string;
   previewUrl?: string;
+  downloadUrl?: string;
 };
 
 export type AuditEvent = {

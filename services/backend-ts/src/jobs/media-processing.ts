@@ -1,8 +1,11 @@
+import { createDecipheriv, hkdfSync } from "node:crypto";
+
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import { getSettings } from "../config.js";
 import type { Database, DbLike } from "../db/client.js";
 import { mediaAssets, messages, messageVersions, transcripts } from "../db/schema.js";
+import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 
@@ -213,6 +216,14 @@ async function processPendingAsset(
   if (!bytes) {
     throw new Error("media bytes unavailable after download stage");
   }
+  if (!usedInlineData) {
+    const decryptedBytes = decryptWhatsAppMediaIfNeeded({ bytes, kind, mediaPayload, downloadUrl });
+    if (decryptedBytes !== bytes) {
+      metadata.media_decrypted = true;
+      metadata.encrypted_byte_size_downloaded = bytes.byteLength;
+      bytes = decryptedBytes;
+    }
+  }
 
   const objectKey = buildObjectKey({ providerGroupId, messageId: asset.messageId, mediaId: asset.id, mimeType });
   const objectUrl = await uploadObject(objectKey, bytes, mimeType, options.uploadBytes);
@@ -359,6 +370,44 @@ function successTranscript(input: {
   return { text: `Transcript pending for ${input.mimeType || "file"} media.`, status: "ready" };
 }
 
+function decryptWhatsAppMediaIfNeeded(input: {
+  bytes: Uint8Array;
+  kind: string;
+  mediaPayload: Record<string, unknown>;
+  downloadUrl: string | null;
+}): Uint8Array {
+  if (!input.downloadUrl?.includes(".enc")) {
+    return input.bytes;
+  }
+
+  const mediaKey = lookupString(input.mediaPayload, ["mediaKey", "MediaKey"]);
+  if (!mediaKey) {
+    throw new Error("media_decrypt_media_key_missing");
+  }
+
+  if (input.bytes.byteLength <= 10) {
+    throw new Error("media_decrypt_payload_too_short");
+  }
+
+  const info = mediaKeyInfo(input.kind);
+  const keyMaterial = Buffer.from(
+    hkdfSync("sha256", Buffer.from(mediaKey, "base64"), Buffer.alloc(32), info, 112),
+  );
+  const iv = keyMaterial.subarray(0, 16);
+  const cipherKey = keyMaterial.subarray(16, 48);
+  const encryptedContent = Buffer.from(input.bytes).subarray(0, input.bytes.byteLength - 10);
+  const decipher = createDecipheriv("aes-256-cbc", cipherKey, iv);
+  return new Uint8Array(Buffer.concat([decipher.update(encryptedContent), decipher.final()]));
+}
+
+function mediaKeyInfo(kind: string): string {
+  if (kind === "image") return "WhatsApp Image Keys";
+  if (kind === "video") return "WhatsApp Video Keys";
+  if (kind === "audio") return "WhatsApp Audio Keys";
+  if (kind === "sticker") return "WhatsApp Image Keys";
+  return "WhatsApp Document Keys";
+}
+
 async function uploadObject(
   objectKey: string,
   bytes: Uint8Array,
@@ -372,10 +421,15 @@ async function uploadObject(
   if (uploadedUrl) {
     return uploadedUrl;
   }
-  if (settings.S3_PUBLIC_BASE_URL) {
-    return `${settings.S3_PUBLIC_BASE_URL.replace(/\/$/, "")}/${settings.S3_BUCKET}/${objectKey}`;
+  if (!uploadBytes) {
+    await uploadS3Bytes({
+      bucketName: settings.S3_BUCKET,
+      objectKey,
+      data: bytes,
+      contentType,
+    });
   }
-  return null;
+  return publicUrlFromKey(objectKey, settings.S3_BUCKET) ?? createPresignedGetUrl({ bucketName: settings.S3_BUCKET, objectKey });
 }
 
 async function mediaSnapshot(database: DbLike, providerGroupId: string | null) {

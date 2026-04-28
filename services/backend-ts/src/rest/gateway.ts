@@ -38,6 +38,7 @@ const inboundEventSchema = z.object({
           file_name: z.string().nullable().optional(),
           byte_size: z.number().int().nonnegative().nullable().optional(),
           download_url: z.string().nullable().optional(),
+          inline_data_base64: z.string().nullable().optional(),
         }),
       )
       .default([]),
@@ -188,6 +189,7 @@ export function registerGatewayRoutes(
             metadataJson: {
               kind: mediaKindFromMimeType(media.mime_type),
               download_url: media.download_url ?? null,
+              inline_data_base64: media.inline_data_base64 ?? null,
             },
           }).returning({ id: mediaAssets.id });
           if (asset) {

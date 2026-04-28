@@ -247,6 +247,33 @@ function mediaKind(mimeType: string): MediaAsset["kind"] {
   return "file";
 }
 
+function fileExtensionFromMimeType(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  if (mimeType === "application/pdf") return "pdf";
+  if (mimeType === "text/plain") return "txt";
+  if (mimeType === "audio/mpeg") return "mp3";
+  if (mimeType === "audio/ogg") return "ogg";
+  if (mimeType === "audio/mp4") return "m4a";
+  if (mimeType === "video/mp4") return "mp4";
+  return "bin";
+}
+
+function mediaFilename(row: { id: string; file_name?: string | null; mime_type: string }): string {
+  const fileName = row.file_name?.trim();
+  if (fileName) {
+    return fileName;
+  }
+  return `media-${row.id}.${fileExtensionFromMimeType(row.mime_type)}`;
+}
+
+function mediaProxyUrl(row: { id: string; message_id: string; updated_at?: string }): string {
+  const version = row.updated_at ? `?v=${encodeURIComponent(row.updated_at)}` : "";
+  return `/api/media/${encodeURIComponent(row.message_id)}/${encodeURIComponent(row.id)}/download${version}`;
+}
+
 function mapRuntimeRun(row: {
   id: string;
   provider_group_id: string;
@@ -667,15 +694,23 @@ export async function listMediaAssets(messageId: string): Promise<MediaAsset[]> 
     "listMediaAssets",
     async () => {
       const client = await createSessionBackendTrpcClient();
-      return (await client.messages.media.query({ messageId })).map((row) => ({
-        id: row.id,
-        messageId: row.message_id,
-        kind: mediaKind(row.mime_type),
-        filename: row.file_name ?? row.provider_media_id,
-        status: workflowStatus(row.status),
-        transcript: row.transcript ?? undefined,
-        previewUrl: row.s3_key ?? undefined,
-      }));
+      return (await client.messages.media.query({ messageId })).map((row) => {
+        const kind = mediaKind(row.mime_type);
+        const hasDownloadableMedia = Boolean(row.download_url || (kind === "image" && row.preview_url));
+        const proxiedUrl = hasDownloadableMedia ? mediaProxyUrl(row) : undefined;
+        return {
+          id: row.id,
+          messageId: row.message_id,
+          kind,
+          filename: mediaFilename(row),
+          mimeType: row.mime_type,
+          byteSize: row.byte_size ?? undefined,
+          status: workflowStatus(row.status),
+          transcript: row.transcript ?? undefined,
+          previewUrl: kind === "image" ? proxiedUrl : undefined,
+          downloadUrl: proxiedUrl,
+        };
+      });
     },
     () => mockMediaAssets.filter((item) => item.messageId === messageId),
   );
