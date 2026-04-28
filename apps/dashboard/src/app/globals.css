@@ -98,7 +98,7 @@
   --chat-bubble-text: var(--neutral-900);
   --chat-time: var(--neutral-500);
 
-  /* Per-sender bubble accent palette (used by GroupChatThread) */
+  /* Per-sender bubble accent palette (used by ChatTimeline) */
   --chat-accent-0-bg: var(--neutral-0);
   --chat-accent-0-border: var(--neutral-200);
   --chat-accent-0-text: var(--neutral-900);

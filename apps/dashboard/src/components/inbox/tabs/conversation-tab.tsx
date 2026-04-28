@@ -1,26 +1,20 @@
-import { GroupChatThread } from "@/components/messages/group-chat-thread";
+import {
+  ChatTimeline,
+  type InboundEntry,
+} from "@/components/inbox/chat-timeline";
 import { Notice } from "@/components/ui/notice";
 import {
   listMediaAssets,
   listMessages,
   listMessageVersions,
+  listOutboundIntents,
 } from "@/lib/api-client";
 
-type ConversationEntry = {
-  message: Awaited<ReturnType<typeof listMessages>>[number];
-  versions: Awaited<ReturnType<typeof listMessageVersions>>;
-  media: Awaited<ReturnType<typeof listMediaAssets>>;
-};
-
-function hasVisibleChatContent(entry: ConversationEntry): boolean {
-  if (entry.media.length > 0) {
-    return true;
-  }
-
+function inboundHasContent(entry: InboundEntry): boolean {
+  if (entry.media.length > 0) return true;
   if (entry.versions.some((version) => version.text.trim().length > 0)) {
     return true;
   }
-
   const preview = entry.message.preview.trim();
   return preview.length > 0 && preview !== "(no text)";
 }
@@ -30,9 +24,12 @@ export async function ConversationTab({
 }: {
   providerGroupId: string;
 }) {
-  const scopedMessages = await listMessages(providerGroupId);
+  const [scopedMessages, outbound] = await Promise.all([
+    listMessages(providerGroupId),
+    listOutboundIntents(providerGroupId),
+  ]);
 
-  const messagesWithDetails = await Promise.all(
+  const inbound: InboundEntry[] = await Promise.all(
     scopedMessages.map(async (message) => {
       const [versions, media] = await Promise.all([
         listMessageVersions(message.id),
@@ -42,15 +39,12 @@ export async function ConversationTab({
     }),
   );
 
-  const orderedConversation = messagesWithDetails
-    .filter(hasVisibleChatContent)
-    .sort(
-      (left, right) =>
-        new Date(left.message.createdAt).getTime() -
-        new Date(right.message.createdAt).getTime(),
-    );
+  const visibleInbound = inbound.filter(inboundHasContent);
+  const visibleOutbound = outbound.filter(
+    (intent) => intent.text.trim().length > 0 || Boolean(intent.lastError),
+  );
 
-  if (orderedConversation.length === 0) {
+  if (visibleInbound.length === 0 && visibleOutbound.length === 0) {
     return (
       <div className="p-4">
         <Notice title="No conversation yet" tone="info">
@@ -61,5 +55,5 @@ export async function ConversationTab({
     );
   }
 
-  return <GroupChatThread items={orderedConversation} />;
+  return <ChatTimeline inbound={visibleInbound} outbound={visibleOutbound} />;
 }

@@ -9,6 +9,7 @@ import {
   agentRuns,
   mediaAssets,
   messageDecisions,
+  outboundIntents,
   todos,
   toolInvocations,
   transcripts,
@@ -272,6 +273,50 @@ export const agentStateRouter = createTRPCRouter({
       payload: decision.payload,
       created_at: decision.createdAt.toISOString(),
     }));
+  }),
+
+  outboundIntents: protectedProcedure.input(providerGroupInput).query(async ({ ctx, input }) => {
+    if (!ctx.auth) return [];
+    const rows = input.providerGroupId
+      ? await ctx.db
+          .select()
+          .from(outboundIntents)
+          .where(eq(outboundIntents.providerGroupId, input.providerGroupId))
+          .orderBy(desc(outboundIntents.createdAt))
+          .limit(input.limit)
+      : canReadAll(ctx.auth.role)
+        ? await ctx.db
+            .select()
+            .from(outboundIntents)
+            .orderBy(desc(outboundIntents.createdAt))
+            .limit(input.limit)
+        : ctx.auth.groupScope.length > 0
+          ? await ctx.db
+              .select()
+              .from(outboundIntents)
+              .where(inArray(outboundIntents.providerGroupId, ctx.auth.groupScope))
+              .orderBy(desc(outboundIntents.createdAt))
+              .limit(input.limit)
+          : [];
+    return rows.map((intent) => {
+      const payload = objectRecord(intent.payload);
+      const metadata = objectRecord(payload.metadata);
+      const dispatch = objectRecord(payload._dispatch);
+      return {
+        id: intent.id,
+        outbound_intent_id: intent.outboundIntentId,
+        provider_group_id: intent.providerGroupId,
+        status: intent.status,
+        attempt_count: intent.attemptCount,
+        text: stringField(payload, "text") ?? "",
+        reply_to_provider_message_id: stringField(payload, "reply_to_provider_message_id"),
+        agent_run_id: stringField(metadata, "agent_run_id"),
+        agent_instance_id: stringField(metadata, "agent_instance_id"),
+        last_error: stringField(dispatch, "last_error"),
+        created_at: intent.createdAt.toISOString(),
+        updated_at: intent.updatedAt.toISOString(),
+      };
+    });
   }),
 
   toolInvocations: protectedProcedure.input(providerGroupInput).query(async ({ ctx, input }) => {
