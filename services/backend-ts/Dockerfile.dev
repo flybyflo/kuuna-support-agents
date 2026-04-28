@@ -1,0 +1,5 @@
+FROM node:22-bookworm
+
+WORKDIR /workspace
+
+CMD ["npm", "run", "dev", "--workspace", "@kuuna/backend-ts"]

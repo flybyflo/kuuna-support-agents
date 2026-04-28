@@ -3,17 +3,7 @@
 import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { requireAuthorized } from "@/lib/auth/guards";
-
-const BACKEND_URL_CANDIDATES = [
-  process.env.BACKEND_BASE_URL,
-  process.env.NEXT_PUBLIC_API_BASE_URL,
-  "http://backend:8000",
-  "http://localhost:8000",
-  "http://127.0.0.1:8000",
-  "http://host.docker.internal:8000",
-]
-  .filter((value): value is string => Boolean(value))
-  .filter((value, index, self) => self.indexOf(value) === index);
+import { createSessionBackendTrpcClient } from "@/lib/backend/client";
 
 function clean(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -71,46 +61,6 @@ function rethrowRedirectError(error: unknown): void {
   }
 }
 
-async function callBackend<T>(
-  path: string,
-  init: RequestInit,
-): Promise<T> {
-  const networkErrors: string[] = [];
-
-  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
-    const normalizedBaseUrl = backendBaseUrl.replace(/\/$/, "");
-
-    try {
-      const response = await fetch(`${normalizedBaseUrl}${path}`, {
-        ...init,
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        throw new Error(`${normalizedBaseUrl} -> ${response.status}: ${body}`);
-      }
-
-      return (await response.json()) as T;
-    } catch (error) {
-      rethrowRedirectError(error);
-      const reason = error instanceof Error ? error.message : String(error);
-
-      if (reason.includes("-> ") && reason.includes(": ")) {
-        throw error;
-      }
-
-      networkErrors.push(`${normalizedBaseUrl} -> ${reason}`);
-    }
-  }
-
-  throw new Error(
-    networkErrors.length
-      ? `network: ${networkErrors.join(" | ")}`
-      : "no-backend-url",
-  );
-}
-
 export async function createTemplateAction(formData: FormData): Promise<void> {
   await requireAuthorized("templates", "write");
 
@@ -127,15 +77,10 @@ export async function createTemplateAction(formData: FormData): Promise<void> {
   }
 
   try {
-    const payload = await callBackend<{ id?: string }>("/templates", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        key,
-        display_name: displayName,
-      }),
+    const client = await createSessionBackendTrpcClient();
+    const payload = await client.templates.create.mutate({
+      key,
+      displayName,
     });
 
     if (payload.id) {
@@ -174,29 +119,25 @@ export async function createTemplateDraftVersionAction(formData: FormData): Prom
   const allowedTools = splitCsvLike(allowedToolsInput).map((tool) => tool.toLowerCase());
 
   try {
-    const payload = await callBackend<{ id?: string }>(`/templates/${templateId}/versions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
+    const client = await createSessionBackendTrpcClient();
+    const payload = await client.templates.createVersion.mutate({
+      templateId,
+      systemPrompt,
+      modelConfig: {
+        failover_chain: modelChain.length ? modelChain : ["gpt-5.5"],
+        reasoning_effort: "medium",
       },
-      body: JSON.stringify({
-        system_prompt: systemPrompt,
-        model_settings: {
-          failover_chain: modelChain.length ? modelChain : ["gpt-5.5"],
-          reasoning_effort: "medium",
+      toolsConfig: {
+        allowed_tools: allowedTools,
+        knowledge: {
+          common_doc_keys: commonKnowledgeDocKeys,
+          group_doc_keys: groupKnowledgeDocKeys,
+          include_group_knowledge: includeGroupKnowledge,
         },
-        tools_config: {
-          allowed_tools: allowedTools,
-          knowledge: {
-            common_doc_keys: commonKnowledgeDocKeys,
-            group_doc_keys: groupKnowledgeDocKeys,
-            include_group_knowledge: includeGroupKnowledge,
-          },
-        },
-        egress_policy: {
-          mode: egressMode,
-        },
-      }),
+      },
+      egressPolicy: {
+        mode: egressMode,
+      },
     });
 
     const params = new URLSearchParams({ draft: "1" });
@@ -224,11 +165,10 @@ export async function publishTemplateVersionAction(formData: FormData): Promise<
   }
 
   try {
-    await callBackend(`/templates/${templateId}/versions/${versionId}/publish`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
+    const client = await createSessionBackendTrpcClient();
+    await client.templates.publishVersion.mutate({
+      templateId,
+      versionId,
     });
 
     const params = new URLSearchParams({ published: "1", versionId });

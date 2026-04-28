@@ -13,6 +13,8 @@ export type WorkflowStatus =
   | "succeeded"
   | "cancelled";
 
+export { createKuunaTrpcClient, type KuunaTrpcClient, type KuunaTrpcClientOptions } from "./trpc.js";
+
 export type TemplateBuildStatus =
   | "queued"
   | "running"

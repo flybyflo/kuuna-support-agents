@@ -4,7 +4,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
-import { logoutAction } from "@/lib/auth/actions";
 import type { StaffSession } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
 
@@ -114,7 +113,7 @@ export function AppShell({
                 {session.email}
               </span>
             </div>
-            <form action={logoutAction}>
+            <form action="/logout" method="post">
               <Button
                 type="submit"
                 variant="outline"

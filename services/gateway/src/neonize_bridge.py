@@ -132,9 +132,52 @@ class NeonizeEventBridge:
         except Exception:
             logger.exception("gateway_inline_image_download_failed")
 
+    def _is_sender_key_distribution_only(self, payload: dict[str, Any]) -> bool:
+        message_payload = payload.get("message")
+        if not isinstance(message_payload, dict):
+            return False
+
+        text = message_payload.get("text")
+        media = message_payload.get("media")
+        if isinstance(text, str) and text.strip():
+            return False
+        if isinstance(media, list) and media:
+            return False
+
+        raw_event = payload.get("raw_event")
+        if not isinstance(raw_event, dict):
+            return False
+        raw_message = raw_event.get("Message")
+        if not isinstance(raw_message, dict):
+            return False
+
+        content_keys = {
+            "conversation",
+            "extendedTextMessage",
+            "imageMessage",
+            "videoMessage",
+            "audioMessage",
+            "documentMessage",
+            "stickerMessage",
+            "protocolMessage",
+        }
+        has_sender_key = "senderKeyDistributionMessage" in raw_message
+        has_content_key = any(key in raw_message for key in content_keys)
+        return has_sender_key and not has_content_key
+
     def on_message(self, *, client: Any, neonize_event: Any) -> None:
         try:
             payload = self.backend_client.build_inbound_payload(neonize_event)
+            if self._is_sender_key_distribution_only(payload):
+                logger.info(
+                    "gateway_inbound_skipped_sender_key_distribution",
+                    extra={
+                        "trace_id": payload.get("trace_id"),
+                        "provider_group_id": payload.get("provider_group_id"),
+                        "provider_message_id": payload.get("provider_message_id"),
+                    },
+                )
+                return
             self._attach_inline_image_payload(client=client, neonize_event=neonize_event, payload=payload)
             response = self.backend_client.send_inbound_payload(payload)
         except Exception:

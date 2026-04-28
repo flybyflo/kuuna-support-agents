@@ -11,7 +11,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@trpc/client": "^11.7.2"
+  },
   "devDependencies": {
+    "@kuuna/backend-ts": "file:../../services/backend-ts",
     "typescript": "^5.8.0"
   }
 }

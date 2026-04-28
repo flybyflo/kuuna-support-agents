@@ -20,6 +20,7 @@ from kuuna_backend.db.models import (
 )
 from kuuna_backend.domain.auth.service import hash_password
 from kuuna_backend.jobs import ingest as ingest_jobs
+from kuuna_backend.jobs.ingest import RuntimeAgentRunResult
 import kuuna_backend.domain.messages.ingest as ingest_domain
 
 
@@ -59,13 +60,11 @@ def test_e2e_smoke_login_bind_ingest_route_reply_trace(
     monkeypatch.setattr(
         ingest_jobs,
         "_run_via_runtime_agent",
-        lambda **kwargs: {
-            "success": True,
-            "response_text": "E2E smoke compiled reply",
-            "model_path": ["gpt-4.1-mini"],
-            "execution": {"image_ref": str(kwargs.get("image_ref") or ""), "duration_ms": 1},
-            "audit_payload": {"success": True},
-        },
+        lambda **kwargs: RuntimeAgentRunResult(
+            text="E2E smoke compiled reply",
+            model_path=["gpt-4.1-mini"],
+            agent_run_id=str(uuid4()),
+        ),
     )
 
     login_response = client.post(

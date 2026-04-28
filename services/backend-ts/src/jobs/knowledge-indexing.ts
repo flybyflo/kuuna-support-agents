@@ -1,0 +1,110 @@
+import { and, eq } from "drizzle-orm";
+
+import type { DbLike } from "../db/client.js";
+import {
+  embeddings,
+  knowledgeGroupDocs,
+  knowledgeVersions,
+  retrievalChunks,
+} from "../db/schema.js";
+import { logger } from "../logging.js";
+import { chunkMarkdown, createEmbeddings, tokenCount, vectorLiteral } from "./indexing-utils.js";
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export async function processKnowledgeIndexingJob(
+  database: DbLike,
+  input: { knowledgeVersionId: string; traceId?: string | null },
+): Promise<{ indexed: boolean; chunkCount: number }> {
+  if (!uuidPattern.test(input.knowledgeVersionId)) {
+    logger.error("knowledge_indexing_invalid_version_id", {
+      trace_id: input.traceId,
+      knowledge_version_id: input.knowledgeVersionId,
+    });
+    return { indexed: false, chunkCount: 0 };
+  }
+
+  const [version] = await database
+    .select()
+    .from(knowledgeVersions)
+    .where(eq(knowledgeVersions.id, input.knowledgeVersionId))
+    .limit(1);
+
+  if (!version) {
+    logger.warn("knowledge_version_not_found", {
+      trace_id: input.traceId,
+      knowledge_version_id: input.knowledgeVersionId,
+    });
+    return { indexed: false, chunkCount: 0 };
+  }
+
+  const chunks = chunkMarkdown(version.contentMarkdown);
+  const chunkEmbeddings = await createEmbeddings(chunks, {
+    fallbackLogMessage: "knowledge_indexing_openai_not_configured_using_pseudo_embeddings",
+  });
+
+  await database.delete(embeddings).where(eq(embeddings.sourceVersionId, version.id));
+  await database
+    .delete(retrievalChunks)
+    .where(and(eq(retrievalChunks.sourceType, "knowledge_version"), eq(retrievalChunks.sourceId, version.id)));
+
+  const providerGroupId = version.scope === "group" ? await providerGroupIdForVersion(database, version.docRefId) : null;
+  let chunkCount = 0;
+
+  for (const [index, chunkContent] of chunks.entries()) {
+    const embedding = chunkEmbeddings[index] ?? [];
+    await database.insert(embeddings).values({
+      scope: version.scope,
+      sourceVersionId: version.id,
+      chunkNo: index + 1,
+      content: chunkContent,
+      tokenCount: tokenCount(chunkContent),
+      embedding: vectorLiteral(embedding),
+    });
+
+    const normalizedChunk = chunkContent.trim();
+    if (!normalizedChunk) {
+      continue;
+    }
+
+    chunkCount += 1;
+    await database.insert(retrievalChunks).values({
+      scope: version.scope,
+      providerGroupId,
+      sourceType: "knowledge_version",
+      sourceId: version.id,
+      chunkNo: index + 1,
+      content: normalizedChunk,
+      tokenCount: tokenCount(normalizedChunk),
+      embedding: vectorLiteral(embedding),
+      metadataJson: {
+        knowledge_version_id: version.id,
+        knowledge_scope: version.scope,
+        doc_ref_id: version.docRefId,
+      },
+    });
+  }
+
+  await database
+    .update(knowledgeVersions)
+    .set({ status: "ready", updatedAt: new Date() })
+    .where(eq(knowledgeVersions.id, version.id));
+
+  logger.info("knowledge_version_indexed", {
+    trace_id: input.traceId,
+    knowledge_version_id: input.knowledgeVersionId,
+    chunk_count: chunks.length,
+    status: "ready",
+  });
+
+  return { indexed: chunkCount > 0, chunkCount };
+}
+
+async function providerGroupIdForVersion(database: DbLike, docRefId: string): Promise<string | null> {
+  const [doc] = await database
+    .select({ providerGroupId: knowledgeGroupDocs.providerGroupId })
+    .from(knowledgeGroupDocs)
+    .where(eq(knowledgeGroupDocs.id, docRefId))
+    .limit(1);
+  return doc?.providerGroupId ?? null;
+}

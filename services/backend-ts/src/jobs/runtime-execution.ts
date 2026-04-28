@@ -1,0 +1,778 @@
+import { randomUUID } from "node:crypto";
+
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+
+import { getSettings } from "../config.js";
+import type { DbLike } from "../db/client.js";
+import {
+  agentInstances,
+  agentRuns,
+  groupBindings,
+  mediaAssets,
+  messageDecisions,
+  messageLinks,
+  messages,
+  messageVersions,
+  outboundIntents,
+  retrievalChunks,
+  templateBuilds,
+  templateVersions,
+  todos,
+  toolInvocations,
+  transcripts,
+} from "../db/schema.js";
+import { logger } from "../logging.js";
+import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const inboundConfirmationText = "Danke, wir haben deine Nachricht erhalten.";
+const defaultSystemPrompt = "Du bist ein hilfreicher Support-Agent für eine WhatsApp-Gruppe. Antworte präzise, freundlich und mit klaren nächsten Schritten.";
+const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Decide whether the latest message, attached media transcripts, links, and recent context require staff follow-up. If staff action is needed, call todo_create with a concise title, useful description, and priority. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
+const defaultModel = "gpt-5.5";
+const defaultReasoningEffort = "medium";
+const passiveAnalysisTools = new Set(["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);
+
+type HttpClient = (url: string, init: RequestInit) => Promise<Response>;
+type MessageRow = typeof messages.$inferSelect;
+type MessageVersionRow = typeof messageVersions.$inferSelect;
+type TemplateVersionRow = typeof templateVersions.$inferSelect;
+type AgentInstanceRow = typeof agentInstances.$inferSelect;
+
+type RuntimeResult = {
+  text: string;
+  modelPath: string[];
+  agentRunId: string;
+};
+
+type RetrievalHit = {
+  source_type: string;
+  source_scope: string;
+  score: number;
+  content: string;
+  occurred_at: string;
+  provider_message_id?: string | null;
+  message_id?: string | null;
+  chunk_no?: number | null;
+};
+
+export async function processInboundExecutionJob(
+  database: DbLike,
+  input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
+  options: { httpClient?: HttpClient; enqueueJob?: EnqueueKuunaJob } = {},
+): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "enqueued" }> {
+  const resolved = await resolveMessageAndRuntime(database, input, "inbound_execution");
+  if (!resolved.ok) return resolved.result;
+
+  const latest = await latestMessageVersion(database, resolved.message);
+  const userText = extractUserText(latest);
+  const allowedTools = extractAllowedTools(resolved.templateVersion.toolsConfig);
+  const modelPath = extractModelCandidates(resolved.templateVersion.modelConfig);
+  const reasoningEffort = extractReasoningEffort(resolved.templateVersion.modelConfig);
+  const retrievalHits = userText ? await retrieveRuntimeContext(database, input.providerGroupId, userText, 8) : [];
+  const retrievalRefs = buildRetrievalRefs(retrievalHits);
+
+  let reply = inboundConfirmationText;
+  let replyModelPath = modelPath.slice(0, 1);
+  let agentRunId: string | null = null;
+
+  if (userText) {
+    const runtimeResult = await runViaRuntimeAgent(
+      database,
+      {
+        message: resolved.message,
+        providerGroupId: input.providerGroupId,
+        traceId: input.traceId ?? null,
+        systemPrompt: buildSystemPrompt(resolved.templateVersion.systemPrompt, allowedTools),
+        userPrompt: buildUserPrompt(userText, retrievalHits),
+        modelPath,
+        reasoningEffort,
+        allowedTools,
+        retrievalRefs,
+        retrievalHits,
+        runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+      },
+      options,
+    );
+    if (runtimeResult) {
+      reply = runtimeResult.text;
+      replyModelPath = runtimeResult.modelPath;
+      agentRunId = runtimeResult.agentRunId;
+    } else {
+      reply = buildFallbackReply(userText, retrievalHits);
+    }
+  }
+
+  const outboundIntentId = randomUUID();
+  await database.insert(outboundIntents).values({
+    outboundIntentId,
+    providerGroupId: input.providerGroupId,
+    status: "pending",
+    attemptCount: 0,
+    payload: {
+      trace_id: input.traceId ?? randomUUID(),
+      outbound_intent_id: outboundIntentId,
+      provider_group_id: input.providerGroupId,
+      reply_to_provider_message_id: resolved.message.providerMessageId,
+      text: reply,
+      metadata: {
+        agent_instance_id: resolved.agentInstance.id,
+        agent_run_id: agentRunId,
+        model_path: replyModelPath,
+        retrieval_refs: retrievalRefs,
+        allowed_tools: allowedTools,
+      },
+      _dispatch: {
+        created_at: new Date().toISOString(),
+        last_status: "pending",
+      },
+    },
+  });
+  await (options.enqueueJob ?? enqueueKuunaJob)(
+    "outbound_dispatch",
+    { outbound_intent_id: outboundIntentId },
+    `outbound_dispatch_${jobToken(outboundIntentId)}`,
+  );
+
+  logger.info("inbound_execution_outbound_intent_enqueued", {
+    trace_id: input.traceId,
+    message_id: input.messageId,
+    provider_group_id: input.providerGroupId,
+    outbound_intent_id: outboundIntentId,
+  });
+  return { processed: true, status: "enqueued" };
+}
+
+export async function processPassiveMessageAnalysisJob(
+  database: DbLike,
+  input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
+  options: { httpClient?: HttpClient } = {},
+): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "analyzed" | "failed" }> {
+  const resolved = await resolveMessageAndRuntime(database, input, "passive_analysis");
+  if (!resolved.ok) return resolved.result;
+
+  const latest = await latestMessageVersion(database, resolved.message);
+  if (!latest || latest.isDeleted) {
+    logger.info("passive_analysis_skipped_deleted_or_missing_version", {
+      trace_id: input.traceId,
+      message_id: input.messageId,
+      provider_group_id: input.providerGroupId,
+    });
+    return { processed: false, status: "skipped" };
+  }
+
+  const queryText = await buildPassiveAnalysisQueryText(database, resolved.message, latest);
+  const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
+  const retrievalRefs = buildRetrievalRefs(retrievalHits);
+  const allowedTools = extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
+  const result = await runViaRuntimeAgent(
+    database,
+    {
+      message: resolved.message,
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId ?? null,
+      systemPrompt: passiveAnalysisSystemPrompt,
+      userPrompt: await buildPassiveAnalysisUserPrompt(database, resolved.message, latest, input.reason ?? null),
+      modelPath: extractModelCandidates(resolved.templateVersion.modelConfig),
+      reasoningEffort: extractReasoningEffort(resolved.templateVersion.modelConfig),
+      allowedTools,
+      retrievalRefs,
+      retrievalHits,
+      runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+    },
+    options,
+  );
+
+  const payload: Record<string, unknown> = {
+    trace_id: input.traceId ?? null,
+    provider_message_id: resolved.message.providerMessageId,
+    reason: input.reason ?? null,
+    allowed_tools: allowedTools,
+    retrieval_refs: retrievalRefs,
+  };
+  let decisionType = "passive_analysis_failed";
+  let status: "analyzed" | "failed" = "failed";
+  if (result) {
+    payload.agent_run_id = result.agentRunId;
+    payload.model_path = result.modelPath;
+    payload.created_todo_count = await countTodosForAgentRun(database, result.agentRunId);
+    decisionType = "passive_analysis";
+    status = "analyzed";
+  }
+
+  await database.insert(messageDecisions).values({
+    messageId: resolved.message.id,
+    providerGroupId: input.providerGroupId,
+    decisionType,
+    reason: input.reason ?? "passive_analysis",
+    shouldExecute: false,
+    payload,
+  });
+  return { processed: true, status };
+}
+
+async function resolveMessageAndRuntime(
+  database: DbLike,
+  input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
+  logPrefix: string,
+): Promise<
+  | { ok: true; message: MessageRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
+  | { ok: false; result: { processed: false; status: "invalid" | "not_found" | "skipped" } }
+> {
+  if (!uuidPattern.test(input.messageId)) {
+    logger.error(`${logPrefix}_invalid_message_id`, {
+      trace_id: input.traceId,
+      message_id: input.messageId,
+      provider_group_id: input.providerGroupId,
+      reason: input.reason,
+    });
+    return { ok: false, result: { processed: false, status: "invalid" } };
+  }
+  const [message] = await database
+    .select()
+    .from(messages)
+    .where(and(eq(messages.id, input.messageId), eq(messages.providerGroupId, input.providerGroupId)))
+    .limit(1);
+  if (!message) {
+    logger.warn(`${logPrefix}_message_not_found`, {
+      trace_id: input.traceId,
+      message_id: input.messageId,
+      provider_group_id: input.providerGroupId,
+    });
+    return { ok: false, result: { processed: false, status: "not_found" } };
+  }
+
+  const rows = await database
+    .select({ binding: groupBindings, templateVersion: templateVersions, agentInstance: agentInstances })
+    .from(groupBindings)
+    .innerJoin(templateVersions, eq(templateVersions.id, groupBindings.templateVersionId))
+    .leftJoin(agentInstances, eq(agentInstances.groupBindingId, groupBindings.id))
+    .where(and(eq(groupBindings.providerGroupId, input.providerGroupId), eq(groupBindings.status, "active")))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    logger.info(`${logPrefix}_skipped_unbound_group`, {
+      trace_id: input.traceId,
+      message_id: input.messageId,
+      provider_group_id: input.providerGroupId,
+    });
+    return { ok: false, result: { processed: false, status: "skipped" } };
+  }
+  if (!row.agentInstance || row.agentInstance.status === "stopped") {
+    logger.info(`${logPrefix}_skipped_inactive_agent`, {
+      trace_id: input.traceId,
+      message_id: input.messageId,
+      provider_group_id: input.providerGroupId,
+    });
+    return { ok: false, result: { processed: false, status: "skipped" } };
+  }
+  return { ok: true, message, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
+}
+
+async function runViaRuntimeAgent(
+  database: DbLike,
+  input: {
+    message: MessageRow;
+    providerGroupId: string;
+    traceId: string | null;
+    systemPrompt: string;
+    userPrompt: string;
+    modelPath: string[];
+    reasoningEffort: string;
+    allowedTools: string[];
+    retrievalRefs: Array<Record<string, unknown>>;
+    retrievalHits: RetrievalHit[];
+    runtimeBaseUrl: string | null;
+  },
+  options: { httpClient?: HttpClient },
+): Promise<RuntimeResult | null> {
+  const [agentRun] = await database
+    .insert(agentRuns)
+    .values({
+      messageId: input.message.id,
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      status: "running",
+      modelPath: input.modelPath,
+      reasoningEffort: input.reasoningEffort,
+      allowedTools: input.allowedTools,
+      retrievalRefs: input.retrievalRefs,
+    })
+    .returning();
+  if (!agentRun) {
+    throw new Error("agent run creation failed");
+  }
+
+  const runtimeBaseUrl = (input.runtimeBaseUrl?.trim() || getSettings().RUNTIME_AGENT_BASE_URL).replace(/\/$/, "");
+  try {
+    const response = await (options.httpClient ?? fetch)(`${runtimeBaseUrl}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trace_id: input.traceId,
+        system_prompt: input.systemPrompt,
+        user_prompt: input.userPrompt,
+        context: {
+          provider_group_id: input.providerGroupId,
+          retrieval_refs: input.retrievalRefs,
+          retrieval_hits: input.retrievalHits,
+          recent_messages: await recentMessagesContext(database, input.providerGroupId, 15),
+          todos: await todosContext(database, input.providerGroupId, 20),
+        },
+        model_path: input.modelPath,
+        reasoning_effort: input.reasoningEffort,
+        allowed_tools: input.allowedTools,
+        tool_requests: [],
+      }),
+      signal: AbortSignal.timeout(getSettings().RUNTIME_AGENT_TIMEOUT_SECONDS * 1000),
+    });
+    if (!response.ok) {
+      throw new Error(`runtime_agent_http_${response.status}`);
+    }
+    const payload = await response.json() as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("runtime-agent returned non-object JSON payload");
+    }
+    const result = payload as Record<string, unknown>;
+    if (!result.success) {
+      throw new Error(String(result.error || "runtime-agent returned unsuccessful result"));
+    }
+    const responseText = typeof result.response_text === "string" ? result.response_text.trim() : "";
+    if (!responseText) {
+      throw new Error("runtime-agent returned empty response");
+    }
+    const attemptModels = extractAttemptModels(result);
+    const modelUsed = typeof result.model_used === "string" ? result.model_used : null;
+    await database
+      .update(agentRuns)
+      .set({
+        status: "succeeded",
+        modelUsed,
+        modelPath: attemptModels.length ? attemptModels : input.modelPath.slice(0, 1),
+        responseText,
+        completedAt: new Date(),
+      })
+      .where(eq(agentRuns.id, agentRun.id));
+    await persistRuntimeToolResults(database, {
+      agentRunId: agentRun.id,
+      messageId: input.message.id,
+      providerGroupId: input.providerGroupId,
+      toolResults: result.tool_results,
+    });
+    return {
+      text: responseText,
+      modelPath: attemptModels.length ? attemptModels : input.modelPath.slice(0, 1),
+      agentRunId: agentRun.id,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await database
+      .update(agentRuns)
+      .set({ status: "failed", error: message, completedAt: new Date() })
+      .where(eq(agentRuns.id, agentRun.id));
+    logger.warn("runtime_agent_request_failed", {
+      trace_id: input.traceId,
+      provider_group_id: input.providerGroupId,
+      error: message,
+    });
+    return null;
+  }
+}
+
+async function persistRuntimeToolResults(
+  database: DbLike,
+  input: { agentRunId: string; messageId: string; providerGroupId: string; toolResults: unknown },
+): Promise<void> {
+  if (!Array.isArray(input.toolResults)) return;
+  for (const raw of input.toolResults) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const result = raw as Record<string, unknown>;
+    const toolName = String(result.name || "").trim().toLowerCase();
+    if (!toolName) continue;
+    const details = extractToolDetails(result);
+    await database.insert(toolInvocations).values({
+      agentRunId: input.agentRunId,
+      messageId: input.messageId,
+      providerGroupId: input.providerGroupId,
+      toolName,
+      ok: Boolean(result.ok),
+      stdout: String(result.stdout || ""),
+      stderr: String(result.stderr || ""),
+      timedOut: Boolean(result.timed_out),
+      durationMs: coerceInt(result.duration_ms),
+      details,
+    });
+    if (result.ok) {
+      await applyTodoToolResult(database, {
+        toolName,
+        details,
+        messageId: input.messageId,
+        agentRunId: input.agentRunId,
+        providerGroupId: input.providerGroupId,
+      });
+    }
+  }
+}
+
+async function applyTodoToolResult(
+  database: DbLike,
+  input: {
+    toolName: string;
+    details: Record<string, unknown>;
+    messageId: string;
+    agentRunId: string;
+    providerGroupId: string;
+  },
+): Promise<void> {
+  if (input.toolName === "todo_create") {
+    const title = String(input.details.title || "").trim();
+    if (!title) return;
+    const [existing] = await database
+      .select({ id: todos.id })
+      .from(todos)
+      .where(and(eq(todos.providerGroupId, input.providerGroupId), eq(todos.messageId, input.messageId), eq(todos.title, title.slice(0, 255))))
+      .limit(1);
+    if (existing) return;
+    await database.insert(todos).values({
+      providerGroupId: input.providerGroupId,
+      messageId: input.messageId,
+      agentRunId: input.agentRunId,
+      title: title.slice(0, 255),
+      description: optionalString(input.details.description),
+      priority: coerceTodoPriority(input.details.priority),
+      dueAt: parseDate(input.details.due_at),
+    });
+    return;
+  }
+  if (input.toolName === "todo_update") {
+    const todoId = optionalString(input.details.todo_id) ?? optionalString(input.details.id);
+    if (!todoId || !uuidPattern.test(todoId)) return;
+    const patch: Partial<typeof todos.$inferInsert> = { updatedAt: new Date() };
+    const title = optionalString(input.details.title);
+    if (title) patch.title = title.slice(0, 255);
+    const description = optionalString(input.details.description);
+    if (description !== null) patch.description = description;
+    patch.priority = coerceTodoPriority(input.details.priority);
+    patch.status = coerceTodoStatus(input.details.status);
+    await database
+      .update(todos)
+      .set(patch)
+      .where(and(eq(todos.id, todoId), eq(todos.providerGroupId, input.providerGroupId)));
+  }
+}
+
+async function latestMessageVersion(database: DbLike, message: MessageRow): Promise<MessageVersionRow | null> {
+  const [version] = await database
+    .select()
+    .from(messageVersions)
+    .where(and(eq(messageVersions.messageId, message.id), eq(messageVersions.versionNo, message.latestVersionNo)))
+    .limit(1);
+  return version ?? null;
+}
+
+function extractUserText(latest: MessageVersionRow | null): string {
+  if (!latest || latest.isDeleted) return "";
+  return (latest.textContent || "").trim();
+}
+
+async function retrieveRuntimeContext(
+  database: DbLike,
+  providerGroupId: string,
+  query: string,
+  limit: number,
+): Promise<RetrievalHit[]> {
+  const terms = query.toLowerCase().split(/\s+/).filter((term) => term.length > 2).slice(0, 8);
+  const rows = await database
+    .select()
+    .from(retrievalChunks)
+    .where(sql`${retrievalChunks.scope} = 'common' or ${retrievalChunks.providerGroupId} = ${providerGroupId}`)
+    .orderBy(desc(retrievalChunks.updatedAt))
+    .limit(Math.max(limit * 3, limit));
+  return rows
+    .map((row) => {
+      const lowered = row.content.toLowerCase();
+      const score = terms.length ? terms.filter((term) => lowered.includes(term)).length / terms.length : 0.1;
+      return {
+        source_type: row.sourceType,
+        source_scope: row.scope,
+        score,
+        content: row.content,
+        occurred_at: row.updatedAt.toISOString(),
+        chunk_no: row.chunkNo,
+      };
+    })
+    .filter((hit) => hit.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+function buildRetrievalRefs(hits: RetrievalHit[]): Array<Record<string, unknown>> {
+  return hits.map((hit) => ({
+    source_type: hit.source_type,
+    source_scope: hit.source_scope,
+    score: Math.round(hit.score * 10000) / 10000,
+    chunk_no: hit.chunk_no ?? null,
+  }));
+}
+
+async function recentMessagesContext(database: DbLike, providerGroupId: string, limit: number) {
+  const rows = await database
+    .select({ message: messages, version: messageVersions })
+    .from(messages)
+    .innerJoin(messageVersions, and(eq(messageVersions.messageId, messages.id), eq(messageVersions.versionNo, messages.latestVersionNo)))
+    .where(and(eq(messages.providerGroupId, providerGroupId), eq(messageVersions.isDeleted, false)))
+    .orderBy(desc(messageVersions.occurredAt), desc(messages.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    message_id: row.message.id,
+    provider_message_id: row.message.providerMessageId,
+    sender_provider_user_id: row.message.senderProviderUserId,
+    text: row.version.textContent || "",
+    occurred_at: row.version.occurredAt.toISOString(),
+  }));
+}
+
+async function todosContext(database: DbLike, providerGroupId: string, limit: number) {
+  const rows = await database
+    .select()
+    .from(todos)
+    .where(and(eq(todos.providerGroupId, providerGroupId), inArray(todos.status, ["open", "in_progress"])))
+    .orderBy(desc(todos.updatedAt))
+    .limit(limit);
+  return rows.map((todo) => ({
+    id: todo.id,
+    title: todo.title,
+    description: todo.description || "",
+    status: todo.status,
+    priority: todo.priority,
+    due_at: todo.dueAt?.toISOString() ?? null,
+  }));
+}
+
+async function buildPassiveAnalysisQueryText(database: DbLike, message: MessageRow, latest: MessageVersionRow): Promise<string> {
+  const parts = [(latest.textContent || "").trim()];
+  parts.push(...await messageLinkTexts(database, message.id));
+  parts.push(...await mediaTranscriptTexts(database, message.id));
+  return parts.filter(Boolean).join("\n\n").trim();
+}
+
+async function buildPassiveAnalysisUserPrompt(
+  database: DbLike,
+  message: MessageRow,
+  latest: MessageVersionRow,
+  reason: string | null,
+): Promise<string> {
+  const lines = [
+    `provider_group_id: ${message.providerGroupId}`,
+    `provider_message_id: ${message.providerMessageId}`,
+    `sender_provider_user_id: ${message.senderProviderUserId || ""}`,
+    `occurred_at: ${latest.occurredAt.toISOString()}`,
+    `analysis_reason: ${reason || "message_received"}`,
+    "",
+    "latest_message_text:",
+    (latest.textContent || "").trim() || "(no text)",
+  ];
+  const links = await messageLinkTexts(database, message.id);
+  if (links.length) lines.push("", "links:", ...links.map((link) => `- ${link}`));
+  const transcriptTexts = await mediaTranscriptTexts(database, message.id);
+  if (transcriptTexts.length) lines.push("", "media_transcripts:", ...transcriptTexts.map((text) => `- ${text}`));
+  lines.push(
+    "",
+    "Decision policy:",
+    "- Create a todo for concrete staff work, deadlines, evidence review, missing documents, legal/accounting questions, or client follow-up.",
+    "- Do not create todos for greetings, acknowledgements, jokes, duplicates, or messages with no actionable content.",
+  );
+  return lines.join("\n");
+}
+
+async function messageLinkTexts(database: DbLike, messageId: string): Promise<string[]> {
+  const rows = await database.select().from(messageLinks).where(eq(messageLinks.messageId, messageId)).orderBy(asc(messageLinks.createdAt));
+  return rows.map((link) => `${link.title || ""} ${link.normalizedUrl || link.url}`.trim()).filter(Boolean);
+}
+
+async function mediaTranscriptTexts(database: DbLike, messageId: string): Promise<string[]> {
+  const rows = await database
+    .select({ asset: mediaAssets, transcript: transcripts })
+    .from(mediaAssets)
+    .leftJoin(transcripts, eq(transcripts.mediaAssetId, mediaAssets.id))
+    .where(eq(mediaAssets.messageId, messageId))
+    .orderBy(asc(mediaAssets.createdAt));
+  return rows
+    .map((row) => {
+      const text = row.transcript?.textContent?.trim() ?? "";
+      if (!text || text.startsWith("Transcript pending")) return "";
+      return `${row.asset.fileName || row.asset.mimeType}: ${text}`;
+    })
+    .filter(Boolean);
+}
+
+function extractAllowedTools(toolsConfig: unknown): string[] {
+  if (!toolsConfig || typeof toolsConfig !== "object" || Array.isArray(toolsConfig)) return [];
+  const config = toolsConfig as Record<string, unknown>;
+  const candidates: string[] = [];
+  for (const key of ["allowed_tools", "allowedTools"]) {
+    const value = config[key];
+    if (Array.isArray(value)) candidates.push(...value.filter((item): item is string => typeof item === "string"));
+  }
+  const tools = config.tools;
+  if (Array.isArray(tools)) {
+    for (const item of tools) {
+      if (typeof item === "string") candidates.push(item);
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const record = item as Record<string, unknown>;
+        if (typeof record.name === "string" && record.name && record.enabled !== false) candidates.push(record.name);
+      }
+    }
+  }
+  const normalized: string[] = [];
+  for (const candidate of candidates) {
+    const value = candidate.trim().toLowerCase();
+    if (value && !normalized.includes(value)) normalized.push(value);
+  }
+  return normalized;
+}
+
+function extractPassiveAnalysisTools(toolsConfig: unknown): string[] {
+  const configured = extractAllowedTools(toolsConfig);
+  const defaults = ["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"];
+  return configured.length ? configured.filter((tool) => passiveAnalysisTools.has(tool)) : defaults;
+}
+
+function extractModelCandidates(modelConfig: unknown): string[] {
+  if (!modelConfig || typeof modelConfig !== "object" || Array.isArray(modelConfig)) return [defaultModel];
+  const config = modelConfig as Record<string, unknown>;
+  const raw: string[] = [];
+  for (const key of ["failover_chain", "failoverChain", "model_chain", "modelChain", "models", "model_path"]) {
+    const value = config[key];
+    if (Array.isArray(value)) raw.push(...value.filter((item): item is string => typeof item === "string"));
+  }
+  for (const key of ["model", "model_name", "modelName", "model_id", "modelId"]) {
+    const value = config[key];
+    if (typeof value === "string") raw.push(value);
+  }
+  const nested = config.model;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const record = nested as Record<string, unknown>;
+    if (typeof record.provider === "string" && typeof record.model_name === "string") raw.push(`${record.provider}/${record.model_name}`);
+  }
+  const normalized = raw.map(normalizeModelCandidate).filter(Boolean);
+  return Array.from(new Set(normalized)).length ? Array.from(new Set(normalized)) : [defaultModel];
+}
+
+function extractReasoningEffort(modelConfig: unknown): string {
+  if (!modelConfig || typeof modelConfig !== "object" || Array.isArray(modelConfig)) return defaultReasoningEffort;
+  const config = modelConfig as Record<string, unknown>;
+  for (const key of ["reasoning_effort", "reasoningEffort", "thinking_level", "thinkingLevel"]) {
+    const value = config[key];
+    if (typeof value === "string" && ["none", "minimal", "low", "medium", "high", "xhigh"].includes(value.toLowerCase())) {
+      return value.toLowerCase();
+    }
+  }
+  return defaultReasoningEffort;
+}
+
+function normalizeModelCandidate(candidate: string): string {
+  const trimmed = candidate.trim();
+  if (!trimmed) return "";
+  const providerTokens = new Set(["openai", "anthropic", "google", "azure-openai"]);
+  if (providerTokens.has(trimmed.toLowerCase())) return "";
+  if (trimmed.includes("/")) {
+    const [provider, model] = trimmed.split("/", 2);
+    if (providerTokens.has(provider?.trim().toLowerCase() ?? "")) return model?.trim() ?? "";
+  }
+  return trimmed;
+}
+
+function buildSystemPrompt(templateSystemPrompt: string | null, allowedTools: string[]): string {
+  const base = (templateSystemPrompt || defaultSystemPrompt).trim();
+  return allowedTools.length ? `${base}\n\nAktivierte Tools für diese Gruppe: ${allowedTools.join(", ")}.` : base;
+}
+
+function buildUserPrompt(userText: string, retrievalHits: RetrievalHit[]): string {
+  if (!retrievalHits.length) return userText;
+  const lines = ["Kontext aus Chat/Knowledge:"];
+  for (const hit of retrievalHits.slice(0, 6)) {
+    const snippet = hit.content.trim().replace(/\s+/g, " ").slice(0, 220);
+    lines.push(`- [${hit.source_scope}] ${snippet}`);
+  }
+  return `Nutzeranfrage:\n${userText}\n\n${lines.join("\n")}`;
+}
+
+function buildFallbackReply(userText: string, _retrievalHits: RetrievalHit[]): string {
+  if (isSensitiveSupportRequest(userText)) {
+    return "Es tut mir leid, dass dir das passiert ist. Wenn du gerade in Gefahr bist, kontaktiere bitte sofort den Notruf oder eine vertraute Person vor Ort. Deine Nachricht wurde aufgenommen.";
+  }
+  return "Danke, ich habe deine Nachricht erhalten. Ich konnte gerade keine vollständige Agent-Antwort erstellen, aber die Nachricht ist im System erfasst.";
+}
+
+function isSensitiveSupportRequest(userText: string): boolean {
+  const normalized = userText.trim().toLowerCase();
+  if (!normalized) return false;
+  return [
+    "vergewalt",
+    "missbrauch",
+    "sexuell",
+    "sexual",
+    "gewalt",
+    "notfall",
+    "gefahr",
+  ].some((needle) => normalized.includes(needle));
+}
+
+function extractAttemptModels(payload: Record<string, unknown>): string[] {
+  const attempts = payload.attempts;
+  if (!Array.isArray(attempts)) {
+    return typeof payload.model_used === "string" && payload.model_used ? [payload.model_used] : [];
+  }
+  const models: string[] = [];
+  for (const attempt of attempts) {
+    if (attempt && typeof attempt === "object" && !Array.isArray(attempt)) {
+      const model = (attempt as Record<string, unknown>).model;
+      if (typeof model === "string" && model && !models.includes(model)) models.push(model);
+    }
+  }
+  return models;
+}
+
+function extractToolDetails(raw: Record<string, unknown>): Record<string, unknown> {
+  if (raw.details && typeof raw.details === "object" && !Array.isArray(raw.details)) return raw.details as Record<string, unknown>;
+  if (typeof raw.stdout === "string" && raw.stdout.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw.stdout) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+async function countTodosForAgentRun(database: DbLike, agentRunId: string): Promise<number> {
+  const [row] = await database.select({ value: sql<number>`count(*)` }).from(todos).where(eq(todos.agentRunId, agentRunId));
+  return Number(row?.value ?? 0);
+}
+
+function coerceInt(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function coerceTodoPriority(value: unknown): "low" | "normal" | "high" | "urgent" {
+  return value === "low" || value === "high" || value === "urgent" ? value : "normal";
+}
+
+function coerceTodoStatus(value: unknown): "open" | "in_progress" | "done" | "cancelled" {
+  return value === "in_progress" || value === "done" || value === "cancelled" ? value : "open";
+}
+
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function jobToken(value: string): string {
+  return value.replaceAll("-", "_").replaceAll(" ", "_");
+}

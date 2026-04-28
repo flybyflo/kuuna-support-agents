@@ -4,7 +4,6 @@ import { AuthShell } from "@/components/layout/auth-shell";
 import { Button } from "@/components/ui/button";
 import { FormActions, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { completePasswordChangeAction } from "@/lib/auth/actions";
 import { requireSession } from "@/lib/auth/session";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -15,6 +14,8 @@ function getMessage(error: string | undefined): string | null {
       return "Password must be at least 12 characters.";
     case "mismatch":
       return "Passwords do not match.";
+    case "current-password":
+      return "Current password is required.";
     case "db":
       return "Could not update password in database. Please retry.";
     default:
@@ -48,9 +49,21 @@ export default async function FirstPasswordChangePage({
       ) : null}
 
       <form
-        action={completePasswordChangeAction}
+        action="/first-password-change/action"
+        method="post"
         className="flex flex-col gap-4"
       >
+        <FormRow label="Current password" htmlFor="currentPassword">
+          <Input
+            id="currentPassword"
+            type="password"
+            name="currentPassword"
+            required
+            placeholder="Current password"
+            autoComplete="current-password"
+          />
+        </FormRow>
+
         <FormRow label="New password" htmlFor="password">
           <Input
             id="password"
