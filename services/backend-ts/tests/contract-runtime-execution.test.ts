@@ -40,12 +40,12 @@ test("contract: passive message analysis persists agent run, tool invocation, to
       traceId: "trace-passive",
     },
     {
-      httpClient: async () =>
-        new Response(JSON.stringify({
+      runtimeAgentCaller: async () => ({
           success: true,
           prompt: "prompt",
           system_prompt: "system",
           user_prompt: "user",
+          reasoning_effort: "medium",
           model_used: "gpt-5.5",
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "{\"decision\":\"todo\"}",
@@ -61,7 +61,7 @@ test("contract: passive message analysis persists agent run, tool invocation, to
             },
           ],
           error: null,
-        }), { status: 200, headers: { "content-type": "application/json" } }),
+        }),
     },
   );
 
@@ -105,18 +105,18 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
         harness.jobs.push({ name, data, jobId });
         return jobId ?? name;
       },
-      httpClient: async () =>
-        new Response(JSON.stringify({
+      runtimeAgentCaller: async () => ({
           success: true,
           prompt: "prompt",
           system_prompt: "system",
           user_prompt: "user",
+          reasoning_effort: "medium",
           model_used: "gpt-5.5",
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "Please upload the tax form and I will review it.",
           tool_results: [],
           error: null,
-        }), { status: 200, headers: { "content-type": "application/json" } }),
+        }),
     },
   );
 
@@ -191,23 +191,23 @@ test("contract: inbound execution provisions strict per-chat runtime", { skip: s
           dockerNetwork: "kuuna-dev_default",
         };
       },
-      httpClient: async (url, init) => {
-        assert.equal(url, "http://kuuna-runtime-chat:8100/run");
-        const body = JSON.parse(String(init.body)) as { context: Record<string, unknown> };
-        assert.equal(body.context.provider_group_id, seeded.providerGroupId);
-        assert.equal(body.context.binding_id, seeded.bindingId);
-        assert.equal(body.context.agent_instance_id, seeded.agentInstanceId);
-        return new Response(JSON.stringify({
+      runtimeAgentCaller: async (runtimeBaseUrl, request) => {
+        assert.equal(runtimeBaseUrl, "http://kuuna-runtime-chat:8100");
+        assert.equal(request.context.provider_group_id, seeded.providerGroupId);
+        assert.equal(request.context.binding_id, seeded.bindingId);
+        assert.equal(request.context.agent_instance_id, seeded.agentInstanceId);
+        return {
           success: true,
           prompt: "prompt",
           system_prompt: "system",
           user_prompt: "user",
+          reasoning_effort: "medium",
           model_used: "gpt-5.5",
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "I am isolated.",
           tool_results: [],
           error: null,
-        }), { status: 200, headers: { "content-type": "application/json" } });
+        };
       },
     },
   );
@@ -220,7 +220,7 @@ test("contract: provisioning failure fails run without fallback", { skip: skipRe
   const harness = await createContractHarness();
   t.after(() => harness.close());
   const seeded = await seedRuntimeScenario(harness, { messageText: "@agent do not use fallback" });
-  let httpCalled = false;
+  let runtimeCalled = false;
 
   const result = await processInboundExecutionJob(
     harness.db,
@@ -234,15 +234,15 @@ test("contract: provisioning failure fails run without fallback", { skip: skipRe
       runtimeProvisioner: async () => {
         throw new RuntimeProvisioningError("runtime_container_identity_mismatch", "wrong chat container");
       },
-      httpClient: async () => {
-        httpCalled = true;
-        return new Response("{}", { status: 500 });
+      runtimeAgentCaller: async () => {
+        runtimeCalled = true;
+        throw new Error("should not call runtime agent");
       },
     },
   );
 
   assert.deepEqual(result, { processed: false, status: "skipped" });
-  assert.equal(httpCalled, false);
+  assert.equal(runtimeCalled, false);
   const [run] = await harness.db.select().from(agentRuns).where(eq(agentRuns.traceId, "trace-provisioning-failed")).limit(1);
   assert.ok(run);
   assert.equal(run.status, "failed");

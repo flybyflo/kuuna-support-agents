@@ -6,6 +6,7 @@ import { getSettings } from "../config.js";
 import type { Database, DbLike } from "../db/client.js";
 import { auditEvents, groupTemplates, templateBuilds, templateVersions } from "../db/schema.js";
 import { logger } from "../logging.js";
+import { publishRuntimeEvent } from "../runtime/events.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -102,6 +103,16 @@ export async function queueTemplateBuild(
 
   const enqueueJob = options.enqueueJob ?? enqueueKuunaJob;
   await enqueueJob("template_build", { build_id: build.id }, `template_build_${jobToken(build.id)}`);
+  await publishRuntimeEvent({
+    type: "template_build.updated",
+    entityId: build.id,
+    entityType: "template_build",
+    payload: {
+      status: "queued",
+      template_id: build.templateId,
+      template_version_id: build.templateVersionId,
+    },
+  });
   return build;
 }
 
@@ -176,6 +187,16 @@ export async function processTemplateBuildJob(
     .update(templateBuilds)
     .set({ status: "running", updatedAt: new Date() })
     .where(eq(templateBuilds.id, build.id));
+  await publishRuntimeEvent({
+    type: "template_build.updated",
+    entityId: build.id,
+    entityType: "template_build",
+    payload: {
+      status: "running",
+      template_id: build.templateId,
+      template_version_id: build.templateVersionId,
+    },
+  });
 
   const buildInputs = objectRecord(build.buildInputs);
   const baseImage = typeof buildInputs.base_image === "string" ? buildInputs.base_image.trim() : "";
@@ -239,6 +260,17 @@ export async function processTemplateBuildJob(
     entityType: "template_build",
     entityId: build.id,
     payload: {
+      template_id: template.id,
+      template_version_id: version.id,
+      image_ref: imageRef.slice(0, 512),
+    },
+  });
+  await publishRuntimeEvent({
+    type: "template_build.updated",
+    entityId: build.id,
+    entityType: "template_build",
+    payload: {
+      status: "succeeded",
       template_id: template.id,
       template_version_id: version.id,
       image_ref: imageRef.slice(0, 512),
@@ -328,6 +360,17 @@ async function markFailed(database: DbLike, build: TemplateBuildRow, error: stri
     entityType: "template_build",
     entityId: build.id,
     payload: { error },
+  });
+  await publishRuntimeEvent({
+    type: "template_build.updated",
+    entityId: build.id,
+    entityType: "template_build",
+    payload: {
+      status: "failed",
+      template_id: build.templateId,
+      template_version_id: build.templateVersionId,
+      error,
+    },
   });
 }
 

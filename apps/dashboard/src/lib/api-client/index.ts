@@ -41,7 +41,7 @@ import type {
   TraceDetail,
   WorkflowStatus,
 } from "@/lib/api-client/types";
-import { callInternalBackend, createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
+import { createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
 import { titleFromGroupId } from "@/lib/utils/format";
 
 const ENABLE_MOCK_FALLBACK = process.env.DASHBOARD_ENABLE_MOCK_FALLBACK === "1";
@@ -326,7 +326,7 @@ function mapRuntimeRun(row: {
   finished_at?: string | null;
   duration_ms?: number | null;
   error?: string | null;
-  execution: unknown;
+  execution?: unknown;
 }): RuntimeRun {
   return {
     id: row.id,
@@ -402,21 +402,15 @@ export async function listRuntimeRuns(params: {
   bindingId?: string;
   limit?: number;
 }): Promise<RuntimeRun[]> {
-  const qs = new URLSearchParams();
-  if (params.providerGroupId) qs.set("provider_group_id", params.providerGroupId);
-  if (params.messageId) qs.set("message_id", params.messageId);
-  if (params.templateVersionId) qs.set("template_version_id", params.templateVersionId);
-  if (params.bindingId) qs.set("binding_id", params.bindingId);
-  if (params.limit) qs.set("limit", String(params.limit));
-  const payload = await callInternalBackend<{ items: Array<Parameters<typeof mapRuntimeRun>[0]> }>(
-    `/internal/runtime-runs${qs.size ? `?${qs.toString()}` : ""}`,
-  );
-  return payload.items.map(mapRuntimeRun);
+  const client = await createSessionBackendTrpcClient();
+  const rows = await client.internal.runtimeRuns.query(params);
+  return rows.map(mapRuntimeRun);
 }
 
 export async function getRuntimeRun(runId: string): Promise<RuntimeRun | undefined> {
   try {
-    return mapRuntimeRun(await callInternalBackend(`/internal/runtime-runs/${encodeURIComponent(runId)}`));
+    const client = await createSessionBackendTrpcClient();
+    return mapRuntimeRun(await client.internal.runtimeRunById.query({ runId }));
   } catch {
     return undefined;
   }

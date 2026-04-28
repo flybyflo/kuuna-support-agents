@@ -11,11 +11,16 @@ export function TemplateBuildAutoRefresh(props: { active: boolean }): null {
       return;
     }
 
-    const id = window.setInterval(() => {
+    const refresh = () => {
       router.refresh();
-    }, 4000);
+    };
+    const id = window.setInterval(refresh, 4000);
+    window.addEventListener("kuuna:runtime-event", refresh);
 
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener("kuuna:runtime-event", refresh);
+    };
   }, [props.active, router]);
 
   return null;

@@ -11,11 +11,15 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
+  "exports": {
+    "./trpc": "./src/trpc.ts"
+  },
   "dependencies": {
     "@kuuna/agent-contracts": "file:../../packages/agent-contracts",
-    "@mariozechner/pi-ai": "0.70.2",
     "@mariozechner/pi-agent-core": "0.70.2",
+    "@mariozechner/pi-ai": "0.70.2",
     "@mariozechner/pi-coding-agent": "0.70.2",
+    "@trpc/server": "^11.7.2",
     "typebox": "^1.0.55",
     "zod": "^3.25.76"
   },

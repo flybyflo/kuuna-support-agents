@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 
 import { requireAuth, type AuthContext, type RoleName } from "../auth.js";
 import { db, type Database, type DbLike } from "../db/client.js";
+import type { EnqueueKuunaJob } from "../jobs/queues.js";
 import { applyRlsContext } from "../rls.js";
 
 export type TrpcContext = {
@@ -10,12 +11,14 @@ export type TrpcContext = {
   rootDb: Database;
   db: DbLike;
   auth: AuthContext | null;
+  enqueueJob?: EnqueueKuunaJob;
 };
 
 export async function createTRPCContext(opts: {
   headers: Headers;
   clientIp?: string;
   db?: Database;
+  enqueueJob?: EnqueueKuunaJob;
 }): Promise<TrpcContext> {
   const database = opts.db ?? db;
   return {
@@ -24,14 +27,35 @@ export async function createTRPCContext(opts: {
     rootDb: database,
     db: database,
     auth: null,
+    enqueueJob: opts.enqueueJob,
   };
 }
 
-const t = initTRPC.context<TrpcContext>().create();
+const t = initTRPC.context<TrpcContext>().create({
+  sse: {
+    ping: {
+      enabled: true,
+      intervalMs: 2_000,
+    },
+    client: {
+      reconnectAfterInactivityMs: 5_000,
+    },
+  },
+});
 
 export const createTRPCRouter = t.router;
 export const createCallerFactory = t.createCallerFactory;
 export const publicProcedure = t.procedure;
+
+export const authenticatedProcedure = t.procedure.use(({ ctx, next }) => {
+  const auth = requireAuth(ctx.headers);
+  return next({
+    ctx: {
+      ...ctx,
+      auth,
+    },
+  });
+});
 
 export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
   const auth = requireAuth(ctx.headers);
@@ -43,6 +67,7 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
         rootDb: ctx.rootDb,
         db: tx,
         auth,
+        enqueueJob: ctx.enqueueJob,
       },
     });
   });

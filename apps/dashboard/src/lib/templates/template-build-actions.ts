@@ -1,31 +1,9 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { isRedirectError } from "next/dist/client/components/redirect-error";
 
 import { requireAuthorized } from "@/lib/auth/guards";
-
-type InternalTemplateBuildResponse = {
-  id: string;
-  template_id: string;
-  template_version_id: string;
-  status: string;
-};
-
-const BACKEND_URL_CANDIDATES = [
-  process.env.BACKEND_BASE_URL,
-  process.env.NEXT_PUBLIC_API_BASE_URL,
-  "http://backend:8000",
-  "http://localhost:8000",
-  "http://127.0.0.1:8000",
-  "http://host.docker.internal:8000",
-]
-  .filter((value): value is string => Boolean(value))
-  .filter((value, index, self) => self.indexOf(value) === index);
-
-function getInternalOpsToken(): string | undefined {
-  return process.env.DASHBOARD_INTERNAL_OPS_TOKEN ?? process.env.INTERNAL_OPS_TOKEN;
-}
+import { createBackendTrpcClient } from "@/lib/backend/client";
 
 function parseCsvTools(raw: string | null): string[] | undefined {
   if (!raw) {
@@ -48,13 +26,6 @@ function isUuid(value: string): boolean {
 
 export async function queueTemplateBuildAction(formData: FormData): Promise<void> {
   const session = await requireAuthorized("templates", "publish");
-
-  const internalToken = getInternalOpsToken();
-  if (!internalToken) {
-    redirect(
-      `/templates/${encodeURIComponent(String(formData.get("templateId") ?? ""))}?error=${encodeURIComponent("Template-Builds: INTERNAL_OPS_TOKEN fehlt")}`,
-    );
-  }
 
   const templateIdRaw = formData.get("templateId");
   const versionIdRaw = formData.get("versionId");
@@ -79,51 +50,27 @@ export async function queueTemplateBuildAction(formData: FormData): Promise<void
     );
   }
 
-  const payload = {
-    actor_user_id: session.userId,
-    base_image: baseImage,
-    allowed_tools: parseCsvTools(typeof allowedToolsRaw === "string" ? allowedToolsRaw : null),
-  };
-
-  const path = `/internal/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(versionId)}/builds`;
-
-  let lastError = "no-backend-url";
-
-  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
-    try {
-      const response = await fetch(`${backendBaseUrl.replace(/\/$/, "")}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Internal-Token": internalToken,
-        },
-        body: JSON.stringify(payload),
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        lastError = `${response.status}:${body}`;
-        continue;
-      }
-
-      const data = (await response.json()) as InternalTemplateBuildResponse;
-      const params = new URLSearchParams({
-        buildQueued: "1",
-        buildId: data.id,
-        versionId: data.template_version_id,
-      });
-
-      redirect(`/templates/${encodeURIComponent(templateId)}?${params.toString()}`);
-    } catch (error) {
-      if (isRedirectError(error)) {
-        throw error;
-      }
-      lastError = error instanceof Error ? error.message : String(error);
-    }
+  let build: { id: string; template_version_id: string };
+  try {
+    const client = createBackendTrpcClient(session.backendAccessToken);
+    build = await client.templates.queueBuild.mutate({
+      templateId,
+      versionId,
+      actorUserId: session.userId,
+      baseImage,
+      allowedTools: parseCsvTools(typeof allowedToolsRaw === "string" ? allowedToolsRaw : null),
+    });
+  } catch (error) {
+    redirect(
+      `/templates/${encodeURIComponent(templateId)}?error=${encodeURIComponent(
+        `Template-Builds: ${error instanceof Error ? error.message : String(error)}`,
+      )}`,
+    );
   }
-
-  redirect(
-    `/templates/${encodeURIComponent(templateId)}?error=${encodeURIComponent(`Template-Builds: ${lastError}`)}`,
-  );
+  const params = new URLSearchParams({
+    buildQueued: "1",
+    buildId: build.id,
+    versionId: build.template_version_id,
+  });
+  redirect(`/templates/${encodeURIComponent(templateId)}?${params.toString()}`);
 }

@@ -38,9 +38,11 @@ export function AutoRefresh({
     if (pauseWhenHidden) {
       document.addEventListener("visibilitychange", handleVisibilityChange);
     }
+    window.addEventListener("kuuna:runtime-event", tick);
 
     return () => {
       window.clearInterval(timer);
+      window.removeEventListener("kuuna:runtime-event", tick);
       if (pauseWhenHidden) {
         document.removeEventListener(
           "visibilitychange",

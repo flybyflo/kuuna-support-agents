@@ -8,7 +8,6 @@ import { eq } from "drizzle-orm";
 import { resetSettingsForTests } from "../src/config.js";
 import { mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
 import { processMediaAssetJob } from "../src/jobs/media-processing.js";
-import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -91,29 +90,13 @@ test("contract: internal media reconcile snapshots and retries failed assets", {
     status: "failed",
   });
 
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
-  t.after(() => app.close());
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/internal/media/reconcile",
-    headers: { "x-internal-token": "media-token" },
-    payload: {
+  const caller = await harness.internalCaller("media-token");
+  const body = await caller.internal.mediaReconcile({
       dry_run: false,
       enqueue_pending: true,
       retry_failed: true,
       cleanup_bogus: true,
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  const body = response.json() as {
+    }) as {
     before: { pending: number; failed: number; bogus_failed: number };
     after: { pending: number; failed: number; bogus_failed: number };
     actions: { cleaned_bogus: number; enqueued_pending: number; retried_failed: number };

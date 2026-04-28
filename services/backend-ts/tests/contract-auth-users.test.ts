@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 
 import { resetSettingsForTests } from "../src/config.js";
 import { auditEvents, users } from "../src/db/schema.js";
-import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -96,34 +95,16 @@ test("contract: internal admin bootstrap is idempotent and token protected", { s
     resetSettingsForTests();
   });
 
-  const app = await buildServer({ db: harness.db });
-  t.after(() => app.close());
+  await assert.rejects(
+    async () => (await harness.internalCaller("wrong")).internal.adminBootstrap(),
+    /invalid internal ops token/,
+  );
 
-  const rejected = await app.inject({
-    method: "POST",
-    url: "/internal/admin/bootstrap",
-    headers: { "x-internal-token": "wrong" },
-    payload: {},
-  });
-  assert.equal(rejected.statusCode, 403);
+  const created = await (await harness.internalCaller("admin-bootstrap-token")).internal.adminBootstrap();
+  assert.equal(created.created, true);
 
-  const created = await app.inject({
-    method: "POST",
-    url: "/internal/admin/bootstrap",
-    headers: { "x-internal-token": "admin-bootstrap-token" },
-    payload: {},
-  });
-  assert.equal(created.statusCode, 200);
-  assert.equal((created.json() as Record<string, unknown>).created, true);
-
-  const second = await app.inject({
-    method: "POST",
-    url: "/internal/admin/bootstrap",
-    headers: { "x-internal-token": "admin-bootstrap-token" },
-    payload: {},
-  });
-  assert.equal(second.statusCode, 200);
-  assert.equal((second.json() as Record<string, unknown>).created, false);
+  const second = await (await harness.internalCaller("admin-bootstrap-token")).internal.adminBootstrap();
+  assert.equal(second.created, false);
 
   const rows = await harness.db.select().from(users).where(eq(users.email, "admin@kuuna.ai"));
   assert.equal(rows.length, 1);

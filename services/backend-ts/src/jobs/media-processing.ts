@@ -7,6 +7,7 @@ import type { Database, DbLike } from "../db/client.js";
 import { mediaAssets, messages, messageVersions, transcripts } from "../db/schema.js";
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
+import { publishRuntimeEvent } from "../runtime/events.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,6 +69,14 @@ export async function processMediaAssetJob(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markMediaFailed(database, asset, message);
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId: null,
+      traceId: input.traceId ?? null,
+      entityId: asset.id,
+      entityType: "media_asset",
+      payload: { status: "failed", message_id: asset.messageId, error: message },
+    });
     logger.error("media_asset_processing_failed", {
       trace_id: input.traceId,
       media_asset_id: input.mediaAssetId,
@@ -195,11 +204,27 @@ async function processPendingAsset(
         mimeType,
         transcript: successTranscript({ kind, mimeType, mediaPayload }),
       });
+      await publishRuntimeEvent({
+        type: "media.updated",
+        providerGroupId,
+        traceId,
+        entityId: asset.id,
+        entityType: "media_asset",
+        payload: { status: "ready", message_id: asset.messageId, kind, processing_mode: "thumbnail-only" },
+      });
       await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
       return "ready";
     }
     metadata.error = "download_url_missing";
     await markMediaFailed(database, asset, "download_url_missing", metadata);
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId,
+      traceId,
+      entityId: asset.id,
+      entityType: "media_asset",
+      payload: { status: "failed", message_id: asset.messageId, kind, error: "download_url_missing" },
+    });
     return "failed";
   }
 
@@ -247,6 +272,14 @@ async function processPendingAsset(
     mimeType,
     s3Key: objectKey,
     transcript: successTranscript({ kind, mimeType, mediaPayload, content: bytes }),
+  });
+  await publishRuntimeEvent({
+    type: "media.updated",
+    providerGroupId,
+    traceId,
+    entityId: asset.id,
+    entityType: "media_asset",
+    payload: { status: "ready", message_id: asset.messageId, kind },
   });
   await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
   logger.info("media_asset_processed", {

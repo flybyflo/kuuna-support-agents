@@ -30,6 +30,7 @@ export type ContractHarness = {
   schemaName: string;
   jobs: EnqueuedJob[];
   caller: (token?: string) => Promise<AppCaller>;
+  internalCaller: (internalToken: string) => Promise<AppCaller>;
   seedUser: (input: {
     email: string;
     password: string;
@@ -67,7 +68,18 @@ export async function createContractHarness(): Promise<ContractHarness> {
       if (token) {
         headers.set("authorization", `Bearer ${token}`);
       }
-      const context = await createTRPCContext({ headers, clientIp: "contract-test", db });
+      const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
+        jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      } });
+      return createCaller(context);
+    },
+    internalCaller: async (internalToken: string) => {
+      const headers = new Headers({ "x-internal-token": internalToken });
+      const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
+        jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      } });
       return createCaller(context);
     },
     seedUser: async (input) => {
