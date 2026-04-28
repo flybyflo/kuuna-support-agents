@@ -9,6 +9,7 @@ export interface GatewayInboundMedia {
   file_name?: string | null;
   byte_size?: number | null;
   download_url?: string | null;
+  inline_data_base64?: string | null;
 }
 
 export interface GatewayInboundMessage {

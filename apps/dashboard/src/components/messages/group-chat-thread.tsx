@@ -1,7 +1,14 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import { X } from "lucide-react";
+import {
+  Download,
+  File as FileIcon,
+  Image as ImageIcon,
+  Music,
+  Video,
+  X,
+} from "lucide-react";
 
 import { StatusBadge } from "@/components/status/status-badge";
 import { Button } from "@/components/ui/button";
@@ -80,6 +87,112 @@ function displayText(item: ConversationEntry): string {
   return "(no text)";
 }
 
+function downloadUrlForAsset(asset: MediaAsset): string | undefined {
+  return asset.downloadUrl ?? (asset.kind === "image" ? asset.previewUrl : undefined);
+}
+
+function formatByteSize(value: number | undefined): string | null {
+  if (!value || value <= 0) {
+    return null;
+  }
+
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function MediaKindIcon({ kind }: { kind: MediaAsset["kind"] }) {
+  if (kind === "image") {
+    return <ImageIcon aria-hidden className="size-4" />;
+  }
+  if (kind === "audio") {
+    return <Music aria-hidden className="size-4" />;
+  }
+  if (kind === "video") {
+    return <Video aria-hidden className="size-4" />;
+  }
+  return <FileIcon aria-hidden className="size-4" />;
+}
+
+function MediaAttachments({
+  assets,
+  showStatus,
+  showDownload,
+}: {
+  assets: MediaAsset[];
+  showStatus: boolean;
+  showDownload: boolean;
+}) {
+  if (assets.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-1.5 grid gap-2">
+      {assets.map((asset) => {
+        const downloadUrl = downloadUrlForAsset(asset);
+        const byteSize = formatByteSize(asset.byteSize);
+
+        return (
+          <div
+            key={asset.id}
+            className="overflow-hidden rounded-md border border-border/80 bg-background/70"
+          >
+            {asset.kind === "image" ? (
+              asset.previewUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={asset.previewUrl}
+                  alt={asset.filename}
+                  className="mx-auto block h-auto max-h-80 max-w-full object-contain"
+                />
+              ) : (
+                <div className="grid min-h-[140px] place-items-center bg-muted text-xs text-muted-foreground">
+                  Image preview unavailable
+                </div>
+              )
+            ) : null}
+
+            <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="text-muted-foreground">
+                  <MediaKindIcon kind={asset.kind} />
+                </span>
+                <span className="min-w-0 truncate text-xs font-medium text-foreground">
+                  {asset.filename}
+                </span>
+                {byteSize ? (
+                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                    {byteSize}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                {showStatus ? <StatusBadge status={asset.status} /> : null}
+                {showDownload && downloadUrl ? (
+                  <Button asChild type="button" variant="outline" size="sm">
+                    <a href={downloadUrl} download={asset.filename}>
+                      <Download aria-hidden />
+                      <span>Download</span>
+                    </a>
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function GroupChatThread({ items }: GroupChatThreadProps) {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
     null,
@@ -103,9 +216,6 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
       <div className="flex flex-col gap-2.5 bg-chat-surface p-4 sm:p-5">
         {items.map((item) => {
           const side = sideForSender(item.message.sender);
-          const imageAssets = item.media.filter(
-            (asset) => asset.kind === "image",
-          );
 
           return (
             <div
@@ -133,29 +243,11 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
                   {messageText(displayText(item))}
                 </p>
 
-                {imageAssets.length ? (
-                  <div className="mt-1.5 grid gap-2">
-                    {imageAssets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="overflow-hidden rounded-md border border-border bg-muted"
-                      >
-                        {asset.previewUrl ? (
-                          /* eslint-disable-next-line @next/next/no-img-element */
-                          <img
-                            src={asset.previewUrl}
-                            alt={asset.filename}
-                            className="block max-h-80 w-full object-contain"
-                          />
-                        ) : (
-                          <div className="grid min-h-[140px] place-items-center bg-muted text-xs text-muted-foreground">
-                            Image preview unavailable
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
+                <MediaAttachments
+                  assets={item.media}
+                  showStatus={false}
+                  showDownload={false}
+                />
               </button>
             </div>
           );
@@ -279,29 +371,23 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
                         key={asset.id}
                         className="rounded-md border border-border bg-muted/40 p-3"
                       >
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-sm text-foreground">
-                            {asset.kind}: {asset.filename}
-                          </span>
+                        <div className="mb-2 flex items-start justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                            <span className="text-muted-foreground">
+                              <MediaKindIcon kind={asset.kind} />
+                            </span>
+                            <span className="min-w-0 truncate">
+                              {asset.filename}
+                            </span>
+                          </div>
                           <StatusBadge status={asset.status} />
                         </div>
 
-                        {asset.kind === "image" ? (
-                          <div className="overflow-hidden rounded-md border border-border bg-card">
-                            {asset.previewUrl ? (
-                              /* eslint-disable-next-line @next/next/no-img-element */
-                              <img
-                                src={asset.previewUrl}
-                                alt={asset.filename}
-                                className="block max-h-64 w-full object-contain"
-                              />
-                            ) : (
-                              <div className="grid min-h-[120px] place-items-center text-xs text-muted-foreground">
-                                Image preview unavailable
-                              </div>
-                            )}
-                          </div>
-                        ) : null}
+                        <MediaAttachments
+                          assets={[asset]}
+                          showStatus={false}
+                          showDownload
+                        />
 
                         <p className="mt-2 text-xs text-muted-foreground">
                           {asset.transcript

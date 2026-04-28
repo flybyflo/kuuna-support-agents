@@ -137,19 +137,31 @@ test("contract: messages list includes latest preview and media flag", { skip: s
       occurredAt: new Date(),
     },
   ]);
-  await harness.db.insert(mediaAssets).values({
+  const [asset] = await harness.db.insert(mediaAssets).values({
     messageId: message.id,
     providerMediaId: "media-1",
     mimeType: "image/png",
     fileName: "proof.png",
+    byteSize: 12345,
     status: "ready",
-  });
+    metadataJson: {
+      object_url: "https://cdn.example/proof.png",
+      preview_url: "data:image/png;base64,cHJvb2Y=",
+    },
+  }).returning();
+  assert.ok(asset);
 
   const rows = await caller.messages.list({ providerGroupId: "group-a@g.us", limit: 100 });
+  const mediaRows = await caller.messages.media({ messageId: message.id });
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0]?.latest_text, "latest text");
   assert.equal(rows[0]?.latest_is_deleted, false);
   assert.equal(rows[0]?.has_media, true);
   assert.deepEqual(rows[0]?.latest_raw_event, { sender_phone: "+491234", sender_push_name: "Felix" });
+  assert.equal(mediaRows.length, 1);
+  assert.equal(mediaRows[0]?.id, asset.id);
+  assert.equal(mediaRows[0]?.byte_size, 12345);
+  assert.equal(mediaRows[0]?.preview_url, "data:image/png;base64,cHJvb2Y=");
+  assert.equal(mediaRows[0]?.download_url, "https://cdn.example/proof.png");
 });
