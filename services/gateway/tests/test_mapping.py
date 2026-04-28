@@ -114,6 +114,63 @@ def test_map_neonize_message_event_extracts_media_with_uppercase_keys() -> None:
     assert media["provider_media_id"] == "media-key-1"
 
 
+def test_map_neonize_message_event_extracts_caption_as_text() -> None:
+    event = FakeEvent(
+        Info=FakeInfo(
+            ID="msg-caption-1",
+            MessageSource=FakeSource(
+                Chat=FakeJID(User="1203630-group", Server="g.us"),
+                Sender=FakeJID(User="4912345", Server="s.whatsapp.net"),
+            ),
+            Timestamp=datetime(2026, 4, 18, tzinfo=UTC),
+        ),
+        Message={
+            "image_message": {
+                "url": "https://example.com/image.jpg",
+                "mimetype": "image/jpeg",
+                "mediaKey": "media-key-caption",
+                "caption": "photo caption",
+            },
+        },
+    )
+
+    mapped = map_neonize_message_event(event)
+
+    assert mapped["message"]["text"] == "photo caption"
+    assert mapped["message"]["media"][0]["provider_media_id"] == "media-key-caption"
+
+
+def test_map_neonize_message_event_unwraps_ephemeral_message() -> None:
+    event = FakeEvent(
+        Info=FakeInfo(
+            ID="msg-ephemeral-1",
+            MessageSource=FakeSource(
+                Chat=FakeJID(User="1203630-group", Server="g.us"),
+                Sender=FakeJID(User="4912345", Server="s.whatsapp.net"),
+            ),
+            Timestamp=datetime(2026, 4, 18, tzinfo=UTC),
+        ),
+        Message={
+            "ephemeralMessage": {
+                "message": {
+                    "extendedTextMessage": {
+                        "text": "wrapped hello",
+                        "contextInfo": {
+                            "stanzaID": "msg-0",
+                            "mentionedJID": ["4911@s.whatsapp.net"],
+                        },
+                    },
+                },
+            },
+        },
+    )
+
+    mapped = map_neonize_message_event(event)
+
+    assert mapped["message"]["text"] == "wrapped hello"
+    assert mapped["message"]["reply_to_provider_message_id"] == "msg-0"
+
+
 
 def test_map_neonize_message_event_classifies_protocol_edit_and_uses_edited_content() -> None:
     event = FakeEvent(

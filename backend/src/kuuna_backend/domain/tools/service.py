@@ -63,6 +63,27 @@ DEFAULT_TOOL_CATALOG: tuple[DefaultToolDefinition, ...] = (
         category="context",
     ),
     DefaultToolDefinition(
+        tool_key="todo_create",
+        display_name="Create Todo",
+        description="Creates a staff todo in the dashboard for this group.",
+        risk_class=ToolRiskClass.WRITE,
+        category="workflow",
+    ),
+    DefaultToolDefinition(
+        tool_key="todo_update",
+        display_name="Update Todo",
+        description="Updates a staff todo in the dashboard for this group.",
+        risk_class=ToolRiskClass.WRITE,
+        category="workflow",
+    ),
+    DefaultToolDefinition(
+        tool_key="todo_list",
+        display_name="List Todos",
+        description="Reads open staff todos for this group.",
+        risk_class=ToolRiskClass.READ,
+        category="workflow",
+    ),
+    DefaultToolDefinition(
         tool_key="send_whatsapp",
         display_name="Send WhatsApp",
         description="Sends outbound WhatsApp messages via the gateway (uses outbound_intent idempotency).",

@@ -1,0 +1,27 @@
+{
+  "name": "@kuuna/runtime-agent-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "serve": "tsx src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@kuuna/agent-contracts": "file:../../packages/agent-contracts",
+    "@mariozechner/pi-ai": "0.70.2",
+    "@mariozechner/pi-agent-core": "0.70.2",
+    "@mariozechner/pi-coding-agent": "0.70.2",
+    "typebox": "^1.0.55",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.0"
+  }
+}

@@ -51,6 +51,11 @@ class FakeClient:
         return SimpleNamespace(ID="provider-msg-123")
 
 
+class FailingGroupsClient(FakeClient):
+    def get_joined_groups(self) -> list[Any]:
+        raise RuntimeError("websocket disconnected before info query returned response")
+
+
 def test_list_groups_requires_token() -> None:
     app = create_ops_app(client=FakeClient(), ops_token="secret")
     response = TestClient(app).get("/ops/groups")
@@ -66,6 +71,14 @@ def test_list_groups_returns_name_and_jid() -> None:
     assert payload["items"][0]["jid"] == "120363000000000@g.us"
     assert payload["items"][0]["name"] == "Support Team"
     assert payload["items"][0]["participants_count"] == 3
+
+
+def test_list_groups_returns_bad_gateway_when_provider_query_fails() -> None:
+    app = create_ops_app(client=FailingGroupsClient(), ops_token="secret")
+    response = TestClient(app).get("/ops/groups", headers={"X-Internal-Token": "secret"})
+
+    assert response.status_code == 502
+    assert "failed to list WhatsApp groups" in response.json()["detail"]
 
 
 def test_connection_status_requires_token() -> None:

@@ -59,7 +59,7 @@ def _outbound_status_payload(
 # --- Trigger variant acceptance tests ---
 
 def test_gateway_inbound_with_mention_is_accepted(client: TestClient) -> None:
-    payload = _inbound_payload(message_id="msg-trig-mention-1", mentions=["bot@s.whatsapp.net"])
+    payload = _inbound_payload(message_id="msg-trig-mention-1", text="@agent help", mentions=["agent"])
     response = client.post("/gateway/inbound", json=payload)
     assert response.status_code == 202
     assert response.json()["accepted"] is True

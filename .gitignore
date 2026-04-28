@@ -126,7 +126,14 @@ build/Release
 
 # Dependency directories
 node_modules/
+.turbo/
 jspm_packages/
+
+# This monorepo uses the root npm lockfile. Avoid accidental nested locks from
+# running npm inside a workspace package/service.
+/packages/*/package-lock.json
+/services/*/package-lock.json
+pnpm-lock.yaml
 
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/

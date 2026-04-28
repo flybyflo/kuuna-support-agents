@@ -9,10 +9,13 @@ from sqlalchemy.orm import Session, sessionmaker
 import kuuna_backend.jobs.ingest as ingest_jobs
 from kuuna_backend.db.models import (
     AgentInstance,
+    AgentRun,
+    AgentRunStatus,
     BindingStatus,
     GroupBinding,
     GroupTemplate,
     Message,
+    MessageDecision,
     MessageEventType,
     MessageVersion,
     OutboundIntent,
@@ -22,6 +25,7 @@ from kuuna_backend.db.models import (
     TemplateBuildStatus,
     TemplateVersion,
     TemplateVersionStatus,
+    Todo,
 )
 
 
@@ -40,7 +44,7 @@ def _seed_active_binding(
         version_no=1,
         status=TemplateVersionStatus.PUBLISHED,
         system_prompt="You are a support assistant.",
-        model_config={"model": "gpt-4.1-mini"},
+        model_config={"model": "gpt-5.5", "reasoning_effort": "medium"},
         tools_config=tools_config,
         egress_policy={},
     )
@@ -196,3 +200,136 @@ def test_process_inbound_message_job_fallback_reply_contains_context_hint(
     assert isinstance(metadata, dict)
     retrieval_refs = metadata.get("retrieval_refs")
     assert isinstance(retrieval_refs, list)
+
+
+def test_process_passive_message_analysis_job_creates_todo_without_outbound_reply(
+    test_session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    provider_group_id = "group-passive@g.us"
+
+    with test_session_factory() as db:
+        message_id, _ = _seed_active_binding(
+            db,
+            provider_group_id=provider_group_id,
+            tools_config={"allowed_tools": ["todo_create", "todo_list", "message_history"]},
+        )
+
+        latest = db.scalar(
+            select(MessageVersion)
+            .join(Message, Message.id == MessageVersion.message_id)
+            .where(Message.id == UUID(message_id), MessageVersion.version_no == 1)
+            .limit(1)
+        )
+        assert latest is not None
+        latest.text_content = "Ich habe neue Rechnungs-Screenshots geschickt. Bitte prüfen."
+        db.commit()
+
+    class RuntimeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "success": True,
+                "response_text": '{"decision":"todo_created"}',
+                "model_used": "gpt-5.5",
+                "attempts": [{"model": "gpt-5.5", "success": True}],
+                "tool_results": [
+                    {
+                        "name": "todo_create",
+                        "ok": True,
+                        "stdout": "{}",
+                        "stderr": "",
+                        "timed_out": False,
+                        "duration_ms": 3,
+                        "details": {
+                            "title": "Review invoice screenshots",
+                            "description": "Client sent invoice screenshots that need staff review.",
+                            "priority": "high",
+                        },
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(ingest_jobs, "get_db_session", lambda: test_session_factory())
+    monkeypatch.setattr(ingest_jobs.httpx, "post", lambda *args, **kwargs: RuntimeResponse())
+
+    ingest_jobs.process_passive_message_analysis_job(
+        message_id=message_id,
+        provider_group_id=provider_group_id,
+        reason="message_received",
+        trace_id="trace-passive-1",
+    )
+
+    with test_session_factory() as db:
+        todo = db.scalar(select(Todo).where(Todo.provider_group_id == provider_group_id))
+        outbound_intent = db.scalar(select(OutboundIntent).where(OutboundIntent.provider_group_id == provider_group_id))
+        decision = db.scalar(
+            select(MessageDecision)
+            .where(
+                MessageDecision.provider_group_id == provider_group_id,
+                MessageDecision.decision_type == "passive_analysis",
+            )
+            .limit(1)
+        )
+
+    assert todo is not None
+    assert todo.title == "Review invoice screenshots"
+    assert todo.priority.value == "high"
+    assert outbound_intent is None
+    assert decision is not None
+    assert decision.should_execute is False
+
+
+def test_runtime_agent_invalid_json_marks_agent_run_failed(
+    test_session_factory: sessionmaker[Session],
+    monkeypatch,
+) -> None:
+    provider_group_id = "group-runtime-json@g.us"
+
+    with test_session_factory() as db:
+        message_id, _ = _seed_active_binding(
+            db,
+            provider_group_id=provider_group_id,
+            tools_config={"allowed_tools": ["message_history"]},
+        )
+
+        message = db.get(Message, UUID(message_id))
+        assert message is not None
+
+        class RuntimeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> object:
+                raise ValueError("invalid json")
+
+        monkeypatch.setattr(ingest_jobs.httpx, "post", lambda *args, **kwargs: RuntimeResponse())
+
+        result = ingest_jobs._run_via_runtime_agent(
+            db=db,
+            message=message,
+            trace_id="trace-invalid-json",
+            provider_group_id=provider_group_id,
+            system_prompt="system",
+            user_prompt="user",
+            model_path=["gpt-5.5"],
+            reasoning_effort="medium",
+            allowed_tools=["message_history"],
+            retrieval_refs=[],
+            retrieval_hits=[],
+            runtime_base_url="http://runtime-agent-test:8100",
+        )
+
+        agent_run = db.scalar(
+            select(AgentRun)
+            .where(AgentRun.provider_group_id == provider_group_id)
+            .order_by(AgentRun.started_at.desc())
+            .limit(1)
+        )
+
+    assert result is None
+    assert agent_run is not None
+    assert agent_run.status == AgentRunStatus.FAILED
+    assert "invalid JSON" in (agent_run.error or "")

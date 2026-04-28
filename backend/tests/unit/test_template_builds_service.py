@@ -64,7 +64,7 @@ def test_queue_build_requires_published_version(test_session_factory: sessionmak
                 actor_user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 template_id=template.id,
                 version_id=draft.id,
-                payload=QueueTemplateBuildInput(base_image="python:3.12-slim-bookworm"),
+                payload=QueueTemplateBuildInput(base_image="node:22-bookworm"),
             )
 
 
@@ -88,7 +88,7 @@ def test_queue_build_creates_row_and_enqueues(
             actor_user_id=UUID("00000000-0000-0000-0000-000000000002"),
             template_id=version.template_id,
             version_id=version.id,
-            payload=QueueTemplateBuildInput(base_image="python:3.12-slim-bookworm"),
+            payload=QueueTemplateBuildInput(base_image="node:22-bookworm"),
         )
 
         assert build.status == TemplateBuildStatus.QUEUED

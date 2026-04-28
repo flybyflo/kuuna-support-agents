@@ -15,7 +15,11 @@ def test_templates_and_bindings_contract_flow(client: TestClient) -> None:
         f"/templates/{template_id}/versions",
         json={
             "system_prompt": "You are contract bot",
-            "model_settings": {"provider": "openai", "model_name": "gpt-4.1-mini"},
+            "model_settings": {
+                "provider": "openai",
+                "model_name": "gpt-5.5",
+                "reasoning_effort": "medium",
+            },
             "tools_config": {},
             "egress_policy": {},
         },

@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     internal_ops_token: str | None = Field(default=None, alias="INTERNAL_OPS_TOKEN")
 
     template_build_context_path: str = Field(
-        default="../../infra/runtime/template-agent",
+        default=".",
         alias="TEMPLATE_BUILD_CONTEXT_PATH",
+    )
+    template_build_dockerfile_path: str = Field(
+        default="services/runtime-agent-ts/Dockerfile",
+        alias="TEMPLATE_BUILD_DOCKERFILE_PATH",
     )
     docker_cli_path: str = Field(default="docker", alias="DOCKER_CLI_PATH")
 
@@ -48,6 +52,28 @@ class Settings(BaseSettings):
         default="text-embedding-3-small",
         alias="OPENAI_EMBEDDING_MODEL",
     )
+
+    runtime_provisioning_enabled: bool = Field(default=False, alias="RUNTIME_PROVISIONING_ENABLED")
+    runtime_docker_socket: str = Field(default="/var/run/docker.sock", alias="RUNTIME_DOCKER_SOCKET")
+    runtime_docker_network: str | None = Field(default=None, alias="RUNTIME_DOCKER_NETWORK")
+    runtime_agent_image: str = Field(
+        default="kuuna-runtime-agent-ts:latest",
+        alias="RUNTIME_AGENT_IMAGE",
+    )
+    runtime_agent_container_port: int = Field(default=8100, alias="RUNTIME_AGENT_CONTAINER_PORT")
+    runtime_container_data_dir: str = Field(default="/runtime-data", alias="RUNTIME_CONTAINER_DATA_DIR")
+    runtime_container_data_volume_prefix: str = Field(
+        default="kuuna-runtime-data",
+        alias="RUNTIME_CONTAINER_DATA_VOLUME_PREFIX",
+    )
+    runtime_container_extra_env_json: str | None = Field(
+        default=None,
+        alias="RUNTIME_CONTAINER_EXTRA_ENV_JSON",
+    )
+
+    todo_export_enabled: bool = Field(default=False, alias="TODO_EXPORT_ENABLED")
+    todo_export_webhook_url: str | None = Field(default=None, alias="TODO_EXPORT_WEBHOOK_URL")
+    todo_export_timeout_seconds: float = Field(default=20.0, alias="TODO_EXPORT_TIMEOUT_SECONDS")
 
     auth_token_secret: str = Field(default="dev-insecure-change-me", alias="AUTH_TOKEN_SECRET")
     auth_token_ttl_seconds: int = Field(default=3600, alias="AUTH_TOKEN_TTL_SECONDS")

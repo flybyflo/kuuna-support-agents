@@ -21,6 +21,9 @@ class AgentInstanceResponse(BaseModel):
     group_binding_id: UUID
     runtime_mode: RuntimeMode
     status: RuntimeStatus
+    runtime_container_name: str | None = None
+    runtime_base_url: str | None = None
+    secrets_ref: str | None = None
     created_at: datetime
     updated_at: datetime
 

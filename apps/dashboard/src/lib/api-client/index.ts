@@ -4,16 +4,19 @@ import {
   bindings,
   groupAssignments,
   mediaAssets,
+  messageDecisions,
   messages,
   messageVersions,
   promptAssets,
   runtimeDebugStatus,
   templateVersions,
   templates,
+  toolInvocations,
   toolCatalog,
   traceDetails,
   users,
 } from "@/lib/api-client/mock-data";
+import { createKuunaApiClient, type KuunaApiClient } from "@kuuna/api-client-ts";
 import type {
   AuditEvent,
   BindingTimelineEvent,
@@ -23,6 +26,7 @@ import type {
   KnownProviderGroup,
   KnowledgeDoc,
   MediaAsset,
+  MessageDecisionRecord,
   MessageRecord,
   MessageVersion,
   PromptAsset,
@@ -31,11 +35,15 @@ import type {
   StaffUser,
   TemplateBuild,
   TemplateBuildStatus,
+  AgentRunRecord,
+  TodoItem,
+  ToolInvocationRecord,
   WorkflowStatus,
   TemplateVersion,
   ToolCatalogItem,
   TraceDetail,
 } from "@/lib/api-client/types";
+import { titleFromGroupId } from "@/lib/utils/format";
 import {
   fetchAuditEvents,
   fetchBinding,
@@ -44,13 +52,17 @@ import {
   fetchGroupAssignments,
   fetchKnownProviderGroups,
   fetchMediaAssets,
+  fetchMessageDecisions,
   fetchMessageVersions,
   fetchMessages,
   fetchPromptAssets,
   fetchRuntimeDebugStatus,
+  fetchAgentRuns,
   fetchTemplate,
   fetchTemplates,
   fetchTemplateVersions,
+  fetchTodos,
+  fetchToolInvocations,
   fetchTools,
   fetchTraceDetail,
   fetchUsers,
@@ -66,6 +78,8 @@ const BACKEND_URL_CANDIDATES = [
 ]
   .filter((value): value is string => Boolean(value))
   .filter((value, index, self) => self.indexOf(value) === index);
+
+const ENABLE_MOCK_FALLBACK = process.env.DASHBOARD_ENABLE_MOCK_FALLBACK === "1";
 
 type IngestedKnowledgeDocResponse = {
   id: string;
@@ -588,8 +602,50 @@ async function withFallback<T>(
   try {
     return await dbLoader();
   } catch (error) {
+    if (!ENABLE_MOCK_FALLBACK) {
+      throw error;
+    }
+
     console.warn(`[dashboard-api] ${label}: falling back to mock data`, error);
     return fallbackLoader();
+  }
+}
+
+async function fromBackendApi<T>(
+  label: string,
+  loader: (client: KuunaApiClient) => Promise<T>,
+): Promise<T> {
+  const errors: string[] = [];
+
+  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
+    const normalizedBaseUrl = backendBaseUrl.replace(/\/$/, "");
+    const client = createKuunaApiClient({
+      baseUrl: normalizedBaseUrl,
+      groupTitleForProviderGroupId: titleFromGroupId,
+    });
+
+    try {
+      return await loader(client);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      errors.push(`${normalizedBaseUrl} -> ${reason}`);
+    }
+  }
+
+  throw new Error(`${label}: ${errors.join(" | ") || "no-backend-url"}`);
+}
+
+async function withBackendThenDbFallback<T>(
+  label: string,
+  backendLoader: (client: KuunaApiClient) => Promise<T>,
+  dbLoader: () => Promise<T>,
+  fallbackLoader: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fromBackendApi(label, backendLoader);
+  } catch (error) {
+    console.warn(`[dashboard-api] ${label}: backend API failed`, error);
+    return withFallback(`${label}/db`, dbLoader, fallbackLoader);
   }
 }
 
@@ -663,6 +719,61 @@ export async function listBindings(): Promise<GroupBinding[]> {
 export async function getRuntimeDebugStatus(): Promise<RuntimeDebugStatus> {
   return withFallback("getRuntimeDebugStatus", fetchRuntimeDebugStatus, () =>
     delay(runtimeDebugStatus),
+  );
+}
+
+export async function listTodos(providerGroupId?: string): Promise<TodoItem[]> {
+  return withBackendThenDbFallback(
+    "listTodos",
+    (client) => client.listTodos({ providerGroupId }),
+    () => fetchTodos(providerGroupId),
+    () => delay([]),
+  );
+}
+
+export async function listAgentRuns(providerGroupId?: string): Promise<AgentRunRecord[]> {
+  return withBackendThenDbFallback(
+    "listAgentRuns",
+    (client) => client.listAgentRuns({ providerGroupId }),
+    () => fetchAgentRuns(providerGroupId),
+    () => delay([]),
+  );
+}
+
+export async function listMessageDecisions(
+  providerGroupId?: string,
+): Promise<MessageDecisionRecord[]> {
+  return withBackendThenDbFallback(
+    "listMessageDecisions",
+    (client) => client.listMessageDecisions({ providerGroupId }),
+    () => fetchMessageDecisions(providerGroupId),
+    () =>
+      delay(
+        providerGroupId
+          ? messageDecisions.filter((item) => item.providerGroupId === providerGroupId)
+          : messageDecisions,
+      ),
+  );
+}
+
+export async function listToolInvocations(
+  providerGroupId?: string,
+  agentRunId?: string,
+): Promise<ToolInvocationRecord[]> {
+  return withBackendThenDbFallback(
+    "listToolInvocations",
+    (client) => client.listToolInvocations({ providerGroupId, agentRunId }),
+    () => fetchToolInvocations(providerGroupId, agentRunId),
+    () =>
+      delay(
+        providerGroupId
+          ? toolInvocations.filter(
+              (item) =>
+                item.providerGroupId === providerGroupId &&
+                (!agentRunId || item.agentRunId === agentRunId),
+            )
+          : toolInvocations.filter((item) => !agentRunId || item.agentRunId === agentRunId),
+      ),
   );
 }
 

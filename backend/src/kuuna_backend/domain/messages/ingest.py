@@ -1,16 +1,33 @@
 from __future__ import annotations
 
 import logging
+import re
+from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from kuuna_backend.api.schemas.gateway import GatewayInboundEvent
-from kuuna_backend.db.models import MediaAsset, MediaStatus, Message, MessageEventType, MessageVersion
+from kuuna_backend.db.models import (
+    MediaAsset,
+    MediaStatus,
+    Message,
+    MessageDecision,
+    MessageEventType,
+    MessageLink,
+    MessageVersion,
+    RetrievalChunk,
+)
 from kuuna_backend.domain.messages.trigger import TriggerDecision, evaluate_trigger
-from kuuna_backend.jobs.queue import enqueue_inbound_execution, enqueue_media_processing
+from kuuna_backend.jobs.queue import (
+    enqueue_inbound_execution,
+    enqueue_media_processing,
+    enqueue_passive_message_analysis,
+    enqueue_retrieval_indexing,
+)
 
 logger = logging.getLogger(__name__)
+URL_PATTERN = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 
 
 class InboundPersistResult:
@@ -110,9 +127,64 @@ def persist_inbound_event(db: Session, event: GatewayInboundEvent) -> InboundPer
         db.flush()
         media_asset_ids.append(str(media_asset.id))
 
-    db.commit()
-
     trigger_decision = evaluate_trigger(event)
+    db.add(
+        MessageDecision(
+            message_id=message.id,
+            provider_group_id=event.provider_group_id,
+            decision_type=trigger_decision.trigger_type or "ignore",
+            reason=trigger_decision.reason,
+            should_execute=trigger_decision.should_execute,
+            payload={
+                "trace_id": trace_id,
+                "provider_message_id": event.provider_message_id,
+                "event_type": event.event_type,
+            },
+        )
+    )
+
+    message_link_ids: list[str] = []
+    current_urls: dict[str, str] = {}
+    for url in _extract_urls(event.message.text):
+        normalized_url = _normalize_url(url)
+        if normalized_url in current_urls:
+            continue
+        current_urls[normalized_url] = url
+
+    existing_links = db.scalars(select(MessageLink).where(MessageLink.message_id == message.id)).all()
+    existing_links_by_url = {link.normalized_url: link for link in existing_links}
+    stale_link_ids = [
+        link.id
+        for link in existing_links
+        if link.normalized_url not in current_urls
+    ]
+    if stale_link_ids:
+        db.execute(
+            delete(RetrievalChunk).where(
+                RetrievalChunk.source_type == "message_link",
+                RetrievalChunk.source_id.in_(stale_link_ids),
+            )
+        )
+        db.execute(delete(MessageLink).where(MessageLink.id.in_(stale_link_ids)))
+
+    for normalized_url, url in current_urls.items():
+        existing_link = existing_links_by_url.get(normalized_url)
+        if existing_link is not None:
+            existing_link.url = url
+            existing_link.provider_group_id = event.provider_group_id
+            continue
+        message_link = MessageLink(
+            message_id=message.id,
+            provider_group_id=event.provider_group_id,
+            url=url,
+            normalized_url=normalized_url,
+            metadata_json={"trace_id": trace_id},
+        )
+        db.add(message_link)
+        db.flush()
+        message_link_ids.append(str(message_link.id))
+
+    db.commit()
 
     logger.info(
         "inbound_event_persisted",
@@ -136,6 +208,50 @@ def persist_inbound_event(db: Session, event: GatewayInboundEvent) -> InboundPer
                 extra={
                     "trace_id": trace_id,
                     "media_asset_id": media_asset_id,
+                    "provider_message_id": event.provider_message_id,
+                },
+            )
+
+    try:
+        enqueue_retrieval_indexing("message", str(message.id), trace_id)
+    except Exception:
+        logger.exception(
+            "message_retrieval_indexing_enqueue_failed",
+            extra={
+                "trace_id": trace_id,
+                "message_id": str(message.id),
+                "provider_group_id": event.provider_group_id,
+            },
+        )
+
+    for message_link_id in message_link_ids:
+        try:
+            enqueue_retrieval_indexing("message_link", message_link_id, trace_id)
+        except Exception:
+            logger.exception(
+                "message_link_retrieval_indexing_enqueue_failed",
+                extra={
+                    "trace_id": trace_id,
+                    "message_link_id": message_link_id,
+                    "provider_group_id": event.provider_group_id,
+                },
+            )
+
+    if event.event_type != MessageEventType.DELETED.value:
+        try:
+            enqueue_passive_message_analysis(
+                message_id=str(message.id),
+                provider_group_id=event.provider_group_id,
+                reason="message_received",
+                trace_id=trace_id,
+            )
+        except Exception:
+            logger.exception(
+                "passive_message_analysis_enqueue_failed",
+                extra={
+                    "trace_id": trace_id,
+                    "message_id": str(message.id),
+                    "provider_group_id": event.provider_group_id,
                     "provider_message_id": event.provider_message_id,
                 },
             )
@@ -167,3 +283,24 @@ def persist_inbound_event(db: Session, event: GatewayInboundEvent) -> InboundPer
         trigger_decision=trigger_decision,
         execution_enqueued=execution_enqueued,
     )
+
+
+def _extract_urls(text: str | None) -> list[str]:
+    if not text:
+        return []
+
+    urls: list[str] = []
+    for match in URL_PATTERN.finditer(text):
+        url = match.group(0).rstrip(".,;:!?)]}")
+        if url and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def _normalize_url(url: str) -> str:
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower() or "https"
+    host = parsed.netloc.lower()
+    path = parsed.path or ""
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{scheme}://{host}{path}{query}"

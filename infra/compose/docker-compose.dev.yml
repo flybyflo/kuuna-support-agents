@@ -3,20 +3,32 @@ name: kuuna-dev
 services:
   dashboard:
     build:
-      context: ../../apps/dashboard
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c "npm install && rm -rf .next && npm run dev -- --hostname 0.0.0.0 --port 3000"
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile.dev
+    working_dir: /workspace
+    command: >
+      sh -c '
+        npm install --include=optional &&
+        case "$$(uname -m)" in
+          aarch64|arm64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-arm64-gnu @tailwindcss/oxide-linux-arm64-gnu ;;
+          x86_64|amd64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu ;;
+          *) echo "unsupported dashboard architecture: $$(uname -m)" >&2; exit 1 ;;
+        esac &&
+        npm run dev --workspace @kuuna/dashboard -- --hostname 0.0.0.0 --port 3000
+      '
     env_file:
-      - ../env/dashboard.env.example
+      - path: ../env/dashboard.env.example
+      - path: ../env/dashboard.env.local
+        required: false
     ports:
       - "3000:3000"
     volumes:
-      - ../../apps/dashboard:/app
-      - dashboard_node_modules:/app/node_modules
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - dashboard_node_modules:/workspace/apps/dashboard/node_modules
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
   backend:
     build:
@@ -25,15 +37,18 @@ services:
     working_dir: /app
     command: sh -c "uv sync && uv run alembic upgrade head && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
     env_file:
-      - ../env/backend.env.example
-      - ../env/backend.env.local
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
     environment:
       WATCHFILES_FORCE_POLLING: "true"
+      UV_LINK_MODE: copy
     ports:
       - "8000:8000"
     volumes:
       - ../../backend:/app
       - backend_venv:/app/.venv
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +58,20 @@ services:
         condition: service_started
       runtime-agent:
         condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "uv",
+          "run",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
 
   worker:
     build:
@@ -52,16 +81,19 @@ services:
     # Migrations are owned by the `backend` service to avoid concurrent DDL / enum races.
     command: sh -c "uv sync && uv run watchfiles --filter python 'uv run rq worker default' src"
     env_file:
-      - ../env/backend.env.example
-      - ../env/backend.env.local
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
     environment:
       WATCHFILES_FORCE_POLLING: "true"
-      TEMPLATE_BUILD_CONTEXT_PATH: /template-build-context
+      UV_LINK_MODE: copy
+      TEMPLATE_BUILD_CONTEXT_PATH: /workspace
+      TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
     volumes:
+      - ../..:/workspace
       - ../../backend:/app
       - worker_venv:/app/.venv
       - /var/run/docker.sock:/var/run/docker.sock
-      - ../../infra/runtime/template-agent:/template-build-context:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,22 +102,48 @@ services:
       runtime-agent:
         condition: service_started
 
-  runtime-agent:
+  todo-exporter:
     build:
-      context: ../../services/runtime-agent
-      dockerfile: Dockerfile
+      context: ../../backend
+      dockerfile: Dockerfile.dev
     working_dir: /app
-    command: sh -c "uv sync && uv run uvicorn app:app --app-dir src --host 0.0.0.0 --port 8100 --reload"
+    command: sh -c 'uv sync && while true; do uv run python -m kuuna_backend.jobs.todo_export; sleep 600; done'
     env_file:
-      - ../env/backend.env.example
-      - ../env/backend.env.local
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
     environment:
       WATCHFILES_FORCE_POLLING: "true"
+      UV_LINK_MODE: copy
+    volumes:
+      - ../../backend:/app
+      - todo_exporter_venv:/app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  runtime-agent:
+    image: kuuna-runtime-agent-ts:dev
+    build:
+      context: ../..
+      dockerfile: services/runtime-agent-ts/Dockerfile.dev
+    working_dir: /workspace/services/runtime-agent-ts
+    command: sh -c "npm install && npm run dev"
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+      UV_LINK_MODE: copy
+      RUNTIME_AGENT_DEFAULT_MODEL: "gpt-5.5"
+      RUNTIME_AGENT_REASONING_EFFORT: "medium"
     ports:
       - "8100:8100"
     volumes:
-      - ../../services/runtime-agent:/app
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ../..:/workspace
+      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
+      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
 
   gateway:
     build:
@@ -94,7 +152,9 @@ services:
     working_dir: /app
     command: sh -c 'uv sync && uv run watchfiles --filter python "uv run python src/app.py" src'
     env_file:
-      - ../env/gateway.env.example
+      - path: ../env/gateway.env.example
+      - path: ../env/gateway.env.local
+        required: false
     environment:
       WATCHFILES_FORCE_POLLING: "true"
     ports:
@@ -105,7 +165,7 @@ services:
       - gateway_session:/data
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -147,8 +207,12 @@ services:
 
 volumes:
   dashboard_node_modules:
+  workspace_node_modules:
   backend_venv:
   worker_venv:
+  todo_exporter_venv:
+  runtime_agent_node_modules:
+  runtime_agent_contracts_node_modules:
   gateway_venv:
   gateway_session:
   postgres_data:

@@ -28,7 +28,7 @@ Implementation is still targeting a single dev environment first.
 ## Planned Tech Stack (MVP)
 - **Dashboard:** Next.js 15 + TypeScript
 - **Control Plane:** FastAPI + Pydantic v2 + SQLAlchemy + Alembic
-- **Agent runtime framework:** PydanticAI
+- **Agent runtime framework:** TypeScript Pi runtime
 - **WhatsApp gateway:** neonize
 - **DB:** PostgreSQL 16 + pgvector + RLS
 - **Queue:** Redis + RQ
@@ -73,9 +73,10 @@ Implementation is still targeting a single dev environment first.
 - `apps/dashboard` — Next.js 15 + TypeScript dashboard scaffold
 - `backend` — FastAPI + domain/worker scaffold (managed with `uv`)
 - `services/gateway` — WhatsApp gateway adapter scaffold
-- `services/runtime-agent` — base runtime image scaffold
-- `packages/api-client-ts` — OpenAPI-generated TS client package scaffold
-- `packages/contracts` — shared cross-service contracts scaffold
+- `services/runtime-agent-ts` — TypeScript Pi runtime agent used by Compose and per-group containers
+- `packages/api-client-ts` — shared typed backend API client and dashboard read models
+- `packages/contracts` — shared gateway/event contracts
+- `packages/agent-contracts` — shared runtime request/result contracts
 - `infra` — compose/env/scripts placeholders
 - `docs` — architecture/runbooks/ADR placeholders
 
@@ -88,12 +89,27 @@ just up
 
 (or via npm wrapper: `npm run dev`)
 
+## TypeScript Monorepo Commands
+
+The TypeScript packages are wired as npm workspaces and orchestrated with Turborepo:
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+npm run lint
+```
+
+These commands cover `apps/dashboard`, `services/runtime-agent-ts`, and shared packages under `packages/*`.
+
 Services:
 - Dashboard: http://localhost:3000
 - Backend API: http://localhost:8000
 - Worker: background service (RQ)
 - Gateway: background service (Neonize)
 - MinIO: http://localhost:9001
+
+For WhatsApp mentions, set `AGENT_MENTION_IDS` in `infra/env/backend.env.local` to the actual bot JID(s), comma-separated. Text aliases such as `@agent` and `@kuuna` are controlled by `AGENT_MENTION_ALIASES`.
 
 Stop all services:
 
@@ -136,7 +152,6 @@ See also: `infra/compose/DR_RUNBOOK.md`.
 - Restarting containers keeps the WhatsApp session; removing the volume resets it.
 
 ## Next Step
-1. Data model + first Alembic migrations
-2. Auth + RBAC baseline
-3. OpenAPI contract + TS client generation flow
-4. Ingest -> process -> retrieve -> reply pipeline
+1. Replace the remaining dashboard direct-DB fallback paths with generated OpenAPI calls.
+2. Harden production runtime provisioning defaults for the Hetzner host network and secret store.
+3. Add end-to-end smoke coverage against Docker Compose with a live WhatsApp test account.

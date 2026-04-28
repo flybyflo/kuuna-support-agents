@@ -24,6 +24,11 @@ function normalizePhone(phone: string): string {
   return trimmed.startsWith("+") ? trimmed : `+${trimmed}`;
 }
 
+function hasVisibleMessageContent(message: Awaited<ReturnType<typeof listMessages>>[number]): boolean {
+  const preview = message.preview.trim();
+  return message.hasMedia || (preview.length > 0 && preview !== "(no text)");
+}
+
 export default async function MessagesPage() {
   const session = await requireSession();
   const [bindings, allMessages, gatewayGroups, gatewayConnection] = await Promise.all([
@@ -55,9 +60,9 @@ export default async function MessagesPage() {
   const rows = Array.from(providerGroupIds)
     .map((providerGroupId) => {
       const binding = bindingsByGroupId.get(providerGroupId);
-      const messagesForGroup = accessibleMessages.filter(
-        (message) => message.providerGroupId === providerGroupId,
-      );
+      const messagesForGroup = accessibleMessages
+        .filter((message) => message.providerGroupId === providerGroupId)
+        .filter(hasVisibleMessageContent);
 
       const gatewayGroup = gatewayGroupsById.get(providerGroupId);
       const directMessage = messagesForGroup.find((message) =>

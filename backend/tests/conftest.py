@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from kuuna_backend.api.deps import get_db
 from kuuna_backend.db.models import (
     AgentInstance,
+    AgentRun,
     AuditEvent,
     GroupAssignment,
     GroupBinding,
@@ -21,13 +22,18 @@ from kuuna_backend.db.models import (
     KnowledgeVersion,
     MediaAsset,
     Message,
+    MessageDecision,
+    MessageLink,
     MessageVersion,
     OutboundIntent,
+    RetrievalChunk,
     Role,
     RuntimeRun,
     TemplateBuild,
     TemplateVersion,
     Transcript,
+    Todo,
+    ToolInvocationRecord,
     User,
     UserRole,
 )
@@ -60,6 +66,12 @@ def test_session_factory() -> sessionmaker[Session]:
     MessageVersion.__table__.create(bind=engine)
     MediaAsset.__table__.create(bind=engine)
     Transcript.__table__.create(bind=engine)
+    MessageDecision.__table__.create(bind=engine)
+    AgentRun.__table__.create(bind=engine)
+    ToolInvocationRecord.__table__.create(bind=engine)
+    Todo.__table__.create(bind=engine)
+    RetrievalChunk.__table__.create(bind=engine)
+    MessageLink.__table__.create(bind=engine)
     KnowledgeCommonDoc.__table__.create(bind=engine)
     KnowledgeGroupDoc.__table__.create(bind=engine)
     KnowledgeVersion.__table__.create(bind=engine)

@@ -101,4 +101,3 @@ def downgrade() -> None:
     op.drop_index("ix_template_builds_template_version_id_created_at", table_name="template_builds")
     op.drop_table("template_builds")
     template_build_status.drop(op.get_bind(), checkfirst=True)
-

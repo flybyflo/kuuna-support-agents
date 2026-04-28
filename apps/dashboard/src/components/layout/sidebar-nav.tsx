@@ -4,9 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ActivitySquare,
+  Bot,
   BookOpen,
+  CheckSquare,
   Cog,
   GaugeCircle,
+  GitBranch,
   Layers,
   type LucideIcon,
   MessageCircle,
@@ -37,6 +40,7 @@ const SECTIONS: NavSection[] = [
     label: "Operate",
     items: [
       { href: "/overview", label: "Overview", icon: GaugeCircle },
+      { href: "/todos", label: "Todos", icon: CheckSquare },
       { href: "/messages", label: "Messages", icon: MessageCircle },
       { href: "/bindings", label: "Bindings", icon: Layers },
     ],
@@ -54,6 +58,9 @@ const SECTIONS: NavSection[] = [
     label: "Diagnose",
     items: [
       { href: "/audit", label: "Audit", icon: ActivitySquare },
+      { href: "/agent-runs", label: "Agent runs", icon: Bot },
+      { href: "/decisions", label: "Decisions", icon: GitBranch },
+      { href: "/tool-invocations", label: "Tool logs", icon: Wrench },
       { href: "/debug/runtime", label: "Runtime debug", icon: TerminalSquare },
     ],
   },

@@ -7,7 +7,14 @@ from uuid import UUID
 
 from sqlalchemy import delete, select
 
-from kuuna_backend.db.models import Embedding, KnowledgeVersion, TemplateVersionStatus
+from kuuna_backend.db.models import (
+    Embedding,
+    KnowledgeGroupDoc,
+    KnowledgeScope,
+    KnowledgeVersion,
+    RetrievalChunk,
+    TemplateVersionStatus,
+)
 from kuuna_backend.integrations.openai import (
     OpenAIIntegrationError,
     create_text_embeddings,
@@ -47,6 +54,20 @@ def process_knowledge_version_job(knowledge_version_id: str, trace_id: str | Non
         chunk_embeddings = _embed_chunks(chunks)
 
         db.execute(delete(Embedding).where(Embedding.source_version_id == version.id))
+        db.execute(
+            delete(RetrievalChunk).where(
+                RetrievalChunk.source_type == "knowledge_version",
+                RetrievalChunk.source_id == version.id,
+            )
+        )
+
+        provider_group_id: str | None = None
+        if version.scope == KnowledgeScope.GROUP:
+            provider_group_id = db.scalar(
+                select(KnowledgeGroupDoc.provider_group_id)
+                .where(KnowledgeGroupDoc.id == version.doc_ref_id)
+                .limit(1)
+            )
 
         for chunk_no, (chunk_content, chunk_embedding) in enumerate(
             zip(chunks, chunk_embeddings, strict=True),
@@ -62,6 +83,25 @@ def process_knowledge_version_job(knowledge_version_id: str, trace_id: str | Non
                     embedding=chunk_embedding,
                 )
             )
+            normalized_chunk = chunk_content.strip()
+            if normalized_chunk:
+                db.add(
+                    RetrievalChunk(
+                        scope=version.scope.value,
+                        provider_group_id=provider_group_id,
+                        source_type="knowledge_version",
+                        source_id=version.id,
+                        chunk_no=chunk_no,
+                        content=normalized_chunk,
+                        token_count=_token_count(normalized_chunk),
+                        embedding=chunk_embedding,
+                        metadata_json={
+                            "knowledge_version_id": str(version.id),
+                            "knowledge_scope": version.scope.value,
+                            "doc_ref_id": str(version.doc_ref_id),
+                        },
+                    )
+                )
 
         version.status = TemplateVersionStatus.READY
 

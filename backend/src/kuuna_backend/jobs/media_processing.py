@@ -30,6 +30,7 @@ from kuuna_backend.integrations.openai import (
 )
 from kuuna_backend.integrations.postgres import get_db_session
 from kuuna_backend.integrations.s3 import create_presigned_get_url, upload_bytes
+from kuuna_backend.jobs.queue import enqueue_passive_message_analysis, enqueue_retrieval_indexing
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,44 @@ def _upsert_failed_transcript(db: Any, *, media_asset_id: UUID, error: Exception
     )
 
 
+def _enqueue_media_followups(
+    *,
+    asset: MediaAsset,
+    provider_group_id: str,
+    trace_id: str | None,
+    reason: str,
+) -> None:
+    try:
+        enqueue_retrieval_indexing("media_asset", str(asset.id), trace_id)
+    except Exception:
+        logger.exception(
+            "media_retrieval_indexing_enqueue_failed",
+            extra={
+                "trace_id": trace_id,
+                "media_asset_id": str(asset.id),
+                "provider_group_id": provider_group_id,
+            },
+        )
+
+    try:
+        enqueue_passive_message_analysis(
+            message_id=str(asset.message_id),
+            provider_group_id=provider_group_id,
+            reason=reason,
+            trace_id=trace_id,
+        )
+    except Exception:
+        logger.exception(
+            "media_passive_analysis_enqueue_failed",
+            extra={
+                "trace_id": trace_id,
+                "media_asset_id": str(asset.id),
+                "message_id": str(asset.message_id),
+                "provider_group_id": provider_group_id,
+            },
+        )
+
+
 def process_media_asset_job(media_asset_id: str, trace_id: str | None = None) -> None:
     settings = get_settings()
 
@@ -591,11 +630,20 @@ def process_media_asset_job(media_asset_id: str, trace_id: str | None = None) ->
 
         if downloaded_bytes is None and not download_url:
             if kind == "image" and isinstance(metadata.get("preview_url"), str):
+                provider_group_id = db.execute(
+                    select(Message.provider_group_id).where(Message.id == asset.message_id).limit(1)
+                ).scalar_one_or_none() or "unknown"
                 asset.status = MediaStatus.READY
                 metadata["processing_mode"] = "thumbnail-only"
                 asset.metadata_json = metadata
                 _upsert_success_transcript(db, asset=asset, media_payload=media_payload)
                 db.commit()
+                _enqueue_media_followups(
+                    asset=asset,
+                    provider_group_id=provider_group_id,
+                    trace_id=trace_id,
+                    reason="media_processed",
+                )
                 logger.info(
                     "media_asset_ready_thumbnail_only",
                     extra={"trace_id": trace_id, "media_asset_id": media_asset_id, "kind": kind},
@@ -682,6 +730,12 @@ def process_media_asset_job(media_asset_id: str, trace_id: str | None = None) ->
             media_payload=media_payload,
         )
         db.commit()
+        _enqueue_media_followups(
+            asset=asset,
+            provider_group_id=provider_group_id,
+            trace_id=trace_id,
+            reason="media_processed",
+        )
 
         logger.info(
             "media_asset_processed",

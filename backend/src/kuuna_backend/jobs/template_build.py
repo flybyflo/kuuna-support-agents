@@ -44,6 +44,7 @@ def process_template_build_job(build_id: str) -> None:
         settings = get_settings()
         docker = settings.docker_cli_path
         context_path = settings.template_build_context_path
+        dockerfile_path = settings.template_build_dockerfile_path
 
         build_inputs = build.build_inputs if isinstance(build.build_inputs, dict) else {}
         base_image = str(build_inputs.get("base_image") or "").strip()
@@ -57,7 +58,7 @@ def process_template_build_job(build_id: str) -> None:
             docker,
             "build",
             "-f",
-            "Dockerfile",
+            dockerfile_path,
             "--build-arg",
             f"BASE_IMAGE={base_image}",
             "--build-arg",

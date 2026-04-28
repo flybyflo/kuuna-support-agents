@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { listBindings, listTemplateVersions } from "@/lib/api-client";
+import { listBindings, listTemplates, listTemplateVersions } from "@/lib/api-client";
 import { requireSession, canAccessGroup } from "@/lib/auth/session";
 import { formatDateTime } from "@/lib/utils/format";
 import { resolveGroupTitle } from "@/lib/utils/group-title";
@@ -15,9 +15,10 @@ import { listWhatsAppGatewayGroups } from "@/lib/whatsapp/ops";
 
 export default async function BindingsPage() {
   const session = await requireSession();
-  const [allBindings, gatewayGroups] = await Promise.all([
+  const [allBindings, gatewayGroups, templates] = await Promise.all([
     listBindings(),
     listWhatsAppGatewayGroups(),
+    listTemplates(),
   ]);
 
   const scopedBindings = allBindings.filter((binding) =>
@@ -25,16 +26,9 @@ export default async function BindingsPage() {
   );
 
   const versionLabelMap = new Map<string, string>();
-  const templateIds = [
-    ...new Set(
-      scopedBindings.map((item) => item.templateVersionId.split("-")[1]),
-    ),
-  ];
-
   await Promise.all(
-    templateIds.map(async (templateKey) => {
-      const templateId = `tpl-${templateKey}`;
-      const versions = await listTemplateVersions(templateId);
+    templates.map(async (template) => {
+      const versions = await listTemplateVersions(template.id);
       versions.forEach((version) => {
         versionLabelMap.set(version.id, `v${version.versionNo}`);
       });

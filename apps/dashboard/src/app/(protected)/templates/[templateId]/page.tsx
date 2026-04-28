@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormActions, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
@@ -46,7 +47,7 @@ function defaultModelChain(
     (version) => version.modelChain.length > 0,
   );
   if (!latestWithChain) {
-    return "gpt-4.1-mini";
+    return "gpt-5.5";
   }
   return latestWithChain.modelChain.join(", ");
 }
@@ -99,7 +100,7 @@ export default async function TemplateDetailPage({
     : modelChainDefault;
   const allowedToolsPrefill = cloneSource?.allowedTools?.length
     ? csvOrEmpty(cloneSource.allowedTools)
-    : "echo, uppercase";
+    : "uppercase, knowledge_search, message_history, todo_create, todo_update, todo_list";
   const egressModePrefill = cloneSource?.egressPolicy ?? "restricted";
 
   const publishedVersionIds = Array.from(
@@ -256,7 +257,7 @@ export default async function TemplateDetailPage({
                   id="modelChain"
                   name="modelChain"
                   defaultValue={modelChainPrefill}
-                  placeholder="gpt-4.1-mini, gpt-4.1"
+                  placeholder="gpt-5.5"
                 />
               </FormRow>
 
@@ -269,7 +270,7 @@ export default async function TemplateDetailPage({
                   id="allowedTools"
                   name="allowedTools"
                   defaultValue={allowedToolsPrefill}
-                  placeholder="echo, uppercase"
+                  placeholder="uppercase, knowledge_search, message_history, todo_create"
                 />
               </FormRow>
             </div>
@@ -285,6 +286,43 @@ export default async function TemplateDetailPage({
                 <option value="allow-all">allow-all</option>
               </Select>
             </FormRow>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <FormRow
+                label="Company knowledge doc keys"
+                htmlFor="commonKnowledgeDocKeys"
+                hint="Comma-separated doc_key values. Use * for all, none for no company docs."
+              >
+                <Input
+                  id="commonKnowledgeDocKeys"
+                  name="commonKnowledgeDocKeys"
+                  defaultValue="*"
+                  placeholder="*, financing-policy, intake-rules"
+                />
+              </FormRow>
+
+              <FormRow
+                label="Group knowledge doc keys"
+                htmlFor="groupKnowledgeDocKeys"
+                hint="Applied to the bound WhatsApp group. Use * for all, none for no group docs."
+              >
+                <Input
+                  id="groupKnowledgeDocKeys"
+                  name="groupKnowledgeDocKeys"
+                  defaultValue="*"
+                  placeholder="*, bookkeeping, customer-rules"
+                />
+              </FormRow>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-foreground">
+              <Checkbox
+                name="includeGroupKnowledge"
+                defaultChecked
+                aria-label="Include current group knowledge"
+              />
+              <span>Include current WhatsApp-group knowledge</span>
+            </label>
 
             <FormActions>
               <Button type="submit">Create draft</Button>
@@ -328,10 +366,26 @@ export default async function TemplateDetailPage({
                   ),
               },
               {
+                header: "Reasoning",
+                cell: (version) => (
+                  <span className="font-mono text-xs text-foreground">
+                    {version.reasoningEffort}
+                  </span>
+                ),
+              },
+              {
                 header: "Tool profile",
                 cell: (version) => (
                   <span className="text-sm text-foreground">
                     {version.toolProfile || "default"}
+                  </span>
+                ),
+              },
+              {
+                header: "Knowledge",
+                cell: (version) => (
+                  <span className="text-sm text-foreground">
+                    {version.knowledgeProfile || "common: *, group: *"}
                   </span>
                 ),
               },
@@ -395,17 +449,17 @@ export default async function TemplateDetailPage({
       {canManageTemplateBuilds ? (
         <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle>Runtime-Images (published)</CardTitle>
+            <CardTitle>Pi runtime images (published)</CardTitle>
             <CardDescription>
-              Docker-Builds pro veröffentlichter Template-Version. Builds laufen asynchron im Worker
-              (Docker-Socket) und landen als <span className="font-mono">image_ref</span> in{" "}
+              Docker builds for the TypeScript Pi runtime per published template version. Builds run
+              asynchronously in the worker and are stored as <span className="font-mono">image_ref</span> in{" "}
               <span className="font-mono">template_builds</span>.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 pb-6">
             {publishedVersionIds.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Noch keine published Version — publish zuerst, dann kannst du Images bauen.
+                No published version yet. Publish first, then build a Pi runtime image.
               </p>
             ) : (
               publishedVersionIds.map((publishedVersionId) => {
@@ -435,11 +489,11 @@ export default async function TemplateDetailPage({
                         <input type="hidden" name="versionId" value={publishedVersionId} />
 
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
-                          <FormRow label="Base image" htmlFor={`baseImage-${publishedVersionId}`}>
+                          <FormRow label="Node base image" htmlFor={`baseImage-${publishedVersionId}`}>
                             <Input
                               id={`baseImage-${publishedVersionId}`}
                               name="baseImage"
-                              placeholder="python:3.12-slim-bookworm"
+                              placeholder="node:22-bookworm"
                               required
                             />
                           </FormRow>
@@ -447,7 +501,7 @@ export default async function TemplateDetailPage({
                           <FormRow
                             label="Allowed tools (optional)"
                             htmlFor={`allowedTools-${publishedVersionId}`}
-                            hint="Komma-separiert; leer = Template-Default."
+                            hint="Comma-separated. Empty uses the template default."
                           >
                             <Input
                               id={`allowedTools-${publishedVersionId}`}
@@ -458,7 +512,7 @@ export default async function TemplateDetailPage({
 
                           <FormActions className="md:justify-end">
                             <Button type="submit" variant="outline">
-                              Build starten
+                              Start build
                             </Button>
                           </FormActions>
                         </div>

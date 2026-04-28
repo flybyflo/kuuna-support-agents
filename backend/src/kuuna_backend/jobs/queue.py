@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from redis import Redis
 from rq import Queue, Retry
 
 from kuuna_backend.config.settings import get_settings
 
 OUTBOUND_DISPATCH_RETRY_INTERVALS = [30, 120, 300]
+
+
+def _job_token(value: str | None = None) -> str:
+    token = value or str(uuid4())
+    return token.replace("-", "_").replace(" ", "_")
 
 
 def get_redis_connection() -> Redis:
@@ -74,6 +81,27 @@ def enqueue_template_build(build_id: str) -> str:
     return job.id
 
 
+def enqueue_passive_message_analysis(
+    message_id: str,
+    provider_group_id: str,
+    reason: str | None = None,
+    trace_id: str | None = None,
+) -> str:
+    queue = get_default_queue()
+    normalized_id = message_id.replace("-", "_")
+    normalized_reason = _job_token(reason or "message")
+    trace_token = _job_token(trace_id)
+    job = queue.enqueue(
+        "kuuna_backend.jobs.ingest.process_passive_message_analysis_job",
+        message_id,
+        provider_group_id,
+        reason,
+        trace_id,
+        job_id=f"passive_analysis_{normalized_id}_{normalized_reason}_{trace_token}",
+    )
+    return job.id
+
+
 def enqueue_knowledge_indexing(knowledge_version_id: str, trace_id: str | None = None) -> str:
     queue = get_default_queue()
     normalized_id = knowledge_version_id.replace("-", "_")
@@ -82,5 +110,24 @@ def enqueue_knowledge_indexing(knowledge_version_id: str, trace_id: str | None =
         knowledge_version_id,
         trace_id,
         job_id=f"knowledge_indexing_{normalized_id}",
+    )
+    return job.id
+
+
+def enqueue_retrieval_indexing(
+    source_type: str,
+    source_id: str,
+    trace_id: str | None = None,
+) -> str:
+    queue = get_default_queue()
+    normalized_type = _job_token(source_type)
+    normalized_id = source_id.replace("-", "_")
+    trace_token = _job_token(trace_id)
+    job = queue.enqueue(
+        "kuuna_backend.jobs.retrieval_indexing.process_retrieval_source_job",
+        source_type,
+        source_id,
+        trace_id,
+        job_id=f"retrieval_indexing_{normalized_type}_{normalized_id}_{trace_token}",
     )
     return job.id

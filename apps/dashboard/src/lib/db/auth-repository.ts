@@ -176,7 +176,13 @@ export async function ensureRequiredAdminAccount(): Promise<void> {
     const bootstrapHash = hashPasswordWithScrypt(REQUIRED_ADMIN_PASSWORD);
     const inserted = await dbQuery<{ id: string }>(
       `
-      insert into users (email, password_hash, must_change_password, is_active, failed_login_attempts)
+      insert into users (
+        email,
+        password_hash,
+        must_change_password,
+        is_active,
+        failed_login_attempts
+      )
       values ($1, $2, true, true, 0)
       returning id::text
       `,

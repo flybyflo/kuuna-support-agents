@@ -225,15 +225,14 @@ def create_ops_app(
             with lock:
                 groups = client.get_joined_groups()
         except Exception as exc:
-            # Neonize raises a specific error when the websocket session isn't connected yet.
             if GetJoinedGroupsError is not None and isinstance(exc, GetJoinedGroupsError):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="whatsapp websocket not connected (scan QR / finish login in gateway first)",
+                    detail="WhatsApp group list is temporarily unavailable; retry after the gateway is fully connected.",
                 ) from exc
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"failed to list whatsapp groups: {exc}",
+                detail=f"failed to list WhatsApp groups: {exc}",
             ) from exc
 
         items = [_group_to_item(group_info) for group_info in groups]

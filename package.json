@@ -2,6 +2,12 @@
   "name": "kuuna-support-agents",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@11.8.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/runtime-agent-ts"
+  ],
   "scripts": {
     "dev": "just up",
     "dev:down": "just down",
@@ -9,6 +15,13 @@
     "dev:ps": "just ps",
     "dev:migrate": "just migrate",
     "dev:restart:gateway": "just restart gateway",
-    "dev:restart:worker": "just restart worker"
+    "dev:restart:worker": "just restart worker",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.6.3"
   }
 }

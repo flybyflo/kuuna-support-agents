@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from kuuna_backend.api.routers import (
+    agent_state,
     audit,
     auth,
     bindings,
@@ -166,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(tools.router)
     app.include_router(bindings.router)
     app.include_router(messages.router)
+    app.include_router(agent_state.router)
     app.include_router(knowledge.router)
     app.include_router(audit.router)
     app.include_router(gateway.router)

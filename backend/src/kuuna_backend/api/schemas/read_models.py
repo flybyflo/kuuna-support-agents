@@ -91,6 +91,68 @@ class AuditEventRead(ORMReadModel):
     created_at: datetime
 
 
+class TodoRead(ORMReadModel):
+    id: UUID
+    provider_group_id: str
+    message_id: UUID | None = None
+    agent_run_id: UUID | None = None
+    title: str
+    description: str | None = None
+    status: str
+    priority: str
+    due_at: datetime | None = None
+    completed_at: datetime | None = None
+    exported_at: datetime | None = None
+    export_attempt_count: int
+    external_ref: str | None = None
+    last_export_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentRunRead(ORMReadModel):
+    id: UUID
+    message_id: UUID | None = None
+    provider_group_id: str
+    trace_id: str | None = None
+    status: str
+    model_path: list[Any]
+    model_used: str | None = None
+    reasoning_effort: str
+    allowed_tools: list[Any]
+    retrieval_refs: list[Any]
+    response_text: str | None = None
+    error: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+
+
+class MessageDecisionRead(ORMReadModel):
+    id: UUID
+    message_id: UUID
+    provider_group_id: str
+    decision_type: str
+    reason: str | None = None
+    should_execute: bool
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class ToolInvocationRead(ORMReadModel):
+    id: UUID
+    agent_run_id: UUID | None = None
+    message_id: UUID | None = None
+    provider_group_id: str
+    tool_name: str
+    ok: bool
+    stdout: str
+    stderr: str
+    timed_out: bool
+    duration_ms: int
+    details: dict[str, Any]
+    created_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Trace / pipeline-path read models (§9.3 traceability)
 # ---------------------------------------------------------------------------

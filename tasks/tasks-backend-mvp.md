@@ -10,8 +10,9 @@
 - `backend/src/kuuna_backend/db/models.py`
 - `backend/alembic/versions/*.py`
 - `services/gateway/src/*.py`
-- `services/runtime-agent/src/*.py`
+- `services/runtime-agent-ts/src/*.ts`
 - `packages/contracts/src/gateway.ts`
+- `packages/agent-contracts/src/index.ts`
 
 ## Bereits erledigt (Kontext)
 
@@ -39,11 +40,11 @@
   - [x] 3.3 Fehlerpfade + Rollback + Statusmodell (`draft|provisioning|active|inactive|failed`)
   - [x] 3.4 1:1 aktive Bindung pro Gruppe serverseitig erzwingen
 
-- [x] 4.0 Runtime-Agent ausführbar machen
-  - [x] 4.1 `runner.py` + `result_schema.py` von Scaffold auf echte Ausführung heben
-  - [x] 4.2 `prompt_builder.py` für System Prompt + USER.md + Retrieval-Kontext implementieren
-  - [x] 4.3 `tool_executor.py` mit Risk-Classes, Egress-Policy, Hard-Timeouts umsetzen
-  - [x] 4.4 `failover.py` gemäß PRD (OpenAI-only, max. 2 Hops)
+- [x] 4.0 TypeScript-Pi Runtime-Agent ausführbar machen
+  - [x] 4.1 `runner.ts` + `@kuuna/agent-contracts` von Scaffold auf Pi-Ausführung heben
+  - [x] 4.2 `prompt.ts` für System Prompt + Retrieval-Kontext implementieren
+  - [x] 4.3 `tools.ts` mit Kuuna-only Tools und deaktivierten Pi-Builtin-Tools umsetzen
+  - [x] 4.4 Model-Failover gemäß PRD/OpenAI-only, max. 2 Hops
 
 - [x] 5.0 Gateway-Mapping und Ingest-Followups vervollständigen
   - [x] 5.1 Mapping für `message_edited` und `message_deleted` ergänzen

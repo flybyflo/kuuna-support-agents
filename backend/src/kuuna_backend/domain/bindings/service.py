@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 from dataclasses import dataclass
 from typing import cast
 from uuid import UUID, uuid4
@@ -14,10 +16,18 @@ from kuuna_backend.db.models import (
     BindingStatus,
     GroupBinding,
     RuntimeStatus,
+    TemplateBuild,
+    TemplateBuildStatus,
     TemplateVersion,
     TemplateVersionStatus,
 )
 from kuuna_backend.domain.outbound.service import create_outbound_intent
+from kuuna_backend.domain.runtime.provisioning import (
+    RuntimeProvisioningError,
+    provision_runtime_container,
+    runtime_provisioning_enabled,
+    stop_runtime_container,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +54,10 @@ class TemplateVersionNotPublishedError(BindingServiceError):
 
 class ActiveBindingConflictError(BindingServiceError):
     """Raised when an active binding already exists for a provider group."""
+
+
+class RuntimeProvisioningFailedError(BindingServiceError):
+    """Raised when automatic runtime container provisioning fails."""
 
 
 @dataclass(slots=True)
@@ -98,8 +112,26 @@ def create_binding(
     try:
         db.flush()
 
-        agent_instance = _upsert_agent_instance(db, binding_id=binding.id)
+        agent_instance = _upsert_agent_instance(
+            db,
+            binding_id=binding.id,
+            provider_group_id=provider_group_id,
+        )
         agent_instance.status = RuntimeStatus.PROVISIONING
+
+        if runtime_provisioning_enabled():
+            try:
+                provisioned_runtime = provision_runtime_container(
+                    agent_instance,
+                    provider_group_id=provider_group_id,
+                    image=_latest_successful_template_runtime_image(db, template_version.id),
+                )
+                agent_instance.runtime_base_url = provisioned_runtime.runtime_base_url
+            except RuntimeProvisioningError as exc:
+                binding.status = BindingStatus.FAILED
+                agent_instance.status = RuntimeStatus.DEGRADED
+                db.commit()
+                raise RuntimeProvisioningFailedError from exc
 
         binding.status = BindingStatus.ACTIVE
         agent_instance.status = RuntimeStatus.HEALTHY
@@ -145,6 +177,17 @@ def unbind(db: Session, *, binding_id: UUID) -> BindingView:
 
     binding.status = BindingStatus.INACTIVE
     if agent_instance is not None:
+        if runtime_provisioning_enabled():
+            try:
+                stop_runtime_container(agent_instance)
+            except RuntimeProvisioningError:
+                logger.exception(
+                    "binding_runtime_container_stop_failed",
+                    extra={
+                        "binding_id": str(binding.id),
+                        "agent_instance_id": str(agent_instance.id),
+                    },
+                )
         agent_instance.status = RuntimeStatus.STOPPED
 
     db.commit()
@@ -166,17 +209,38 @@ def get_binding(db: Session, binding_id: UUID) -> BindingView:
     return BindingView(binding=binding, agent_instance=agent_instance)
 
 
-def _upsert_agent_instance(db: Session, *, binding_id: UUID) -> AgentInstance:
+def _upsert_agent_instance(
+    db: Session,
+    *,
+    binding_id: UUID,
+    provider_group_id: str,
+) -> AgentInstance:
     agent_instance = db.execute(
         select(AgentInstance).where(AgentInstance.group_binding_id == binding_id).limit(1)
     ).scalar_one_or_none()
-    if agent_instance is not None:
-        return agent_instance
+    safe_group = _safe_container_suffix(provider_group_id)
 
-    agent_instance = AgentInstance(group_binding_id=binding_id)
-    db.add(agent_instance)
+    if agent_instance is None:
+        agent_instance = AgentInstance(group_binding_id=binding_id)
+        db.add(agent_instance)
+
+    if not agent_instance.runtime_container_name:
+        agent_instance.runtime_container_name = f"kuuna-runtime-{safe_group}"
+    if not agent_instance.secrets_ref:
+        agent_instance.secrets_ref = f"runtime/{safe_group}"
+
     db.flush()
     return agent_instance
+
+
+def _safe_container_suffix(provider_group_id: str) -> str:
+    normalized = provider_group_id.lower().replace("@", "-at-")
+    normalized = re.sub(r"[^a-z0-9_.-]+", "-", normalized)
+    normalized = normalized.strip(".-") or "group"
+    digest = hashlib.sha256(provider_group_id.encode("utf-8")).hexdigest()[:12]
+    max_prefix_length = 80 - len(digest) - 1
+    prefix = normalized[:max_prefix_length].strip(".-") or "group"
+    return f"{prefix}-{digest}"
 
 
 def _build_model_path(template_version: TemplateVersion) -> list[str]:
@@ -197,6 +261,23 @@ def _build_model_path(template_version: TemplateVersion) -> list[str]:
             return nested_path
 
     return _build_model_path_from_config(model_config)
+
+
+def _latest_successful_template_runtime_image(
+    db: Session,
+    template_version_id: UUID,
+) -> str | None:
+    image_ref = db.execute(
+        select(TemplateBuild.image_ref)
+        .where(
+            TemplateBuild.template_version_id == template_version_id,
+            TemplateBuild.status == TemplateBuildStatus.SUCCEEDED.value,
+            TemplateBuild.image_ref.is_not(None),
+        )
+        .order_by(TemplateBuild.created_at.desc(), TemplateBuild.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return image_ref.strip() if isinstance(image_ref, str) and image_ref.strip() else None
 
 
 def _build_model_path_from_config(model_config: dict[str, object]) -> list[str]:

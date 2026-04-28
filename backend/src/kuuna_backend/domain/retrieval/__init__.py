@@ -1,5 +1,15 @@
 """Domain module: retrieval."""
 
-from kuuna_backend.domain.retrieval.service import RetrievalHit, retrieve_context
+from kuuna_backend.domain.retrieval.service import (
+    KnowledgeRetrievalPolicy,
+    RetrievalHit,
+    knowledge_policy_from_tools_config,
+    retrieve_context,
+)
 
-__all__ = ["RetrievalHit", "retrieve_context"]
+__all__ = [
+    "KnowledgeRetrievalPolicy",
+    "RetrievalHit",
+    "knowledge_policy_from_tools_config",
+    "retrieve_context",
+]

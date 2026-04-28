@@ -61,6 +61,25 @@ function messageText(value: string): string {
   return trimmed.length > 0 ? trimmed : "(no text)";
 }
 
+function displayText(item: ConversationEntry): string {
+  const latestVersionText = item.versions[0]?.text?.trim();
+  if (latestVersionText) {
+    return latestVersionText;
+  }
+
+  const preview = item.message.preview.trim();
+  if (preview && preview !== "(no text)") {
+    return preview;
+  }
+
+  if (item.media.length > 0) {
+    const kinds = [...new Set(item.media.map((asset) => asset.kind))].join(", ");
+    return `Media attachment${item.media.length === 1 ? "" : "s"}: ${kinds}`;
+  }
+
+  return "(no text)";
+}
+
 export function GroupChatThread({ items }: GroupChatThreadProps) {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(
     null,
@@ -111,7 +130,7 @@ export function GroupChatThread({ items }: GroupChatThreadProps) {
                   {formatDateTime(item.message.createdAt)}
                 </p>
                 <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {messageText(item.message.preview)}
+                  {messageText(displayText(item))}
                 </p>
 
                 {imageAssets.length ? (

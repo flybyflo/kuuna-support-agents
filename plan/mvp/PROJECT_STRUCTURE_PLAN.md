@@ -26,9 +26,10 @@ kuuna-support-agents/
 ├─ backend/                           # Python 3.12 (uv), FastAPI, domain, worker logic
 ├─ services/
 │  ├─ gateway/                        # WhatsApp gateway adapter (neonize)
-│  └─ runtime-agent/                  # Agent runner base image (PydanticAI)
+│  └─ runtime-agent-ts/               # TypeScript Pi agent runner base image
 ├─ packages/
-│  ├─ api-client-ts/                  # OpenAPI-generated TS client
+│  ├─ api-client-ts/                  # typed backend API client/read models
+│  ├─ agent-contracts/                # runtime request/result schemas
 │  └─ contracts/                      # event/schema constants (cross-service)
 ├─ infra/
 │  ├─ compose/                        # docker-compose for dev
@@ -130,17 +131,17 @@ services/gateway/
 
 ---
 
-### 3.3 `services/runtime-agent/` (base agent image)
+### 3.3 `services/runtime-agent-ts/` (base agent image)
 
 ```txt
-services/runtime-agent/
+services/runtime-agent-ts/
 ├─ Dockerfile
 ├─ src/
-│  ├─ runner.py                       # request -> model/tool execution
-│  ├─ prompt_builder.py               # system + user + retrieved context assembly
-│  ├─ tool_executor.py                # timeout + risk class enforcement
-│  ├─ failover.py                     # max 2 hops per PRD
-│  └─ result_schema.py
+│  ├─ runner.ts                       # request -> Pi session/model/tool execution
+│  ├─ model.ts                        # OpenAI model selection + max 2 attempts
+│  ├─ prompt.ts                       # system + user + retrieved context assembly
+│  ├─ tools.ts                        # Kuuna-only runtime tools
+│  └─ server.ts                       # /healthz, /debug/status, /run
 └─ tests/
 ```
 
@@ -215,7 +216,7 @@ apps/dashboard/
 - [x] 2.5 Create base test layout (`unit|integration|contract`)
 
 - [x] 3.1 Create `services/gateway` adapter skeleton
-- [x] 3.2 Create `services/runtime-agent` runner skeleton + Dockerfile
+- [x] 3.2 Create `services/runtime-agent-ts` Pi runner + Dockerfile
 - [x] 3.3 Document interface boundaries (input/output payloads)
 
 - [x] 4.1 Create `packages/contracts` skeleton (shared constants/schemas)

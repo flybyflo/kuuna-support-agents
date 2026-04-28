@@ -15,6 +15,7 @@ from kuuna_backend.api.schemas.bindings import (
 from kuuna_backend.domain.bindings.service import (
     ActiveBindingConflictError,
     BindingNotFoundError,
+    RuntimeProvisioningFailedError,
     TemplateVersionNotFoundError,
     TemplateVersionNotPublishedError,
     create_binding as create_binding_service,
@@ -50,6 +51,8 @@ def create_binding(
         raise HTTPException(status_code=409, detail="template version must be published") from exc
     except ActiveBindingConflictError as exc:
         raise HTTPException(status_code=409, detail="active binding already exists") from exc
+    except RuntimeProvisioningFailedError as exc:
+        raise HTTPException(status_code=502, detail="runtime provisioning failed") from exc
     except Exception as exc:  # pragma: no cover - defensive error boundary
         db.rollback()
         logger.exception(

@@ -96,6 +96,16 @@ export default async function RuntimeDebugPage() {
               value={status.openaiTimeoutSeconds ?? "n/a"}
               mono
             />
+            <StatRow
+              label="Default model"
+              value={status.defaultModel ?? "gpt-5.5"}
+              mono
+            />
+            <StatRow
+              label="Reasoning effort"
+              value={status.reasoningEffort ?? "medium"}
+              mono
+            />
           </CardContent>
         </Card>
 

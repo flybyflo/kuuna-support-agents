@@ -44,6 +44,23 @@ function splitCsvLike(value: string | null): string[] {
     .filter((item) => item.length > 0);
 }
 
+function normalizeKnowledgeDocKeys(value: string | null): string | string[] {
+  if (!value) {
+    return "*";
+  }
+
+  const normalized = value.trim();
+  if (!normalized || normalized === "*") {
+    return "*";
+  }
+
+  if (["none", "off", "false"].includes(normalized.toLowerCase())) {
+    return "none";
+  }
+
+  return splitCsvLike(normalized);
+}
+
 function shortReason(reason: string): string {
   return reason.slice(0, 220);
 }
@@ -140,6 +157,13 @@ export async function createTemplateDraftVersionAction(formData: FormData): Prom
   const systemPrompt = clean(formData.get("systemPrompt")) ?? "";
   const modelChainInput = clean(formData.get("modelChain"));
   const allowedToolsInput = clean(formData.get("allowedTools"));
+  const commonKnowledgeDocKeys = normalizeKnowledgeDocKeys(
+    clean(formData.get("commonKnowledgeDocKeys")),
+  );
+  const groupKnowledgeDocKeys = normalizeKnowledgeDocKeys(
+    clean(formData.get("groupKnowledgeDocKeys")),
+  );
+  const includeGroupKnowledge = formData.get("includeGroupKnowledge") === "on";
   const egressMode = clean(formData.get("egressMode")) ?? "restricted";
 
   if (!templateId) {
@@ -158,10 +182,16 @@ export async function createTemplateDraftVersionAction(formData: FormData): Prom
       body: JSON.stringify({
         system_prompt: systemPrompt,
         model_settings: {
-          failover_chain: modelChain.length ? modelChain : ["gpt-4.1-mini"],
+          failover_chain: modelChain.length ? modelChain : ["gpt-5.5"],
+          reasoning_effort: "medium",
         },
         tools_config: {
           allowed_tools: allowedTools,
+          knowledge: {
+            common_doc_keys: commonKnowledgeDocKeys,
+            group_doc_keys: groupKnowledgeDocKeys,
+            include_group_knowledge: includeGroupKnowledge,
+          },
         },
         egress_policy: {
           mode: egressMode,

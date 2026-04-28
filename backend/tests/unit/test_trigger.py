@@ -29,12 +29,31 @@ def _make_event(
     )
 
 
-def test_evaluate_trigger_mention_present() -> None:
+def test_evaluate_trigger_configured_mention_present(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_MENTION_IDS", "bot@s.whatsapp.net")
     event = _make_event(mentions=["bot@s.whatsapp.net"])
     decision = evaluate_trigger(event)
     assert decision.should_execute is True
     assert decision.trigger_type == "mention"
-    assert decision.reason == "mention_present"
+    assert decision.reason == "agent_mention_present"
+
+
+def test_evaluate_trigger_ignores_unconfigured_mention(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_MENTION_IDS", "bot@s.whatsapp.net")
+    event = _make_event(mentions=["lawyer@s.whatsapp.net"])
+    decision = evaluate_trigger(event)
+    assert decision.should_execute is False
+    assert decision.trigger_type is None
+    assert decision.reason == "no_trigger_match"
+
+
+def test_evaluate_trigger_text_agent_alias_present(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_MENTION_IDS", raising=False)
+    monkeypatch.delenv("AGENT_MENTION_ALIASES", raising=False)
+    event = _make_event(text="@agent can you answer this?")
+    decision = evaluate_trigger(event)
+    assert decision.should_execute is True
+    assert decision.trigger_type == "mention"
 
 
 def test_evaluate_trigger_reply_present() -> None:
@@ -101,7 +120,7 @@ def test_evaluate_trigger_empty_text_no_match() -> None:
 
 def test_evaluate_trigger_mention_takes_priority_over_reply() -> None:
     """Mention check precedes reply check in the evaluation order."""
-    event = _make_event(mentions=["bot@s.whatsapp.net"], reply_to="msg-prev-1")
+    event = _make_event(text="@agent please check", reply_to="msg-prev-1")
     decision = evaluate_trigger(event)
     assert decision.trigger_type == "mention"
 

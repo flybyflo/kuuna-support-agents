@@ -19,12 +19,31 @@ import {
 
 type Params = Promise<{ groupId: string }>;
 
+type ConversationEntry = {
+  message: Awaited<ReturnType<typeof listMessages>>[number];
+  versions: Awaited<ReturnType<typeof listMessageVersions>>;
+  media: Awaited<ReturnType<typeof listMediaAssets>>;
+};
+
 function normalizePhone(phone: string): string {
   const trimmed = phone.trim();
   if (!trimmed) {
     return trimmed;
   }
   return trimmed.startsWith("+") ? trimmed : `+${trimmed}`;
+}
+
+function hasVisibleChatContent(entry: ConversationEntry): boolean {
+  if (entry.media.length > 0) {
+    return true;
+  }
+
+  if (entry.versions.some((version) => version.text.trim().length > 0)) {
+    return true;
+  }
+
+  const preview = entry.message.preview.trim();
+  return preview.length > 0 && preview !== "(no text)";
 }
 
 export default async function GroupMessagesPage({
@@ -69,11 +88,13 @@ export default async function GroupMessagesPage({
     }),
   );
 
-  const orderedConversation = messagesWithDetails.sort(
-    (left, right) =>
-      new Date(left.message.createdAt).getTime() -
-      new Date(right.message.createdAt).getTime(),
-  );
+  const orderedConversation = messagesWithDetails
+    .filter(hasVisibleChatContent)
+    .sort(
+      (left, right) =>
+        new Date(left.message.createdAt).getTime() -
+        new Date(right.message.createdAt).getTime(),
+    );
 
   return (
     <div className="flex flex-col gap-8">

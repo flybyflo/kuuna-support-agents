@@ -104,6 +104,26 @@ class RuntimeRunStatus(str, enum.Enum):
     TIMEOUT = "timeout"
 
 
+class TodoStatus(str, enum.Enum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
+class TodoPriority(str, enum.Enum):
+    LOW = "low"
+    NORMAL = "normal"
+    HIGH = "high"
+    URGENT = "urgent"
+
+
+class AgentRunStatus(str, enum.Enum):
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 def db_enum(enum_cls: type[enum.Enum], *, name: str) -> Enum:
     return Enum(
         enum_cls,
@@ -309,6 +329,9 @@ class AgentInstance(Base, TimestampMixin):
         nullable=False,
         default=RuntimeStatus.PROVISIONING,
     )
+    runtime_container_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    runtime_base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    secrets_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
 class Message(Base, TimestampMixin):
@@ -454,6 +477,173 @@ class Embedding(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+
+
+class MessageDecision(Base):
+    __tablename__ = "message_decisions"
+    __table_args__ = (
+        Index("ix_message_decisions_provider_group_id_created_at", "provider_group_id", "created_at"),
+        Index("ix_message_decisions_message_id", "message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    decision_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    should_execute: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        Index("ix_agent_runs_provider_group_id_started_at", "provider_group_id", "started_at"),
+        Index("ix_agent_runs_message_id", "message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    trace_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[AgentRunStatus] = mapped_column(
+        db_enum(AgentRunStatus, name="agent_run_status"),
+        nullable=False,
+        default=AgentRunStatus.RUNNING,
+    )
+    model_path: Mapped[list[object]] = mapped_column(JSON, nullable=False, default=list)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reasoning_effort: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
+    allowed_tools: Mapped[list[object]] = mapped_column(JSON, nullable=False, default=list)
+    retrieval_refs: Mapped[list[object]] = mapped_column(JSON, nullable=False, default=list)
+    response_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ToolInvocationRecord(Base):
+    __tablename__ = "tool_invocations"
+    __table_args__ = (
+        Index("ix_tool_invocations_agent_run_id", "agent_run_id"),
+        Index("ix_tool_invocations_provider_group_id_created_at", "provider_group_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=True
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stdout: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    stderr: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    timed_out: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Todo(Base, TimestampMixin):
+    __tablename__ = "todos"
+    __table_args__ = (
+        Index("ix_todos_provider_group_id_status_updated_at", "provider_group_id", "status", "updated_at"),
+        Index("ix_todos_message_id", "message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[TodoStatus] = mapped_column(
+        db_enum(TodoStatus, name="todo_status"),
+        nullable=False,
+        default=TodoStatus.OPEN,
+    )
+    priority: Mapped[TodoPriority] = mapped_column(
+        db_enum(TodoPriority, name="todo_priority"),
+        nullable=False,
+        default=TodoPriority.NORMAL,
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    export_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    external_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_export_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RetrievalChunk(Base, TimestampMixin):
+    __tablename__ = "retrieval_chunks"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", "chunk_no", name="uq_retrieval_chunks_source_chunk"),
+        Index("ix_retrieval_chunks_scope_provider_group_id", "scope", "provider_group_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_group_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    chunk_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+    )
+
+
+class MessageLink(Base, TimestampMixin):
+    __tablename__ = "message_links"
+    __table_args__ = (
+        UniqueConstraint("message_id", "normalized_url", name="uq_message_links_message_id_normalized_url"),
+        Index("ix_message_links_provider_group_id_created_at", "provider_group_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=dict,
+    )
 
 
 class OutboundIntent(Base, TimestampMixin):

@@ -91,25 +91,53 @@ def _jid_to_str(jid: Any) -> str | None:
 
 
 def _extract_text(message_obj: Any) -> str | None:
-    direct = _get_path(message_obj, "conversation")
+    direct = _get_present_field(message_obj, "conversation", "Conversation")
     if direct:
         return str(direct)
 
-    extended = _get_path(message_obj, "extendedTextMessage", "text")
+    extended_text_message = _get_present_field(
+        message_obj,
+        "extendedTextMessage",
+        "ExtendedTextMessage",
+        "extended_text_message",
+    )
+    extended = _get_present_field(extended_text_message, "text", "Text")
     if extended:
         return str(extended)
+
+    for media_key in (
+        "imageMessage",
+        "ImageMessage",
+        "image_message",
+        "videoMessage",
+        "VideoMessage",
+        "video_message",
+        "documentMessage",
+        "DocumentMessage",
+        "document_message",
+    ):
+        media_obj = _get_present_field(message_obj, media_key)
+        caption = _get_present_field(media_obj, "caption", "Caption")
+        if caption:
+            return str(caption)
 
     return None
 
 
 def _extract_reply_and_mentions(message_obj: Any) -> tuple[str | None, list[str]]:
-    context = _get_path(message_obj, "extendedTextMessage", "contextInfo")
+    extended_text_message = _get_present_field(
+        message_obj,
+        "extendedTextMessage",
+        "ExtendedTextMessage",
+        "extended_text_message",
+    )
+    context = _get_present_field(extended_text_message, "contextInfo", "ContextInfo", "context_info")
     if context is None:
         return None, []
 
-    reply_to = _get_path(context, "stanzaID") or _get_path(context, "stanzaId")
+    reply_to = _get_present_field(context, "stanzaID", "stanzaId", "StanzaID", "StanzaId")
 
-    mentioned = _get_path(context, "mentionedJID", default=[])
+    mentioned = _get_present_field(context, "mentionedJID", "mentionedJid", "MentionedJID") or []
     mentions = [_jid_to_str(item) or str(item) for item in (mentioned or [])]
 
     return (str(reply_to) if reply_to else None), mentions
@@ -241,6 +269,25 @@ def _extract_deleted_target_message_id(message_obj: Any) -> str | None:
 
 
 def _resolve_message_content(message_obj: Any) -> Any:
+    for wrapper_key in (
+        "ephemeralMessage",
+        "EphemeralMessage",
+        "ephemeral_message",
+        "viewOnceMessage",
+        "ViewOnceMessage",
+        "view_once_message",
+        "viewOnceMessageV2",
+        "ViewOnceMessageV2",
+        "view_once_message_v2",
+        "documentWithCaptionMessage",
+        "DocumentWithCaptionMessage",
+        "document_with_caption_message",
+    ):
+        wrapper = _get_present_field(message_obj, wrapper_key)
+        nested_message = _get_present_field(wrapper, "message", "Message")
+        if nested_message is not None:
+            return _resolve_message_content(nested_message)
+
     direct_edited_message = _get_present_field(message_obj, "editedMessage")
     if direct_edited_message is not None:
         nested_message = _get_present_field(direct_edited_message, "message")
@@ -258,11 +305,11 @@ def _resolve_message_content(message_obj: Any) -> Any:
 
 def _extract_media(message_obj: Any, provider_message_id: str) -> list[dict[str, Any]]:
     media_fields: list[tuple[list[str], str]] = [
-        (["imageMessage", "ImageMessage"], "image"),
-        (["videoMessage", "VideoMessage"], "video"),
-        (["audioMessage", "AudioMessage"], "audio"),
-        (["documentMessage", "DocumentMessage"], "document"),
-        (["stickerMessage", "StickerMessage"], "sticker"),
+        (["imageMessage", "ImageMessage", "image_message"], "image"),
+        (["videoMessage", "VideoMessage", "video_message"], "video"),
+        (["audioMessage", "AudioMessage", "audio_message"], "audio"),
+        (["documentMessage", "DocumentMessage", "document_message"], "document"),
+        (["stickerMessage", "StickerMessage", "sticker_message"], "sticker"),
     ]
 
     def _field_value(media_obj: Any, *keys: str) -> Any:

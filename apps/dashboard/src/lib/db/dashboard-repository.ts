@@ -9,12 +9,16 @@ import type {
   GroupTemplate,
   KnownProviderGroup,
   MediaAsset,
+  MessageDecisionRecord,
   MessageRecord,
   MessageVersion,
   PromptAsset,
   StaffUser,
   RuntimeDebugStatus,
   TemplateVersion,
+  AgentRunRecord,
+  TodoItem,
+  ToolInvocationRecord,
   ToolCatalogItem,
   TraceDetail,
   WorkflowStatus,
@@ -130,6 +134,67 @@ function parseAllowedTools(input: unknown): string[] {
   return normalized;
 }
 
+function summarizeKnowledgeKeys(value: unknown): string {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length ? normalized : "*";
+  }
+
+  if (Array.isArray(value)) {
+    const keys = value.filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+    return keys.length ? keys.join(", ") : "none";
+  }
+
+  return "*";
+}
+
+function parseKnowledgeProfile(input: unknown): string {
+  if (!input || typeof input !== "object") {
+    return "common: *, group: *";
+  }
+
+  const rawKnowledge = (input as Record<string, unknown>).knowledge;
+  if (!rawKnowledge || typeof rawKnowledge !== "object") {
+    return "common: *, group: *";
+  }
+
+  const knowledge = rawKnowledge as Record<string, unknown>;
+  const commonKeys = summarizeKnowledgeKeys(knowledge.common_doc_keys);
+  const groupKeys =
+    knowledge.include_group_knowledge === false
+      ? "off"
+      : summarizeKnowledgeKeys(knowledge.group_doc_keys);
+
+  return `common: ${commonKeys}; group: ${groupKeys}`;
+}
+
+function parseReasoningEffort(input: unknown): TemplateVersion["reasoningEffort"] {
+  if (!input || typeof input !== "object") {
+    return "medium";
+  }
+
+  const record = input as Record<string, unknown>;
+  const value =
+    record.reasoning_effort ??
+    record.reasoningEffort ??
+    record.thinking_level ??
+    record.thinkingLevel;
+  if (
+    value === "none" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  ) {
+    return value;
+  }
+
+  return "medium";
+}
+
 function parseEgressPolicy(input: unknown): string {
   if (!input || typeof input !== "object") {
     return "default";
@@ -159,6 +224,18 @@ function parseModelPath(value: unknown): string[] {
   }
 
   return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+}
+
+function summarizeJson(value: unknown, maxLength = 180): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!text) {
+    return "";
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
 }
 
 type DbTemplateRow = {
@@ -278,7 +355,9 @@ export async function fetchTemplateVersions(templateId: string): Promise<Templat
     systemPrompt: row.system_prompt ?? undefined,
     modelChain: parseModelChain(row.model_config),
     allowedTools: parseAllowedTools(row.tools_config),
+    reasoningEffort: parseReasoningEffort(row.model_config),
     toolProfile: parseToolProfile(row.tools_config),
+    knowledgeProfile: parseKnowledgeProfile(row.tools_config),
     egressPolicy: parseEgressPolicy(row.egress_policy),
     updatedAt: row.updated_at,
     updatedBy: "system",
@@ -291,6 +370,9 @@ type DbBindingRow = {
   template_version_id: string;
   status: string;
   runtime_mode: string | null;
+  runtime_container_name: string | null;
+  runtime_base_url: string | null;
+  secrets_ref: string | null;
   updated_at: string;
   created_at: string;
 };
@@ -319,6 +401,9 @@ function bindingRowToModel(row: DbBindingRow): GroupBinding {
     templateVersionId: row.template_version_id,
     status: toWorkflowStatus(row.status),
     runtimeMode: toRuntimeMode(row.runtime_mode),
+    runtimeContainerName: row.runtime_container_name ?? undefined,
+    runtimeBaseUrl: row.runtime_base_url ?? undefined,
+    secretsRef: row.secrets_ref ?? undefined,
     updatedAt: row.updated_at,
   };
 }
@@ -419,6 +504,8 @@ export async function fetchRuntimeDebugStatus(): Promise<RuntimeDebugStatus> {
         openai_configured?: boolean;
         openai_base_url?: string;
         openai_timeout_seconds?: string;
+        default_model?: string;
+        reasoning_effort?: string;
       };
 
       return {
@@ -428,6 +515,10 @@ export async function fetchRuntimeDebugStatus(): Promise<RuntimeDebugStatus> {
           typeof payload.openai_configured === "boolean" ? payload.openai_configured : null,
         openaiBaseUrl: payload.openai_base_url,
         openaiTimeoutSeconds: payload.openai_timeout_seconds,
+        defaultModel:
+          typeof payload.default_model === "string" ? payload.default_model : undefined,
+        reasoningEffort:
+          typeof payload.reasoning_effort === "string" ? payload.reasoning_effort : undefined,
         lastModelPath,
         lastModelUsed: lastModelPath[0],
         lastOutboundIntentId,
@@ -449,6 +540,235 @@ export async function fetchRuntimeDebugStatus(): Promise<RuntimeDebugStatus> {
   };
 }
 
+type DbTodoRow = {
+  id: string;
+  provider_group_id: string;
+  title: string;
+  description: string | null;
+  status: "open" | "in_progress" | "done" | "cancelled";
+  priority: "low" | "normal" | "high" | "urgent";
+  due_at: string | null;
+  exported_at: string | null;
+  export_attempt_count: number;
+  external_ref: string | null;
+  last_export_error: string | null;
+  updated_at: string;
+};
+
+export async function fetchTodos(providerGroupId?: string): Promise<TodoItem[]> {
+  const rows = await dbQuery<DbTodoRow>(
+    `
+    select
+      id::text,
+      provider_group_id,
+      title,
+      description,
+      status::text,
+      priority::text,
+      due_at::text,
+      exported_at::text,
+      export_attempt_count,
+      external_ref,
+      last_export_error,
+      updated_at::text
+    from todos
+    where ($1::text is null or provider_group_id = $1::text)
+    order by
+      case status when 'open' then 1 when 'in_progress' then 2 when 'done' then 3 else 4 end,
+      updated_at desc
+    limit 200
+    `,
+    [providerGroupId ?? null],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    providerGroupId: row.provider_group_id,
+    groupTitle: titleFromGroupId(row.provider_group_id),
+    title: row.title,
+    description: row.description ?? undefined,
+    status: row.status,
+    priority: row.priority,
+    dueAt: row.due_at ?? undefined,
+    exportedAt: row.exported_at ?? undefined,
+    exportAttemptCount: row.export_attempt_count,
+    externalRef: row.external_ref ?? undefined,
+    lastExportError: row.last_export_error ?? undefined,
+    updatedAt: row.updated_at,
+  }));
+}
+
+type DbAgentRunRow = {
+  id: string;
+  provider_group_id: string;
+  message_id: string | null;
+  trace_id: string | null;
+  status: "running" | "succeeded" | "failed";
+  model_path: unknown;
+  model_used: string | null;
+  reasoning_effort: string;
+  allowed_tools: unknown;
+  retrieval_refs: unknown;
+  response_text: string | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export async function fetchAgentRuns(providerGroupId?: string): Promise<AgentRunRecord[]> {
+  const rows = await dbQuery<DbAgentRunRow>(
+    `
+    select
+      id::text,
+      provider_group_id,
+      message_id::text,
+      trace_id,
+      status::text,
+      model_path,
+      model_used,
+      reasoning_effort,
+      allowed_tools,
+      retrieval_refs,
+      response_text,
+      error,
+      started_at::text,
+      completed_at::text
+    from agent_runs
+    where ($1::text is null or provider_group_id = $1::text)
+    order by started_at desc
+    limit 100
+    `,
+    [providerGroupId ?? null],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    messageId: row.message_id ?? undefined,
+    providerGroupId: row.provider_group_id,
+    groupTitle: titleFromGroupId(row.provider_group_id),
+    traceId: row.trace_id ?? undefined,
+    status: row.status,
+    modelPath: parseModelPath(row.model_path),
+    modelUsed: row.model_used ?? undefined,
+    reasoningEffort: row.reasoning_effort,
+    allowedTools: parseModelPath(row.allowed_tools),
+    retrievalRefs: parseModelPath(row.retrieval_refs),
+    responseText: row.response_text ?? undefined,
+    responsePreview: row.response_text?.slice(0, 220),
+    error: row.error ?? undefined,
+    startedAt: row.started_at,
+    completedAt: row.completed_at ?? undefined,
+  }));
+}
+
+type DbMessageDecisionRow = {
+  id: string;
+  message_id: string;
+  provider_group_id: string;
+  decision_type: string;
+  reason: string | null;
+  should_execute: boolean;
+  payload: unknown;
+  created_at: string;
+};
+
+export async function fetchMessageDecisions(
+  providerGroupId?: string,
+): Promise<MessageDecisionRecord[]> {
+  const rows = await dbQuery<DbMessageDecisionRow>(
+    `
+    select
+      id::text,
+      message_id::text,
+      provider_group_id,
+      decision_type,
+      reason,
+      should_execute,
+      payload,
+      created_at::text
+    from message_decisions
+    where ($1::text is null or provider_group_id = $1::text)
+    order by created_at desc
+    limit 200
+    `,
+    [providerGroupId ?? null],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    messageId: row.message_id,
+    providerGroupId: row.provider_group_id,
+    groupTitle: titleFromGroupId(row.provider_group_id),
+    decisionType: row.decision_type,
+    reason: row.reason ?? undefined,
+    shouldExecute: row.should_execute,
+    payloadSummary: summarizeJson(row.payload),
+    createdAt: row.created_at,
+  }));
+}
+
+type DbToolInvocationRow = {
+  id: string;
+  agent_run_id: string | null;
+  message_id: string | null;
+  provider_group_id: string;
+  tool_name: string;
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  timed_out: boolean;
+  duration_ms: number;
+  details: unknown;
+  created_at: string;
+};
+
+export async function fetchToolInvocations(
+  providerGroupId?: string,
+  agentRunId?: string,
+): Promise<ToolInvocationRecord[]> {
+  const rows = await dbQuery<DbToolInvocationRow>(
+    `
+    select
+      id::text,
+      agent_run_id::text,
+      message_id::text,
+      provider_group_id,
+      tool_name,
+      ok,
+      stdout,
+      stderr,
+      timed_out,
+      duration_ms,
+      details,
+      created_at::text
+    from tool_invocations
+    where ($1::text is null or provider_group_id = $1::text)
+      and ($2::uuid is null or agent_run_id = $2::uuid)
+    order by created_at desc
+    limit 200
+    `,
+    [providerGroupId ?? null, agentRunId ?? null],
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    agentRunId: row.agent_run_id ?? undefined,
+    messageId: row.message_id ?? undefined,
+    providerGroupId: row.provider_group_id,
+    groupTitle: titleFromGroupId(row.provider_group_id),
+    toolName: row.tool_name,
+    ok: row.ok,
+    stdout: row.stdout || undefined,
+    stdoutPreview: summarizeJson(row.stdout, 160) || undefined,
+    stderr: row.stderr || undefined,
+    stderrPreview: summarizeJson(row.stderr, 160) || undefined,
+    timedOut: row.timed_out,
+    durationMs: row.duration_ms,
+    detailsSummary: summarizeJson(row.details),
+    createdAt: row.created_at,
+  }));
+}
+
 export async function fetchBindings(): Promise<GroupBinding[]> {
   const rows = await dbQuery<DbBindingRow>(
     `
@@ -458,6 +778,9 @@ export async function fetchBindings(): Promise<GroupBinding[]> {
       gb.template_version_id::text,
       gb.status::text,
       ai.runtime_mode::text as runtime_mode,
+      ai.runtime_container_name,
+      ai.runtime_base_url,
+      ai.secrets_ref,
       gb.created_at::text,
       gb.updated_at::text
     from group_bindings gb
@@ -478,6 +801,9 @@ export async function fetchBinding(bindingId: string): Promise<GroupBinding | un
       gb.template_version_id::text,
       gb.status::text,
       ai.runtime_mode::text as runtime_mode,
+      ai.runtime_container_name,
+      ai.runtime_base_url,
+      ai.secrets_ref,
       gb.created_at::text,
       gb.updated_at::text
     from group_bindings gb
@@ -576,6 +902,9 @@ export async function fetchBindingTimeline(bindingId: string): Promise<BindingTi
       gb.template_version_id::text,
       gb.status::text,
       ai.runtime_mode::text as runtime_mode,
+      ai.runtime_container_name,
+      ai.runtime_base_url,
+      ai.secrets_ref,
       gb.created_at::text,
       gb.updated_at::text
     from group_bindings gb
@@ -800,7 +1129,22 @@ export async function fetchMessageVersions(messageId: string): Promise<MessageVe
       message_id::text,
       version_no,
       event_type::text,
-      text_content,
+      coalesce(
+        nullif(text_content, ''),
+        nullif(raw_event #>> '{Message,conversation}', ''),
+        nullif(raw_event #>> '{Message,Conversation}', ''),
+        nullif(raw_event #>> '{Message,extendedTextMessage,text}', ''),
+        nullif(raw_event #>> '{Message,extended_text_message,text}', ''),
+        nullif(raw_event #>> '{Message,imageMessage,caption}', ''),
+        nullif(raw_event #>> '{Message,image_message,caption}', ''),
+        nullif(raw_event #>> '{Message,videoMessage,caption}', ''),
+        nullif(raw_event #>> '{Message,video_message,caption}', ''),
+        nullif(raw_event #>> '{Message,documentMessage,caption}', ''),
+        nullif(raw_event #>> '{Message,document_message,caption}', ''),
+        nullif(raw_event #>> '{Message,ephemeralMessage,message,conversation}', ''),
+        nullif(raw_event #>> '{Message,ephemeralMessage,message,extendedTextMessage,text}', ''),
+        nullif(raw_event #>> '{Message,viewOnceMessage,message,imageMessage,caption}', '')
+      ) as text_content,
       occurred_at::text
     from message_versions
     where message_id = $1::uuid

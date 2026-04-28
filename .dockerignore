@@ -1,0 +1,42 @@
+.git
+.DS_Store
+
+# Local dependencies and build output must never enter Docker build contexts.
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+.turbo
+**/.turbo
+coverage
+**/coverage
+*.tsbuildinfo
+
+# Python local state.
+.venv
+**/.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+**/.pytest_cache
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+
+# Local secrets/session state.
+.env
+.env.local
+*.env.local
+infra/env/*.local
+neonize.db
+
+# Logs and editor state.
+*.log
+.vscode
+.idea

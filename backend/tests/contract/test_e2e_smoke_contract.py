@@ -88,7 +88,7 @@ def test_e2e_smoke_login_bind_ingest_route_reply_trace(
         f"/templates/{template_id}/versions",
         json={
             "system_prompt": "You are a concise support assistant.",
-            "model_settings": {"model": "gpt-4.1-mini"},
+            "model_settings": {"model": "gpt-5.5", "reasoning_effort": "medium"},
             "tools_config": {},
             "egress_policy": {},
         },
