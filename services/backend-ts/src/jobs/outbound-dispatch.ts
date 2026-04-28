@@ -1,23 +1,36 @@
 import { eq } from "drizzle-orm";
+import type { GatewayRouter } from "@kuuna/gateway/trpc";
+import { createTRPCClient, httpLink, TRPCClientError } from "@trpc/client";
+import { z } from "zod";
 
 import { getSettings } from "../config.js";
 import type { DbLike } from "../db/client.js";
 import { outboundIntents } from "../db/schema.js";
 import { logger } from "../logging.js";
 
-const transientHttpStatusCodes = new Set([408, 425, 429, 500, 502, 503, 504]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const gatewayOutboundPayloadSchema = z.object({
+  trace_id: z.string(),
+  outbound_intent_id: z.string(),
+  provider_group_id: z.string(),
+  reply_to_provider_message_id: z.string().nullable().optional(),
+  text: z.string(),
+  metadata: z.record(z.unknown()).optional(),
+});
 
 export class OutboundDispatchError extends Error {}
 export class OutboundDispatchRetryableError extends OutboundDispatchError {}
 
-type HttpClient = (url: string, init: RequestInit) => Promise<Response>;
+type GatewaySender = (gatewayBaseUrl: string, payload: Record<string, unknown>, input: {
+  serviceToken: string | null;
+  timeoutSeconds: number;
+}) => Promise<Record<string, unknown>>;
 
 export async function processOutboundDispatchJob(
   database: DbLike,
   input: { outboundIntentId: string },
   options: {
-    httpClient?: HttpClient;
+    gatewaySender?: GatewaySender;
     retryAvailable?: boolean;
     retryInSeconds?: number | null;
     gatewayBaseUrl?: string;
@@ -56,62 +69,28 @@ export async function processOutboundDispatchJob(
   }
 
   const settings = getSettings();
-  const httpClient = options.httpClient ?? fetch;
   const gatewayBaseUrl = (options.gatewayBaseUrl ?? settings.GATEWAY_BASE_URL).replace(/\/$/, "");
   const serviceToken = options.serviceToken ?? settings.GATEWAY_SERVICE_TOKEN ?? null;
   const timeoutSeconds = options.timeoutSeconds ?? settings.OUTBOUND_DISPATCH_TIMEOUT_SECONDS;
 
   try {
-    const response = await httpClient(`${gatewayBaseUrl}/gateway/outbound`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(serviceToken ? { Authorization: `Bearer ${serviceToken}` } : {}),
-      },
-      body: JSON.stringify(sending.payload ?? {}),
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
+    const responsePayload = await (options.gatewaySender ?? sendGatewayOutboundViaTrpc)(gatewayBaseUrl, objectPayload(sending.payload), {
+      serviceToken,
+      timeoutSeconds,
     });
-    const responsePayload = await safeResponsePayload(response);
     const providerMessageId = extractProviderMessageId(responsePayload);
 
-    if (response.ok) {
-      await markOutboundIntentSent(database, input.outboundIntentId, {
-        providerMessageId,
-        responsePayload,
-      });
-      logger.info("outbound_intent_dispatched", {
-        trace_id: traceId,
-        outbound_intent_id: input.outboundIntentId,
-        provider_group_id: sending.providerGroupId,
-        status_code: response.status,
-        provider_message_id: providerMessageId,
-      });
-      return { dispatched: true, status: "sent" };
-    }
-
-    const errorCode = `gateway_http_${response.status}`;
-    const errorMessage = `gateway responded with HTTP ${response.status}`;
-    if (transientHttpStatusCodes.has(response.status) && options.retryAvailable) {
-      await markOutboundIntentRetrying(database, input.outboundIntentId, {
-        errorCode,
-        errorMessage,
-        providerMessageId,
-        responsePayload,
-        retryInSeconds: options.retryInSeconds ?? null,
-      });
-      throw new OutboundDispatchRetryableError(`gateway transient error for outbound intent ${input.outboundIntentId}`);
-    }
-
-    await markOutboundIntentFailed(database, input.outboundIntentId, {
-      errorCode,
-      errorMessage,
+    await markOutboundIntentSent(database, input.outboundIntentId, {
       providerMessageId,
       responsePayload,
     });
-    if (transientHttpStatusCodes.has(response.status)) {
-      throw new OutboundDispatchError(`gateway retries exhausted for outbound intent ${input.outboundIntentId}`);
-    }
-    return { dispatched: false, status: "failed" };
+    logger.info("outbound_intent_dispatched", {
+      trace_id: traceId,
+      outbound_intent_id: input.outboundIntentId,
+      provider_group_id: sending.providerGroupId,
+      provider_message_id: providerMessageId,
+    });
+    return { dispatched: true, status: "sent" };
   } catch (error) {
     if (error instanceof OutboundDispatchError) {
       throw error;
@@ -131,6 +110,35 @@ export async function processOutboundDispatchJob(
       errorMessage: error instanceof Error ? error.message : String(error),
     });
     throw new OutboundDispatchError(`gateway transport failed for outbound intent ${input.outboundIntentId}`);
+  }
+}
+
+async function sendGatewayOutboundViaTrpc(
+  gatewayBaseUrl: string,
+  payload: Record<string, unknown>,
+  input: { serviceToken: string | null; timeoutSeconds: number },
+): Promise<Record<string, unknown>> {
+  const client = createTRPCClient<GatewayRouter>({
+    links: [
+      httpLink({
+        url: `${gatewayBaseUrl.replace(/\/$/, "")}/trpc`,
+        headers: input.serviceToken ? { Authorization: `Bearer ${input.serviceToken}` } : {},
+        fetch(url, init) {
+          return fetch(url, {
+            ...init,
+            signal: AbortSignal.timeout(input.timeoutSeconds * 1000),
+          });
+        },
+      }),
+    ],
+  });
+  try {
+    return objectPayload(await client.outbound.sendText.mutate(gatewayOutboundPayloadSchema.parse(payload)));
+  } catch (error) {
+    if (error instanceof TRPCClientError) {
+      throw new Error(`gateway_trpc_error: ${error.message}`);
+    }
+    throw error;
   }
 }
 
@@ -245,6 +253,12 @@ async function updateDispatch(
   return updated ?? null;
 }
 
+function objectPayload(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function mergeDispatchMetadata(payload: unknown, updates: Record<string, unknown>): Record<string, unknown> {
   const mergedPayload = payload && typeof payload === "object" && !Array.isArray(payload)
     ? { ...(payload as Record<string, unknown>) }
@@ -254,19 +268,6 @@ function mergeDispatchMetadata(payload: unknown, updates: Record<string, unknown
     : {};
   mergedPayload._dispatch = { ...dispatch, ...updates };
   return mergedPayload;
-}
-
-async function safeResponsePayload(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text();
-  if (!text.trim()) return {};
-  try {
-    const payload = JSON.parse(text) as unknown;
-    return payload && typeof payload === "object" && !Array.isArray(payload)
-      ? (payload as Record<string, unknown>)
-      : { data: payload };
-  } catch {
-    return { text: text.trim().slice(0, 2000) };
-  }
 }
 
 function extractProviderMessageId(responsePayload: Record<string, unknown>): string | null {

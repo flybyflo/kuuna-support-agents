@@ -24,6 +24,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1038.0",
     "@fastify/cors": "^11.0.1",
     "@kuuna/agent-contracts": "file:../../packages/agent-contracts",
+    "@kuuna/gateway": "file:../gateway",
     "@kuuna/runtime-agent-ts": "file:../runtime-agent-ts",
     "@sentry/node": "^10.49.0",
     "@trpc/client": "^11.7.2",

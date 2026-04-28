@@ -4,23 +4,7 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { requireAuthorized } from "@/lib/auth/guards";
 import { createSessionBackendTrpcClient } from "@/lib/backend/client";
-
-const GATEWAY_OPS_URL_CANDIDATES = [
-  process.env.GATEWAY_OPS_BASE_URL,
-  "http://gateway:8090",
-  "http://localhost:8090",
-  "http://127.0.0.1:8090",
-  "http://host.docker.internal:8090",
-]
-  .filter((value): value is string => Boolean(value))
-  .filter((value, index, self) => self.indexOf(value) === index);
-
-type WhatsAppGroupResponse = {
-  group: {
-    jid: string;
-    name: string;
-  };
-};
+import { getGatewayOpsToken, withGatewayClient } from "@/lib/gateway/client";
 
 function cleanGroupId(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -135,56 +119,24 @@ export async function createWhatsAppGroupAction(formData: FormData): Promise<voi
   }
 
   const participants = parseParticipants(formData.get("participants"));
-  const gatewayOpsToken =
-    process.env.DASHBOARD_GATEWAY_OPS_TOKEN ??
-    process.env.GATEWAY_OPS_TOKEN ??
-    process.env.DASHBOARD_INTERNAL_OPS_TOKEN;
+  const gatewayOpsToken = getGatewayOpsToken();
 
   if (!gatewayOpsToken) {
     redirect("/inbox/create?createGroup=error&reason=missing-gateway-token");
   }
 
-  const networkErrors: string[] = [];
-
-  for (const gatewayBaseUrl of GATEWAY_OPS_URL_CANDIDATES) {
-    const normalizedBaseUrl = gatewayBaseUrl.replace(/\/$/, "");
-
-    try {
-      const response = await fetch(`${normalizedBaseUrl}/ops/groups`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "X-Internal-Token": gatewayOpsToken,
-        },
-        body: JSON.stringify({
-          name: groupName,
-          participants,
-        }),
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        const detail = `${normalizedBaseUrl} -> ${response.status}: ${body}`;
-        redirect(`/inbox/create?createGroup=error&reason=${encodeURIComponent(shortReason(detail))}`);
-      }
-
-      const data = (await response.json()) as WhatsAppGroupResponse;
-      const params = new URLSearchParams({
-        createGroup: "ok",
-        providerGroupId: data.group.jid,
-        groupName: data.group.name,
-      });
-      redirect(`/inbox/create?${params.toString()}`);
-    } catch (error) {
-      rethrowRedirectError(error);
-      const reason = error instanceof Error ? error.message : String(error);
-      networkErrors.push(`${normalizedBaseUrl} -> ${reason}`);
-    }
+  const data = await withGatewayClient((client) => client.ops.createGroup.mutate({
+    name: groupName,
+    participants,
+  }));
+  if (data) {
+    const params = new URLSearchParams({
+      createGroup: "ok",
+      providerGroupId: data.group.jid,
+      groupName: data.group.name,
+    });
+    redirect(`/inbox/create?${params.toString()}`);
   }
 
-  const fallbackError = networkErrors.length
-    ? `network: ${networkErrors.join(" | ")}`
-    : "no-gateway-url";
-  redirect(`/inbox/create?createGroup=error&reason=${encodeURIComponent(shortReason(fallbackError))}`);
+  redirect(`/inbox/create?createGroup=error&reason=${encodeURIComponent(shortReason("gateway unavailable"))}`);
 }
