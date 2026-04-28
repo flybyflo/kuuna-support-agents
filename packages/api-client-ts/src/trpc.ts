@@ -1,4 +1,4 @@
-import { createTRPCClient, httpBatchLink, loggerLink } from "@trpc/client";
+import { createTRPCClient, httpLink, loggerLink } from "@trpc/client";
 
 import type { AppRouter } from "@kuuna/backend-ts";
 
@@ -17,7 +17,7 @@ export function createKuunaTrpcClient(options: KuunaTrpcClientOptions) {
   return createTRPCClient<AppRouter>({
     links: [
       ...(options.enableLogger ? [loggerLink<AppRouter>()] : []),
-      httpBatchLink({
+      httpLink({
         url: `${normalizedBaseUrl}/trpc`,
         headers() {
           return {

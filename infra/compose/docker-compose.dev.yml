@@ -1,10 +1,8 @@
 name: kuuna-dev
 
 services:
-  dashboard:
-    build:
-      context: ../..
-      dockerfile: apps/dashboard/Dockerfile.dev
+  node-deps:
+    image: node:22-bookworm
     working_dir: /workspace
     command: >
       sh -c '
@@ -12,10 +10,26 @@ services:
         case "$$(uname -m)" in
           aarch64|arm64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-arm64-gnu @tailwindcss/oxide-linux-arm64-gnu ;;
           x86_64|amd64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu ;;
-          *) echo "unsupported dashboard architecture: $$(uname -m)" >&2; exit 1 ;;
-        esac &&
-        npm run dev --workspace @kuuna/dashboard -- --hostname 0.0.0.0 --port 3000
+          *) echo "unsupported node dependency architecture: $$(uname -m)" >&2; exit 1 ;;
+        esac
       '
+    volumes:
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - dashboard_node_modules:/workspace/apps/dashboard/node_modules
+      - dashboard_next:/workspace/apps/dashboard/.next
+      - dashboard_next:/workspace/apps/dashboard/.next
+      - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
+      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
+      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
+
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile.dev
+    working_dir: /workspace
+    command: >
+      sh -c 'npm run dev --workspace @kuuna/dashboard -- --hostname 0.0.0.0 --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local
@@ -27,6 +41,8 @@ services:
       - workspace_node_modules:/workspace/node_modules
       - dashboard_node_modules:/workspace/apps/dashboard/node_modules
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
 
@@ -36,15 +52,13 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c '
-        npm install --include=optional &&
-        npm run dev --workspace @kuuna/backend-ts
-      '
+      sh -c 'npm run dev --workspace @kuuna/backend-ts'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
     environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
       HOST: "0.0.0.0"
       PORT: "8000"
       WATCHFILES_FORCE_POLLING: "true"
@@ -56,6 +70,8 @@ services:
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       postgres:
@@ -134,15 +150,13 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c '
-        npm install --include=optional &&
-        npm run dev:worker --workspace @kuuna/backend-ts
-      '
+      sh -c 'npm run dev:worker --workspace @kuuna/backend-ts'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
     environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
       WATCHFILES_FORCE_POLLING: "true"
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
       TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
@@ -152,6 +166,8 @@ services:
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       postgres:
@@ -218,7 +234,7 @@ services:
       context: ../..
       dockerfile: services/runtime-agent-ts/Dockerfile.dev
     working_dir: /workspace/services/runtime-agent-ts
-    command: sh -c "npm install && npm run dev"
+    command: sh -c "npm run dev"
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -232,8 +248,12 @@ services:
       - "8100:8100"
     volumes:
       - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
       - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
       - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
+    depends_on:
+      node-deps:
+        condition: service_completed_successfully
 
   gateway:
     build:
@@ -297,6 +317,7 @@ services:
 
 volumes:
   dashboard_node_modules:
+  dashboard_next:
   workspace_node_modules:
   backend_ts_node_modules:
   backend_venv:

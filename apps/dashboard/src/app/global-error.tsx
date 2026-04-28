@@ -9,7 +9,7 @@ export default function GlobalError({
   reset,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  reset?: () => void;
 }) {
   useEffect(() => {
     Sentry.captureException(error);
@@ -35,7 +35,13 @@ export default function GlobalError({
             </p>
             <button
               type="button"
-              onClick={() => reset()}
+              onClick={() => {
+                if (typeof reset === "function") {
+                  reset();
+                  return;
+                }
+                window.location.reload();
+              }}
               className="mt-6 inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
               Try again

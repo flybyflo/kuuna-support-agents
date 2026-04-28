@@ -4,7 +4,6 @@ import { AuthShell } from "@/components/layout/auth-shell";
 import { Button } from "@/components/ui/button";
 import { FormActions, FormRow } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { completePasswordChangeAction } from "@/lib/auth/actions";
 import { requireSession } from "@/lib/auth/session";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -50,7 +49,8 @@ export default async function FirstPasswordChangePage({
       ) : null}
 
       <form
-        action={completePasswordChangeAction}
+        action="/first-password-change/action"
+        method="post"
         className="flex flex-col gap-4"
       >
         <FormRow label="Current password" htmlFor="currentPassword">

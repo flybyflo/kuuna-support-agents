@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { scryptSync } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -13,6 +14,14 @@ test("scrypt password hashes remain verifiable", () => {
   const hash = hashPassword("SecurePass123!");
   assert.equal(verifyPassword("SecurePass123!", hash), true);
   assert.equal(verifyPassword("wrong", hash), false);
+});
+
+test("legacy dashboard scrypt password hashes remain verifiable", () => {
+  const saltHex = "0a0db7a3a02c80447f0fe37d4337527";
+  const digestHex = scryptSync("admin123456!", saltHex, 64).toString("hex");
+  const legacyHash = `scrypt:${saltHex}:${digestHex}`;
+  assert.equal(verifyPassword("admin123456!", legacyHash), true);
+  assert.equal(verifyPassword("wrong", legacyHash), false);
 });
 
 test("access token roundtrip uses compatible payload fields", () => {

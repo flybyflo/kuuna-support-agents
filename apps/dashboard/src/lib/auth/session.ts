@@ -132,11 +132,7 @@ export async function getSession(): Promise<StaffSession | null> {
     return null;
   }
 
-  const session = decodeSession(raw);
-  if (!session) {
-    cookieStore.delete(SESSION_COOKIE_NAME);
-  }
-  return session;
+  return decodeSession(raw);
 }
 
 export async function requireSession(options?: {

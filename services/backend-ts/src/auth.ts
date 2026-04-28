@@ -146,6 +146,10 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, encodedHash: string): boolean {
+  if (encodedHash.startsWith("scrypt:")) {
+    return verifyLegacyDashboardScryptPassword(password, encodedHash);
+  }
+
   const [algorithm, nRaw, rRaw, pRaw, saltHex, digestHex] = encodedHash.split("$");
   if (algorithm !== "scrypt" || !nRaw || !rRaw || !pRaw || !saltHex || !digestHex) {
     return false;
@@ -158,6 +162,21 @@ export function verifyPassword(password: string, encodedHash: string): boolean {
       r: Number(rRaw),
       p: Number(pRaw),
     });
+    return expected.length === derived.length && timingSafeEqual(expected, derived);
+  } catch {
+    return false;
+  }
+}
+
+function verifyLegacyDashboardScryptPassword(password: string, encodedHash: string): boolean {
+  const [scheme, saltHex, digestHex] = encodedHash.split(":");
+  if (scheme !== "scrypt" || !saltHex || !digestHex) {
+    return false;
+  }
+
+  try {
+    const expected = Buffer.from(digestHex, "hex");
+    const derived = scryptSync(password, saltHex, expected.length);
     return expected.length === derived.length && timingSafeEqual(expected, derived);
   } catch {
     return false;

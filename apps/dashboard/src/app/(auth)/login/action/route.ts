@@ -1,5 +1,3 @@
-import { NextResponse } from "next/server";
-
 import { setSessionCookie } from "@/lib/auth/session";
 import { bootstrapRequiredAdmin, loginWithBackend } from "@/lib/backend/client";
 
@@ -8,7 +6,13 @@ import { bootstrapRequiredAdmin, loginWithBackend } from "@/lib/backend/client";
  * NextResponse.redirect() defaults to **307**, which preserves POST and can yield POST /overview (405/odd behavior).
  */
 function redirect303(path: string, request: Request) {
-  return NextResponse.redirect(new URL(path, request.url), 303);
+  const location = new URL(path, request.url);
+  return new Response(null, {
+    status: 303,
+    headers: {
+      Location: `${location.pathname}${location.search}`,
+    },
+  });
 }
 
 export async function POST(request: Request): Promise<Response> {
