@@ -121,6 +121,11 @@ function inboundTextContent(entry: InboundEntry): string | null {
   return null;
 }
 
+function isGeneratedMediaLabel(entry: InboundEntry, text: string | null): boolean {
+  if (!text || entry.media.length === 0) return false;
+  return entry.media.some((asset) => text === asset.filename);
+}
+
 function findScrollableAncestor(element: HTMLElement): HTMLElement | null {
   let current: HTMLElement | null = element.parentElement;
   while (current) {
@@ -365,31 +370,35 @@ export function ChatTimeline({ inbound, outbound }: ChatTimelineProps) {
 
   return (
     <>
-      <div className="flex flex-col gap-1.5 bg-chat-surface px-3 py-5 sm:px-5">
-        {items.map((item) => {
-          if (item.kind === "date") {
-            return <DateDivider key={item.id} label={item.label} />;
-          }
+      <div className="flex h-full min-h-0 flex-col bg-chat-surface">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5">
+          <div className="flex min-h-full flex-col gap-1.5">
+            {items.map((item) => {
+              if (item.kind === "date") {
+                return <DateDivider key={item.id} label={item.label} />;
+              }
 
-          if (item.kind === "inbound") {
-            return (
-              <InboundBubble
-                key={item.id}
-                item={item}
-                onSelect={() => setSelectedId(item.id)}
-              />
-            );
-          }
+              if (item.kind === "inbound") {
+                return (
+                  <InboundBubble
+                    key={item.id}
+                    item={item}
+                    onSelect={() => setSelectedId(item.id)}
+                  />
+                );
+              }
 
-          return (
-            <OutboundBubble
-              key={item.id}
-              item={item}
-              onSelect={() => setSelectedId(item.id)}
-            />
-          );
-        })}
-        <div ref={bottomRef} aria-hidden className="h-px" />
+              return (
+                <OutboundBubble
+                  key={item.id}
+                  item={item}
+                  onSelect={() => setSelectedId(item.id)}
+                />
+              );
+            })}
+            <div ref={bottomRef} aria-hidden className="h-px" />
+          </div>
+        </div>
       </div>
 
       <DetailSheet item={selectedItem} onClose={() => setSelectedId(null)} />
@@ -441,7 +450,8 @@ function InboundBubble({
   item: InboundItem;
   onSelect: () => void;
 }) {
-  const text = inboundTextContent(item.entry);
+  const rawText = inboundTextContent(item.entry);
+  const text = isGeneratedMediaLabel(item.entry, rawText) ? null : rawText;
   const hasImage = item.entry.media.some((asset) => asset.kind === "image");
 
   return (

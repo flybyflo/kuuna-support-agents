@@ -46,7 +46,7 @@ export async function ConversationTab({
 
   if (visibleInbound.length === 0 && visibleOutbound.length === 0) {
     return (
-      <div className="p-4">
+      <div className="h-full min-h-0 overflow-y-auto p-4">
         <Notice title="No conversation yet" tone="info">
           No messages have been persisted for this group. Messages will appear
           here once the gateway records inbound traffic.
@@ -55,5 +55,9 @@ export async function ConversationTab({
     );
   }
 
-  return <ChatTimeline inbound={visibleInbound} outbound={visibleOutbound} />;
+  return (
+    <div className="h-full min-h-0">
+      <ChatTimeline inbound={visibleInbound} outbound={visibleOutbound} />
+    </div>
+  );
 }

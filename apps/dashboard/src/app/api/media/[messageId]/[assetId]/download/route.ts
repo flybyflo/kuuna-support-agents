@@ -66,6 +66,17 @@ function responseFromDataUrl(
   });
 }
 
+function uniqueUrls(urls: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const url of urls) {
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    result.push(url);
+  }
+  return result;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Params },
@@ -89,34 +100,43 @@ export async function GET(
 
   const filename = fallbackFilename(asset);
   const isInlineImage = disposition === "inline" && asset.mime_type.startsWith("image/");
-  const downloadUrl = isInlineImage
-    ? asset.status === "ready" && asset.download_url
-      ? asset.download_url
-      : asset.preview_url ?? asset.download_url
-    : asset.download_url ?? (asset.mime_type.startsWith("image/") ? asset.preview_url : null);
-  if (!downloadUrl) {
+  const downloadUrls = isInlineImage
+    ? uniqueUrls([asset.preview_url, asset.download_url])
+    : uniqueUrls([
+        asset.download_url,
+        asset.mime_type.startsWith("image/") ? asset.preview_url : null,
+      ]);
+  if (downloadUrls.length === 0) {
     return NextResponse.json({ detail: "download unavailable" }, { status: 404 });
   }
 
-  if (downloadUrl.startsWith("data:")) {
-    return (
-      responseFromDataUrl(downloadUrl, filename, asset.mime_type, disposition) ??
-      NextResponse.json({ detail: "invalid data url" }, { status: 502 })
-    );
+  for (const downloadUrl of downloadUrls) {
+    if (downloadUrl.startsWith("data:")) {
+      const dataUrlResponse = responseFromDataUrl(
+        downloadUrl,
+        filename,
+        asset.mime_type,
+        disposition,
+      );
+      if (dataUrlResponse) return dataUrlResponse;
+      continue;
+    }
+
+    const upstream = await fetch(downloadUrl, { cache: "no-store" });
+    if (!upstream.ok || !upstream.body) {
+      continue;
+    }
+
+    return new Response(upstream.body, {
+      headers: {
+        "content-type": upstream.headers.get("content-type") ?? asset.mime_type,
+        "content-disposition": contentDisposition(filename, disposition),
+        ...(upstream.headers.get("content-length")
+          ? { "content-length": upstream.headers.get("content-length") as string }
+          : {}),
+      },
+    });
   }
 
-  const upstream = await fetch(downloadUrl, { cache: "no-store" });
-  if (!upstream.ok || !upstream.body) {
-    return NextResponse.json({ detail: "download failed" }, { status: 502 });
-  }
-
-  return new Response(upstream.body, {
-    headers: {
-      "content-type": upstream.headers.get("content-type") ?? asset.mime_type,
-      "content-disposition": contentDisposition(filename, disposition),
-      ...(upstream.headers.get("content-length")
-        ? { "content-length": upstream.headers.get("content-length") as string }
-        : {}),
-    },
-  });
+  return NextResponse.json({ detail: "download failed" }, { status: 502 });
 }
