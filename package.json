@@ -6,6 +6,7 @@
   "workspaces": [
     "apps/*",
     "packages/*",
+    "services/backend-ts",
     "services/runtime-agent-ts"
   ],
   "scripts": {

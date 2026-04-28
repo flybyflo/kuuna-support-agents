@@ -73,6 +73,36 @@ services:
       retries: 30
       start_period: 20s
 
+  backend-ts:
+    build:
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile.dev
+    working_dir: /workspace
+    command: >
+      sh -c '
+        npm install --include=optional &&
+        npm run dev --workspace @kuuna/backend-ts
+      '
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8010"
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8010:8010"
+    volumes:
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   worker:
     build:
       context: ../../backend
@@ -208,6 +238,7 @@ services:
 volumes:
   dashboard_node_modules:
   workspace_node_modules:
+  backend_ts_node_modules:
   backend_venv:
   worker_venv:
   todo_exporter_venv:
