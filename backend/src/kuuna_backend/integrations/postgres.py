@@ -9,7 +9,7 @@ from kuuna_backend.config.settings import get_settings
 
 def get_engine() -> Engine:
     settings = get_settings()
-    return create_engine(settings.database_url, future=True, pool_pre_ping=True)
+    return create_engine(settings.sqlalchemy_database_url, future=True, pool_pre_ping=True)
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_engine(), class_=Session)

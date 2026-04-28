@@ -5,12 +5,17 @@ import {
 } from "@kuuna/agent-contracts";
 
 export const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+export const DEFAULT_HOST = "::";
 export const DEFAULT_PORT = 8100;
 export const MAX_MODEL_ATTEMPTS = 2;
 
 export function port(): number {
   const value = Number.parseInt(process.env.PORT ?? "", 10);
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_PORT;
+}
+
+export function host(): string {
+  return process.env.HOST?.trim() || DEFAULT_HOST;
 }
 
 export function openAiApiKey(): string | undefined {

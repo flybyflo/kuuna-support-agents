@@ -2,9 +2,9 @@ import { z } from "zod";
 
 const envSchema = z.object({
   APP_ENV: z.string().default("dev"),
-  HOST: z.string().default("0.0.0.0"),
+  HOST: z.string().default("::"),
   PORT: z.coerce.number().int().positive().default(8010),
-  DATABASE_URL: z.string().default("postgresql://postgres:postgres@localhost:5432/kuuna"),
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().default("redis://localhost:6379/0"),
   SENTRY_DSN: z.string().optional(),
   INTERNAL_OPS_TOKEN: z.string().optional(),

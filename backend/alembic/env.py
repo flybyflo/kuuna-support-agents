@@ -7,6 +7,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 
+from kuuna_backend.config.settings import Settings
 from kuuna_backend.db import Base
 
 config = context.config
@@ -14,8 +15,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-if database_url := os.getenv("DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", database_url)
+database_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+if not database_url:
+    raise RuntimeError("DATABASE_URL is required for Alembic migrations")
+config.set_main_option("sqlalchemy.url", Settings(DATABASE_URL=database_url).sqlalchemy_database_url)
 
 target_metadata = Base.metadata
 

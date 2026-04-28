@@ -69,6 +69,6 @@ Remaining live-verification gates:
 Run the Postgres-backed TS contract subset with:
 
 ```bash
-BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/kuuna \
+BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/kuuna \
   npm run test --workspace @kuuna/backend-ts
 ```

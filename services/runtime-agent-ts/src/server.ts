@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { defaultModel, defaultReasoningEffort, openAiApiKey, openAiBaseUrl, openAiTimeoutSeconds, port } from "./config.js";
+import { defaultModel, defaultReasoningEffort, host, openAiApiKey, openAiBaseUrl, openAiTimeoutSeconds, port } from "./config.js";
 import { runAgent } from "./runner.js";
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
@@ -57,6 +57,6 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port(), "0.0.0.0", () => {
-  console.log(JSON.stringify({ event: "runtime_agent_ts_started", port: port() }));
+server.listen(port(), host(), () => {
+  console.log(JSON.stringify({ event: "runtime_agent_ts_started", host: host(), port: port() }));
 });

@@ -12,10 +12,7 @@ class Settings(BaseSettings):
     app_name: str = "Kuuna Backend"
     app_env: str = "dev"
 
-    database_url: str = Field(
-        default="postgresql+psycopg://postgres:postgres@localhost:5432/kuuna",
-        alias="DATABASE_URL",
-    )
+    database_url: str = Field(alias="DATABASE_URL")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
     s3_endpoint_url: str | None = Field(default=None, alias="S3_ENDPOINT_URL")
@@ -85,6 +82,12 @@ class Settings(BaseSettings):
     auth_rate_limit_max_attempts: int = Field(default=20, alias="AUTH_RATE_LIMIT_MAX_ATTEMPTS")
 
     sentry_dsn: str | None = Field(default=None, alias="SENTRY_DSN")
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        if self.database_url.startswith("postgresql://"):
+            return self.database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return self.database_url
 
 
 @lru_cache
