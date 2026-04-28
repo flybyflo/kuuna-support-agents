@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import pino, { type Logger } from "pino";
 import qrcode from "qrcode-terminal";
 
@@ -25,7 +22,6 @@ export class BaileysGateway implements GatewayClient {
   constructor(
     private readonly input: {
       authDir: string;
-      legacyNeonizeDatabasePath?: string | null;
       sessionName: string;
       backendClient: BackendIngestClient;
       connectionStatus: GatewayConnectionStatus;
@@ -103,7 +99,6 @@ export class BaileysGateway implements GatewayClient {
   private async openSocket(): Promise<void> {
     this.stopping = false;
     this.input.connectionStatus.markDisconnected("connecting");
-    this.warnIfLegacySessionNeedsPairing();
     const baileys = await this.loadBaileys();
     const { state, saveCreds } = await baileys.useMultiFileAuthState(this.input.authDir);
     this.saveCreds = saveCreds;
@@ -237,35 +232,13 @@ export class BaileysGateway implements GatewayClient {
     }
   }
 
-  private warnIfLegacySessionNeedsPairing(): void {
-    const legacyPath = this.input.legacyNeonizeDatabasePath;
-    if (!legacyPath || !existsSync(legacyPath) || this.hasBaileysCredentials()) return;
-    this.input.connectionStatus.markDisconnected(
-      "legacy_session_detected",
-      "old Neonize session found but Baileys requires a fresh WhatsApp pairing",
-    );
-    this.logger.warn({
-      event: "gateway_legacy_neonize_session_detected",
-      legacy_database_path: legacyPath,
-      auth_dir: this.input.authDir,
-      message: "Old Neonize sessions cannot be reused by Baileys. Scan the next QR code to pair this gateway again.",
-    });
-  }
-
-  private hasBaileysCredentials(): boolean {
-    return existsSync(join(this.input.authDir, "creds.json"));
-  }
-
   private printQr(qr: string): void {
     if (this.input.printQrToConsole === false) return;
     const render = this.input.qrRenderer ?? ((value: string) => qrcode.generate(value, { small: true }));
     this.logger.info({
       event: "gateway_pairing_qr_available",
       auth_dir: this.input.authDir,
-      legacy_database_dir: this.input.legacyNeonizeDatabasePath
-        ? dirname(this.input.legacyNeonizeDatabasePath)
-        : null,
-      message: "Scan this QR code in WhatsApp Linked Devices. The previous Neonize session cannot be reused.",
+      message: "Scan this QR code in WhatsApp Linked Devices.",
     });
     render(qr);
   }

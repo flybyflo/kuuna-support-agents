@@ -11,7 +11,7 @@ const skipReason = contractDatabaseUrl
   ? false
   : "set BACKEND_TS_CONTRACT_DATABASE_URL to run backend-ts contract tests";
 
-test("contract: auth login and me match Python shape", { skip: skipReason }, async (t) => {
+test("contract: auth login and me match expected shape", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 

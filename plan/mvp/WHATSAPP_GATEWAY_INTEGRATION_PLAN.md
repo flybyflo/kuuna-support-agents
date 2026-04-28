@@ -1,8 +1,7 @@
 # WhatsApp Gateway Integration Plan (MVP)
 
-Base references:
+Base reference:
 - `plan/mvp/PRD.md`
-- `plan/mvp/PROJECT_STRUCTURE_PLAN.md`
 
 Scope: integration plan for the WhatsApp transport layer (`services/gateway`) and its contracts with backend routing, ingest, and outbound dispatch.
 
@@ -20,7 +19,7 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
 ## 2) Integration Boundaries
 
 ### Gateway owns
-- Provider session lifecycle (neonize connection/session)
+- Provider session lifecycle (Baileys connection/session)
 - Incoming webhook/event normalization to internal schema
 - Outbound delivery to WhatsApp provider API
 - Transport retries for temporary provider errors
@@ -40,7 +39,7 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
 ```json
 {
   "trace_id": "uuid",
-  "provider": "whatsapp-neonize",
+  "provider": "whatsapp-baileys",
   "provider_group_id": "string",
   "provider_message_id": "string",
   "sender_provider_user_id": "string",
@@ -119,7 +118,7 @@ Scope: integration plan for the WhatsApp transport layer (`services/gateway`) an
 ## 7) Implementation Phases
 
 ### Phase A — Transport skeleton
-- Neonize session bootstrap
+- Baileys session bootstrap
 - Inbound event mapper
 - Health endpoint and structured logging
 

@@ -71,7 +71,7 @@ if ! wait_for_gateway_healthz; then
   exit 1
 fi
 
-log "running alembic upgrade head"
+log "running drizzle migrations"
 compose run --rm migrate >/dev/null
 
 log "verifying core tables exist"

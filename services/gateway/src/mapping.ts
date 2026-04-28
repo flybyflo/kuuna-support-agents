@@ -26,7 +26,7 @@ export function mapBaileysMessage(message: AnyRecord): GatewayInboundEvent {
 
   return {
     trace_id: randomUUID(),
-    provider: "whatsapp-neonize",
+    provider: "whatsapp-baileys",
     provider_group_id: providerGroupId,
     provider_message_id: finalProviderMessageId,
     sender_provider_user_id: senderProviderUserId,

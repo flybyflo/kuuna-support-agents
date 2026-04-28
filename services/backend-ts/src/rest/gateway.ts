@@ -20,7 +20,7 @@ import { evaluateTrigger } from "../trigger.js";
 
 const inboundEventSchema = z.object({
   trace_id: z.string().uuid().default(() => randomUUID()),
-  provider: z.literal("whatsapp-neonize"),
+  provider: z.literal("whatsapp-baileys"),
   provider_group_id: z.string().min(1),
   provider_message_id: z.string().min(1),
   sender_provider_user_id: z.string().nullable().optional(),

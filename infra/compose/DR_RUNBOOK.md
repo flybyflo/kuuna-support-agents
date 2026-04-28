@@ -32,7 +32,7 @@ What it does:
 2. Creates a `pg_dump` of `kuuna`.
 3. Creates a temporary DB (`kuuna_restore_smoke_<timestamp>`).
 4. Restores the dump into the temporary DB.
-5. Runs sanity checks (`public` tables > 0 and `alembic_version` present).
+5. Runs sanity checks (`public` tables > 0 and migration metadata present).
 6. Drops the temporary DB.
 7. Leaves the dump artifact under `infra/compose/smoke/artifacts/`.
 
@@ -47,7 +47,7 @@ Checks:
 - `redis` healthy
 - backend `/health`
 - gateway ops `/healthz`
-- `alembic upgrade head`
+- `npm run db:migrate --workspace @kuuna/backend-ts`
 - required core tables exist
 
 ## 3) Periodic Execution Recommendation

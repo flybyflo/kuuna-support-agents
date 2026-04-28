@@ -1,6 +1,6 @@
 # Backend TS
 
-Parallel TypeScript/tRPC backend migration target for the Kuuna control plane.
+TypeScript/tRPC backend for the Kuuna control plane.
 
 This service owns the active TypeScript backend path:
 
@@ -31,10 +31,4 @@ BACKEND_TS_CONTRACT_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/k
   npm run test --workspace @kuuna/backend-ts
 ```
 
-The TypeScript worker is intentionally not part of the default Compose profile yet, because the
-Python RQ worker remains the behavioral owner during parity work. To start the TS worker during
-cutover experiments:
-
-```bash
-docker compose -f infra/compose/docker-compose.dev.yml --profile backend-ts-cutover up worker-ts
-```
+The TypeScript worker is part of the default Compose stack and uses the same Drizzle schema.

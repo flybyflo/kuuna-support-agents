@@ -3,13 +3,13 @@
 Staff-operated WhatsApp group agents with sandboxed runtimes, deterministic routing, and dashboard-based governance.
 
 ## Status
-This repository now contains the **MVP planning docs plus an initial implementation scaffold**.
+This repository contains the TypeScript implementation for the Kuuna control plane, dashboard,
+WhatsApp gateway, and runtime agent.
 
 - PRD: `plan/mvp/PRD.md`
-- Project structure plan: `plan/mvp/PROJECT_STRUCTURE_PLAN.md`
-- Agent guides: `AGENTS.md`, `apps/dashboard/AGENTS.md`, `backend/AGENTS.md`
+- Agent guides: `AGENTS.md`, `apps/dashboard/AGENTS.md`
 
-Implementation is still targeting a single dev environment first.
+Implementation is targeting a single dev environment first.
 
 ## MVP Overview
 - One agent instance per WhatsApp group (strict 1:1 active binding)
@@ -27,7 +27,7 @@ Implementation is still targeting a single dev environment first.
 
 ## Planned Tech Stack (MVP)
 - **Dashboard:** Next.js 15 + TypeScript
-- **Control Plane:** TypeScript Fastify + tRPC + Drizzle, with Alembic still owning current migrations
+- **Control Plane:** TypeScript Fastify + tRPC + Drizzle
 - **Agent runtime framework:** TypeScript Pi runtime
 - **WhatsApp gateway:** Baileys
 - **DB:** PostgreSQL 16 + pgvector + RLS
@@ -59,7 +59,6 @@ Implementation is still targeting a single dev environment first.
   - Dashboard → `kuuna-dashboard`
   - Gateway → `kuuna-gateway`
 - Service-local `.sentryclirc` defaults:
-  - `backend/.sentryclirc`
   - `apps/dashboard/.sentryclirc`
   - `services/gateway/.sentryclirc`
 - DSNs are pre-wired in dev env templates:
@@ -71,7 +70,6 @@ Implementation is still targeting a single dev environment first.
 
 ## Repository Layout (Scaffold)
 - `apps/dashboard` - Next.js 15 + TypeScript dashboard scaffold
-- `backend` - Python Alembic migrations and legacy backend reference
 - `services/backend-ts` - TypeScript control plane API and worker
 - `services/gateway` - TypeScript WhatsApp gateway using Baileys
 - `services/runtime-agent-ts` - TypeScript Pi runtime agent used by Compose and per-group containers
@@ -101,7 +99,7 @@ npm run build
 npm run lint
 ```
 
-These commands cover `apps/dashboard`, `services/runtime-agent-ts`, and shared packages under `packages/*`.
+These commands cover the dashboard, backend, gateway, runtime agent, and shared packages.
 
 Services:
 - Dashboard: http://localhost:3000
@@ -151,11 +149,9 @@ See also: `infra/compose/DR_RUNBOOK.md`.
 - Gateway stores Baileys auth/session state in Docker volume `gateway_session`.
 - Auth state path is `BAILEYS_AUTH_DIR=/data/baileys-auth`.
 - Restarting containers keeps the WhatsApp session; removing the volume resets it.
-- Existing Neonize sessions in `/data/neonize.db` cannot be reused by Baileys.
-  On first Baileys start, scan the QR printed in the gateway logs or read it from
-  `GET /ops/qr`.
+- On first Baileys start, scan the QR printed in the gateway logs or read it from
+  the gateway ops UI.
 
 ## Next Step
-1. Replace the remaining dashboard direct-DB fallback paths with generated OpenAPI calls.
-2. Harden production runtime provisioning defaults for the Hetzner host network and secret store.
-3. Add end-to-end smoke coverage against Docker Compose with a live WhatsApp test account.
+1. Harden production runtime provisioning defaults for the Hetzner host network and secret store.
+2. Add end-to-end smoke coverage against Docker Compose with a live WhatsApp test account.

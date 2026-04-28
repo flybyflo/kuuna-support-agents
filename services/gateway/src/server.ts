@@ -80,7 +80,6 @@ function createDefaultGatewayClient(): GatewayClient {
   const qrStatus = new GatewayQrStatus();
   return new BaileysGateway({
     authDir: settings.BAILEYS_AUTH_DIR,
-    legacyNeonizeDatabasePath: settings.NEONIZE_DATABASE_PATH,
     sessionName: settings.GATEWAY_SESSION_NAME,
     printQrToConsole: settings.GATEWAY_PRINT_QR,
     logLevel: settings.LOG_LEVEL.toLowerCase(),

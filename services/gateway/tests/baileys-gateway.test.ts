@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import { BackendIngestClient } from "../src/backend.js";
@@ -160,21 +157,4 @@ test("logged out close does not reconnect", async () => {
   });
 
   assert.equal(gateway.connectionSnapshot().last_event, "logged_out");
-});
-
-test("detects legacy Neonize sessions when Baileys credentials are missing", async () => {
-  const socket = new FakeSocket();
-  const calls: unknown[] = [];
-  const tempDir = mkdtempSync(join(tmpdir(), "kuuna-gateway-"));
-  const legacyPath = join(tempDir, "neonize.db");
-  writeFileSync(legacyPath, "legacy");
-  const gateway = makeGateway(socket, calls, {
-    authDir: join(tempDir, "baileys-auth"),
-    legacyNeonizeDatabasePath: legacyPath,
-  });
-
-  await gateway.start();
-
-  assert.equal(gateway.connectionSnapshot().last_event, "legacy_session_detected");
-  assert.equal(gateway.connectionSnapshot().last_error?.includes("fresh WhatsApp pairing"), true);
 });

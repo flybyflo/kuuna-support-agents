@@ -1,1 +1,0 @@
-"""Structured event logging placeholder."""

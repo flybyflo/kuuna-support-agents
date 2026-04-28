@@ -11,7 +11,7 @@ export type GatewayInboundMedia = {
 
 export type GatewayInboundEvent = {
   trace_id: string;
-  provider: "whatsapp-neonize";
+  provider: "whatsapp-baileys";
   provider_group_id: string;
   provider_message_id: string;
   sender_provider_user_id?: string | null;

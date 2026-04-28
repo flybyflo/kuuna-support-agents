@@ -14,7 +14,7 @@ const skipReason = contractDatabaseUrl
 
 function inboundPayload(messageId: string, eventType = "message_created"): {
   trace_id: string;
-  provider: "whatsapp-neonize";
+  provider: "whatsapp-baileys";
   provider_group_id: string;
   provider_message_id: string;
   sender_provider_user_id: string;
@@ -30,7 +30,7 @@ function inboundPayload(messageId: string, eventType = "message_created"): {
 } {
   return {
     trace_id: randomUUID(),
-    provider: "whatsapp-neonize",
+    provider: "whatsapp-baileys",
     provider_group_id: "group-123",
     provider_message_id: messageId,
     sender_provider_user_id: "user-1",

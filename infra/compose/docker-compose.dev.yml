@@ -18,7 +18,6 @@ services:
       - workspace_node_modules:/workspace/node_modules
       - dashboard_node_modules:/workspace/apps/dashboard/node_modules
       - dashboard_next:/workspace/apps/dashboard/.next
-      - dashboard_next:/workspace/apps/dashboard/.next
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
       - gateway_node_modules:/workspace/services/gateway/node_modules
 
@@ -111,34 +110,6 @@ services:
       postgres:
         condition: service_healthy
 
-  backend-python:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c 'uv sync && uv run python -m kuuna_backend.main'
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-    ports:
-      - "127.0.0.1:8001:8000"
-    volumes:
-      - ../../backend:/app
-      - backend_venv:/app/.venv
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_started
-
   worker:
     build:
       context: ../..
@@ -167,55 +138,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-
-  worker-python:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    # Migrations are owned by the `backend` service to avoid concurrent DDL / enum races.
-    command: sh -c "uv sync && uv run watchfiles --filter python 'uv run rq worker default' src"
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-      TEMPLATE_BUILD_CONTEXT_PATH: /workspace
-      TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
-    volumes:
-      - ../..:/workspace
-      - ../../backend:/app
-      - worker_venv:/app/.venv
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  todo-exporter:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c 'uv sync && while true; do uv run python -m kuuna_backend.jobs.todo_export; sleep 600; done'
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-    volumes:
-      - ../../backend:/app
-      - todo_exporter_venv:/app/.venv
-    depends_on:
-      postgres:
         condition: service_healthy
 
   gateway:
@@ -287,9 +209,6 @@ volumes:
   dashboard_next:
   workspace_node_modules:
   backend_ts_node_modules:
-  backend_venv:
-  worker_venv:
-  todo_exporter_venv:
   gateway_node_modules:
   gateway_session:
   postgres_data:

@@ -187,11 +187,11 @@ Rules:
 
 ## 8. Technical Stack (MVP)
 - **Dashboard:** Next.js 15, TypeScript
-- **Control Plane:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic
-- **Agent Framework:** PydanticAI
-- **Gateway:** neonize (WhatsApp)
+- **Control Plane:** TypeScript, Fastify, tRPC, Drizzle
+- **Agent Framework:** TypeScript runtime agent
+- **Gateway:** Baileys (WhatsApp)
 - **Database:** PostgreSQL 16 + pgvector + RLS
-- **Queue:** Redis 7 + RQ
+- **Queue:** Redis 7 + BullMQ
 - **File Storage:** S3-compatible object storage (env bucket + group prefixes)
 - **Runtime:** Docker Compose, single host
 - **Monitoring:** Sentry + structured logs
