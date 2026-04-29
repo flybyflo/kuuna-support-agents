@@ -4,7 +4,15 @@ import qrcode from "qrcode-terminal";
 import { BackendIngestClient } from "./backend.js";
 import { mapBaileysMessage, isSelfMessage } from "./mapping.js";
 import { GatewayConnectionStatus, GatewayQrStatus } from "./status.js";
-import type { ConnectionSnapshot, GatewayClient, GatewayGroup, GatewayInboundEvent, QrSnapshot } from "./types.js";
+import type {
+  ConnectionSnapshot,
+  GatewayClient,
+  GatewayGroup,
+  GatewayGroupParticipant,
+  GatewayInboundEvent,
+  GatewaySelfIdentity,
+  QrSnapshot,
+} from "./types.js";
 
 type AnyRecord = Record<string, unknown>;
 type BaileysModule = typeof import("@whiskeysockets/baileys");
@@ -77,6 +85,44 @@ export class BaileysGateway implements GatewayClient {
       jid: group.id,
       name: group.subject?.trim() || name,
       participants_count: group.participants?.length ?? participants.length,
+    };
+  }
+
+  async listGroupParticipants(providerGroupId: string): Promise<GatewayGroupParticipant[]> {
+    const socket = this.requireSocket();
+    const metadata = await socket.groupMetadata(providerGroupId);
+    const participants = Array.isArray(metadata.participants) ? metadata.participants : [];
+    const self = this.selfIdentity();
+    const selfJid = self.jid;
+    const mapped = participants
+      .map((participant) => mapGroupParticipant(participant, selfJid, self.phone))
+      .filter((participant): participant is GatewayGroupParticipant => Boolean(participant))
+      .sort((left, right) => left.jid.localeCompare(right.jid));
+    if (selfJid && !mapped.some((participant) => participant.is_self || samePhone(participant.phone, self.phone) || sameWhatsAppUser(participant.jid, selfJid))) {
+      mapped.push({
+        jid: selfJid,
+        phone: self.phone,
+        display_name: self.display_name,
+        is_admin: null,
+        is_self: true,
+        metadata: { source: "socket_user" },
+      });
+    }
+    return mapped.sort((left, right) => Number(right.is_self) - Number(left.is_self) || left.jid.localeCompare(right.jid));
+  }
+
+  selfIdentity(): GatewaySelfIdentity {
+    const socket = this.socket;
+    const user = objectRecord(socket?.user);
+    const jid = normalizeUserJid(stringValue(user.id));
+    return {
+      jid,
+      phone: phoneFromJid(jid),
+      display_name: stringValue(user.name ?? user.notify ?? user.verifiedName),
+      metadata: {
+        lid: stringValue(user.lid),
+        phone_number_jid: normalizeUserJid(stringValue(user.phoneNumber)),
+      },
     };
   }
 
@@ -385,4 +431,61 @@ function stringValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function mapGroupParticipant(value: unknown, selfJid: string | null, selfPhone: string | null): GatewayGroupParticipant | null {
+  const participant = objectRecord(value);
+  const jid = normalizeUserJid(stringValue(participant.id ?? participant.jid));
+  if (!jid) return null;
+  const admin = stringValue(participant.admin);
+  const phoneNumberJid = normalizeUserJid(stringValue(participant.phoneNumber));
+  const phone = phoneFromJid(phoneNumberJid) ?? phoneFromJid(jid);
+  return {
+    jid,
+    phone,
+    display_name: stringValue(participant.notify ?? participant.name ?? participant.verifiedName ?? participant.pushName),
+    is_admin: admin ? admin === "admin" || admin === "superadmin" : null,
+    is_self: isSelfParticipant({ jid, phoneNumberJid, phone }, { jid: selfJid, phone: selfPhone }),
+    metadata: {
+      admin,
+      lid: stringValue(participant.lid),
+      phone_number_jid: phoneNumberJid,
+      verified_name: stringValue(participant.verifiedName),
+      contact_name: stringValue(participant.name),
+      notify_name: stringValue(participant.notify),
+    },
+  };
+}
+
+function phoneFromJid(jid: string | null): string | null {
+  if (!jid) return null;
+  const [user, server] = jid.split("@", 2);
+  if (server !== "s.whatsapp.net" || !user) return null;
+  const digits = user.replace(/[^0-9]/g, "");
+  return digits || null;
+}
+
+function normalizeUserJid(jid: string | null): string | null {
+  if (!jid) return null;
+  const [user, server] = jid.split("@", 2);
+  if (!user || !server) return jid;
+  const userWithoutDevice = user.split(":", 1)[0] ?? user;
+  return `${userWithoutDevice}@${server}`;
+}
+
+function sameWhatsAppUser(left: string, right: string): boolean {
+  return normalizeUserJid(left) === normalizeUserJid(right);
+}
+
+function samePhone(left: string | null, right: string | null): boolean {
+  return Boolean(left && right && left === right);
+}
+
+function isSelfParticipant(
+  participant: { jid: string; phoneNumberJid: string | null; phone: string | null },
+  self: { jid: string | null; phone: string | null },
+): boolean {
+  if (self.jid && sameWhatsAppUser(participant.jid, self.jid)) return true;
+  if (self.jid && participant.phoneNumberJid && sameWhatsAppUser(participant.phoneNumberJid, self.jid)) return true;
+  return Boolean(self.phone && participant.phone && self.phone === participant.phone);
 }

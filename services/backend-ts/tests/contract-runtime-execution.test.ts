@@ -153,6 +153,9 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
         assert.equal(request.allowed_tools.includes("media_analyze"), true);
         assert.equal(request.context.media_attachments?.[0]?.media_asset_id, asset.id);
         assert.equal(request.context.media_attachments?.[0]?.preview_url, "data:image/jpeg;base64,aGVsbG8=");
+        assert.match(request.system_prompt ?? "", /template-gesteuerter WhatsApp-Agent/);
+        assert.match(request.system_prompt ?? "", /Template-Anweisungen/);
+        assert.match(request.system_prompt ?? "", /You are a support assistant/);
         return {
           success: true,
           prompt: "prompt",

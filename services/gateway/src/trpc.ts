@@ -11,6 +11,10 @@ const createGroupSchema = z.object({
   participants: z.array(z.string()).default([]),
 });
 
+const groupParticipantsSchema = z.object({
+  providerGroupId: z.string().trim().min(1).max(255),
+});
+
 export function createGatewayRouter(input: {
   client: GatewayClient;
   opsToken?: string | null;
@@ -29,6 +33,10 @@ export function createGatewayRouter(input: {
     health: t.procedure.query(() => ({ status: "ok" as const })),
     ops: t.router({
       groups: opsProcedure.query(async () => ({ items: await input.client.listGroups() })),
+      selfIdentity: opsProcedure.query(() => input.client.selfIdentity()),
+      groupParticipants: opsProcedure.input(groupParticipantsSchema).query(async ({ input: payload }) => ({
+        items: await input.client.listGroupParticipants(payload.providerGroupId),
+      })),
       connection: opsProcedure.query(() => input.client.connectionSnapshot()),
       qr: opsProcedure.query(() => input.client.qrSnapshot()),
       createGroup: opsProcedure.input(createGroupSchema).mutation(async ({ input: payload }) => ({

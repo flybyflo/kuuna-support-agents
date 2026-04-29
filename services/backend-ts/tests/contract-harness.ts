@@ -135,6 +135,7 @@ export async function createContractHarness(): Promise<ContractHarness> {
 async function createContractTables(sql: Sql): Promise<void> {
   await sql.unsafe(`
     create extension if not exists pgcrypto;
+    create extension if not exists vector;
 
     create table users (
       id uuid primary key default gen_random_uuid(),
@@ -168,6 +169,51 @@ async function createContractTables(sql: Sql): Promise<void> {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       unique (user_id, provider_group_id)
+    );
+
+    create table client_profiles (
+      id uuid primary key default gen_random_uuid(),
+      display_name text not null,
+      notes text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table client_profile_identities (
+      id uuid primary key default gen_random_uuid(),
+      client_profile_id uuid not null references client_profiles(id) on delete cascade,
+      provider_user_id text not null unique,
+      derived_phone text,
+      phone_override text,
+      push_name text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table group_members (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      provider_user_id text not null,
+      role text,
+      display_name text,
+      derived_phone text,
+      phone_override text,
+      push_name text,
+      client_profile_id uuid references client_profiles(id) on delete set null,
+      gateway_metadata jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (provider_group_id, provider_user_id)
+    );
+
+    create table group_client_profiles (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      client_profile_id uuid not null references client_profiles(id) on delete cascade,
+      is_primary boolean not null default true,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (provider_group_id, client_profile_id)
     );
 
     create table audit_events (
@@ -356,6 +402,7 @@ async function createContractTables(sql: Sql): Promise<void> {
       export_attempt_count integer not null default 0,
       external_ref text,
       last_export_error text,
+      metadata_json jsonb not null default '{}'::jsonb,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -421,6 +468,53 @@ async function createContractTables(sql: Sql): Promise<void> {
       unique (customer_key, doc_key)
     );
 
+    create table knowledge_personal_docs (
+      id uuid primary key default gen_random_uuid(),
+      client_profile_id uuid not null references client_profiles(id) on delete cascade,
+      doc_key text not null,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (client_profile_id, doc_key)
+    );
+
+    create table knowledge_statements (
+      id uuid primary key default gen_random_uuid(),
+      scope text not null,
+      provider_group_id text not null,
+      client_profile_id uuid references client_profiles(id) on delete set null,
+      source_message_id uuid not null references messages(id) on delete cascade,
+      source_message_version_id uuid not null references message_versions(id) on delete cascade,
+      provider_message_id text not null,
+      speaker_provider_user_id text,
+      speaker_role text,
+      speaker_display_name text,
+      statement_text text not null,
+      attribution_label text not null,
+      source_type text not null default 'message',
+      occurred_at timestamptz not null,
+      metadata_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (source_message_id)
+    );
+
+    create table knowledge_claims (
+      id uuid primary key default gen_random_uuid(),
+      statement_id uuid not null references knowledge_statements(id) on delete cascade,
+      scope text not null,
+      provider_group_id text not null,
+      client_profile_id uuid references client_profiles(id) on delete set null,
+      claim_text text not null,
+      claim_kind text not null default 'general_statement',
+      attribution_label text not null,
+      confidence integer not null default 100,
+      extraction_method text not null default 'sentence_split_v1',
+      metadata_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
     create table knowledge_versions (
       id uuid primary key default gen_random_uuid(),
       scope text not null,
@@ -441,6 +535,7 @@ async function createContractTables(sql: Sql): Promise<void> {
       content text not null,
       token_count integer not null,
       embedding text not null,
+      embedding_vector vector(1536),
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -449,12 +544,14 @@ async function createContractTables(sql: Sql): Promise<void> {
       id uuid primary key default gen_random_uuid(),
       scope text not null,
       provider_group_id text,
+      client_profile_id uuid references client_profiles(id) on delete cascade,
       source_type text not null,
       source_id uuid not null,
       chunk_no integer not null,
       content text not null,
       token_count integer not null default 0,
       embedding text,
+      embedding_vector vector(1536),
       metadata_json jsonb not null default '{}'::jsonb,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),

@@ -1,0 +1,162 @@
+import Link from "next/link";
+
+import { StatusBadge } from "@/components/status/status-badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Notice } from "@/components/ui/notice";
+import { listGroupKnowledgeExplorer } from "@/lib/api-client";
+import type { KnowledgeExplorerItem } from "@/lib/api-client/types";
+import { formatDateTime } from "@/lib/utils/format";
+
+type KnowledgeTabProps = {
+  providerGroupId: string;
+  filters?: {
+    q?: string;
+    scope?: "common" | "group" | "personal";
+    sourceRole?: "client" | "lawyer" | "company_staff" | "bot" | "unknown";
+  };
+};
+
+const scopeLabels: Record<KnowledgeExplorerItem["scope"], string> = {
+  common: "Common",
+  group: "Group",
+  personal: "Personal",
+};
+
+const kindLabels: Record<KnowledgeExplorerItem["kind"], string> = {
+  document: "Document",
+  statement: "Statement",
+  claim: "Claim",
+};
+
+export async function KnowledgeTab({ providerGroupId, filters = {} }: KnowledgeTabProps) {
+  const explorer = await listGroupKnowledgeExplorer(providerGroupId, filters);
+  const grouped = {
+    common: explorer.items.filter((item) => item.scope === "common"),
+    group: explorer.items.filter((item) => item.scope === "group"),
+    personal: explorer.items.filter((item) => item.scope === "personal"),
+  };
+
+  return (
+    <div className="flex flex-col gap-6 p-4">
+      <Notice title="Knowledge is source-attributed" tone="info">
+        Chat-derived entries are stored as statements or extracted claims with
+        speaker, role, timestamp and message source. Treat them as attributed
+        perspectives, not objective facts.
+      </Notice>
+
+      <form className="grid gap-3 rounded border border-border bg-card p-4 md:grid-cols-[1fr_180px_220px_auto]">
+        <input
+          name="q"
+          defaultValue={filters.q ?? ""}
+          placeholder="Search Knowledge"
+          className="h-10 rounded border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+        <select
+          name="scope"
+          defaultValue={filters.scope ?? ""}
+          className="h-10 rounded border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">All levels</option>
+          <option value="common">Common</option>
+          <option value="group">Group</option>
+          <option value="personal">Personal</option>
+        </select>
+        <select
+          name="sourceRole"
+          defaultValue={filters.sourceRole ?? ""}
+          className="h-10 rounded border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">All source roles</option>
+          <option value="client">Client</option>
+          <option value="lawyer">Lawyer</option>
+          <option value="company_staff">Company staff</option>
+          <option value="bot">Bot</option>
+          <option value="unknown">Unknown</option>
+        </select>
+        <Button type="submit" variant="outline">Filter</Button>
+      </form>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {(["common", "group", "personal"] as const).map((scope) => (
+          <Card key={scope} className="overflow-hidden">
+            <CardHeader className="border-b border-border">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-base">{scopeLabels[scope]}</CardTitle>
+                <StatusBadge status={grouped[scope].length ? "ready" : "draft"} />
+              </div>
+              {scope === "personal" ? (
+                <p className="text-sm text-muted-foreground">
+                  {explorer.primaryClientDisplayName ?? "No primary client configured"}
+                </p>
+              ) : null}
+            </CardHeader>
+            <CardContent className="p-0">
+              <KnowledgeList items={grouped[scope]} providerGroupId={providerGroupId} />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeList({
+  items,
+  providerGroupId,
+}: {
+  items: KnowledgeExplorerItem[];
+  providerGroupId: string;
+}) {
+  if (items.length === 0) {
+    return (
+      <div className="px-4 py-8 text-sm text-muted-foreground">
+        No entries for this level yet.
+      </div>
+    );
+  }
+  return (
+    <div className="divide-y divide-border">
+      {items.map((item) => (
+        <article key={`${item.kind}:${item.id}`} className="flex flex-col gap-3 px-4 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-medium">
+              {kindLabels[item.kind]}
+            </span>
+            {item.sourceRole ? (
+              <span className="rounded border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+                {item.sourceRole}
+              </span>
+            ) : null}
+            <span className="text-xs text-muted-foreground">
+              {formatDateTime(item.occurredAt)}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <h3 className="text-sm font-semibold text-foreground">{item.title}</h3>
+            <p className="line-clamp-5 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+              {item.text}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {item.speakerDisplayName ? <span>{item.speakerDisplayName}</span> : null}
+            {item.providerMessageId ? (
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
+                {item.providerMessageId}
+              </code>
+            ) : null}
+            {item.sourceMessageId ? (
+              <Button variant="ghost" size="sm" asChild>
+                <Link href={`/inbox/${encodeURIComponent(providerGroupId)}`}>
+                  Open chat
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}

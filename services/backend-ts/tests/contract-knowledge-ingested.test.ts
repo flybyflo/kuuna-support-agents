@@ -131,10 +131,7 @@ test("contract: ingested docs status follows pending media and transcript chunks
   assert.equal(processing[0]?.status, "processing");
 
   const common = await caller.knowledge.ingestedCommonDocs();
-  assert.equal(common.length, 1);
-  assert.equal(common[0]?.scope, "common");
-  assert.equal(common[0]?.chunk_count, 2);
-  assert.equal(common[0]?.status, "processing");
+  assert.deepEqual(common, []);
 });
 
 test("contract: customer docs list all docs for provider group", { skip: skipReason }, async (t) => {

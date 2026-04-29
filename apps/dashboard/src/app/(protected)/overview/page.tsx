@@ -79,12 +79,12 @@ export default async function OverviewPage() {
             : "All groups reporting",
     },
     {
-      label: "Knowledge ingestion",
+      label: "Company knowledge",
       status: commonDocs.length > 0 ? "ok" : "warn",
       detail:
         commonDocs.length > 0
-          ? `${commonDocs.length} docs indexed`
-          : "No documents ingested yet",
+          ? `${commonDocs.length} admin docs`
+          : "No admin documents yet",
     },
     {
       label: "Tool catalog",
@@ -158,7 +158,7 @@ export default async function OverviewPage() {
         <MetricCard
           label="Knowledge docs"
           value={commonDocs.length}
-          hint="Common + group scopes"
+          hint="Admin-managed common docs"
           icon={BookOpen}
         />
       </section>

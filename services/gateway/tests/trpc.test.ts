@@ -15,6 +15,26 @@ function fakeClient(): GatewayClient & { sent: Array<{ providerGroupId: string; 
     async listGroups() {
       return [{ jid: "120363000000000@g.us", name: "Support Team", participants_count: 3 }];
     },
+    async listGroupParticipants() {
+      return [
+        {
+          jid: "43664111222@s.whatsapp.net",
+          phone: "43664111222",
+          display_name: "Client One",
+          is_admin: false,
+          is_self: false,
+          metadata: { admin: null, lid: null },
+        },
+      ];
+    },
+    selfIdentity() {
+      return {
+        jid: "43664000000@s.whatsapp.net",
+        phone: "43664000000",
+        display_name: "Kuuna Bot",
+        metadata: {},
+      };
+    },
     async createGroup(name, participants) {
       return { jid: "120363999999999@g.us", name, participants_count: participants.length };
     },
@@ -58,6 +78,34 @@ test("ops groups return name and jid over tRPC", async () => {
   assert.deepEqual(result.items, [
     { jid: "120363000000000@g.us", name: "Support Team", participants_count: 3 },
   ]);
+});
+
+test("ops group participants return WhatsApp identity details over tRPC", async () => {
+  const result = await caller({
+    opsToken: "secret",
+    headers: new Headers({ "x-internal-token": "secret" }),
+  }).ops.groupParticipants({ providerGroupId: "120363000000000@g.us" });
+
+  assert.deepEqual(result.items, [
+    {
+      jid: "43664111222@s.whatsapp.net",
+      phone: "43664111222",
+      display_name: "Client One",
+      is_admin: false,
+      is_self: false,
+      metadata: { admin: null, lid: null },
+    },
+  ]);
+});
+
+test("ops self identity returns bot WhatsApp identity over tRPC", async () => {
+  const result = await caller({
+    opsToken: "secret",
+    headers: new Headers({ "x-internal-token": "secret" }),
+  }).ops.selfIdentity();
+
+  assert.equal(result.jid, "43664000000@s.whatsapp.net");
+  assert.equal(result.phone, "43664000000");
 });
 
 test("connection and qr status return tracker snapshots over tRPC", async () => {

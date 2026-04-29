@@ -141,9 +141,10 @@ export type RuntimeRun = {
 export type KnowledgeDoc = {
   id: string;
   docKey: string;
-  scope: "common" | "group" | "customer";
+  scope: "common" | "group" | "customer" | "personal";
   providerGroupId?: string;
   customerKey?: string;
+  clientProfileId?: string;
   title: string;
   status: WorkflowStatus;
   updatedAt: string;
@@ -153,7 +154,7 @@ export type KnowledgeDoc = {
 
 export type KnowledgeDocVersion = {
   id: string;
-  scope: "common" | "group" | "customer";
+  scope: "common" | "group" | "customer" | "personal";
   docRefId: string;
   versionNo: number;
   status: WorkflowStatus;
@@ -161,6 +162,72 @@ export type KnowledgeDocVersion = {
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+};
+
+export type GroupKnowledgeLevel = "common" | "group" | "personal";
+
+export type KnowledgeSourceAttribution = {
+  sourceRole?: GroupMemberRole | null;
+  speakerDisplayName?: string | null;
+  providerMessageId?: string | null;
+  sourceMessageId?: string | null;
+  clientProfileId?: string | null;
+};
+
+export type KnowledgeExplorerItem = KnowledgeSourceAttribution & {
+  id: string;
+  kind: "document" | "statement" | "claim";
+  scope: GroupKnowledgeLevel;
+  title: string;
+  text: string;
+  occurredAt: string;
+  updatedAt: string;
+};
+
+export type GroupKnowledgeExplorer = {
+  providerGroupId: string;
+  primaryClientProfileId?: string | null;
+  primaryClientDisplayName?: string | null;
+  items: KnowledgeExplorerItem[];
+};
+
+export type GroupMemberRole = "client" | "lawyer" | "company_staff" | "bot";
+
+export type ClientProfile = {
+  id: string;
+  displayName: string;
+  notes?: string | null;
+};
+
+export type GroupPrivateRetrievalStatus = {
+  complete: boolean;
+  primaryClientCount: number;
+  clientMemberCount: number;
+  missingRoleCount: number;
+  reason?: string | null;
+};
+
+export type WhatsAppGroupMember = {
+  providerGroupId: string;
+  providerUserId: string;
+  role?: GroupMemberRole | null;
+  displayName?: string | null;
+  derivedPhone?: string | null;
+  phoneOverride?: string | null;
+  phoneDisplay?: string | null;
+  pushName?: string | null;
+  linkedClientProfile?: ClientProfile | null;
+  gatewayMetadata: Record<string, unknown>;
+  isPrimaryClient: boolean;
+  setupStatus: "configured" | "missing_role" | "missing_profile";
+  updatedAt: string;
+};
+
+export type WhatsAppGroupMembersResult = {
+  providerGroupId: string;
+  primaryClientProfileId?: string | null;
+  privateRetrievalStatus: GroupPrivateRetrievalStatus;
+  items: WhatsAppGroupMember[];
 };
 
 export type MessageRecord = {

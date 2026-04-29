@@ -28,6 +28,19 @@ class FakeSocket {
     return { id: "120363999999999@g.us", subject, participants: participants.map((id) => ({ id })) };
   }
 
+  async groupMetadata() {
+    return {
+      id: "120363000000000@g.us",
+      subject: "Support Team",
+      participants: [
+        { id: "43664111222@s.whatsapp.net", admin: "admin", notify: "Client One" },
+        { id: "111111@lid", phoneNumber: "43664111999@s.whatsapp.net", notify: "LID Client" },
+        { id: "222222@lid", phoneNumber: "43664000000@s.whatsapp.net", notify: "Felix" },
+        { id: "43664111333@s.whatsapp.net" },
+      ],
+    };
+  }
+
   async sendMessage(jid: string, content: unknown) {
     this.sent.push({ jid, content });
     return { key: { id: "provider-msg-123" } };
@@ -52,7 +65,9 @@ function fakeBaileys(socket: FakeSocket) {
       saveCreds: async () => undefined,
     }),
     fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
-    makeWASocket: () => socket,
+    makeWASocket: () => Object.assign(socket, {
+      user: { id: "43664000000:4@s.whatsapp.net", name: "Kuuna Bot" },
+    }),
     downloadMediaMessage: async () => socket.mediaBytes,
   };
 }
@@ -179,6 +194,8 @@ test("group and outbound methods delegate to socket", async () => {
 
   await gateway.start();
   const groups = await gateway.listGroups();
+  const participants = await gateway.listGroupParticipants("120363000000000@g.us");
+  const self = gateway.selfIdentity();
   const created = await gateway.createGroup("Ops", ["1@s.whatsapp.net"]);
   const providerMessageId = await gateway.sendText({
     providerGroupId: "120363000000000@g.us",
@@ -186,6 +203,38 @@ test("group and outbound methods delegate to socket", async () => {
   });
 
   assert.equal(groups[0]?.name, "Support Team");
+  assert.deepEqual(participants[0], {
+    jid: "222222@lid",
+    phone: "43664000000",
+    display_name: "Felix",
+    is_admin: null,
+    is_self: true,
+    metadata: {
+      admin: null,
+      lid: null,
+      phone_number_jid: "43664000000@s.whatsapp.net",
+      verified_name: null,
+      contact_name: null,
+      notify_name: "Felix",
+    },
+  });
+  assert.deepEqual(participants.find((item) => item.jid === "43664111222@s.whatsapp.net"), {
+    jid: "43664111222@s.whatsapp.net",
+    phone: "43664111222",
+    display_name: "Client One",
+    is_admin: true,
+    is_self: false,
+    metadata: {
+      admin: "admin",
+      lid: null,
+      phone_number_jid: null,
+      verified_name: null,
+      contact_name: null,
+      notify_name: "Client One",
+    },
+  });
+  assert.equal(participants.find((item) => item.jid === "111111@lid")?.phone, "43664111999");
+  assert.equal(self.jid, "43664000000@s.whatsapp.net");
   assert.equal(created.participants_count, 1);
   assert.equal(providerMessageId, "provider-msg-123");
   assert.deepEqual(socket.sent, [{ jid: "120363000000000@g.us", content: { text: "Hello" } }]);

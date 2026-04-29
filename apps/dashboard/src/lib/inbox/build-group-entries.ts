@@ -46,14 +46,19 @@ export function buildInboxGroupEntries(input: {
     ...accessibleGatewayGroups.map((g) => g.providerGroupId),
   ]);
 
-  const bindingsByGroupId = new Map(
-    accessibleBindings.map((b) => [b.providerGroupId, b]),
+  const activeBindingsByGroupId = new Map(
+    accessibleBindings
+      .filter((binding) => binding.status === "active")
+      .map((binding) => [binding.providerGroupId, binding]),
   );
 
   const entries: InboxGroupEntry[] = [];
 
   for (const providerGroupId of providerGroupIds) {
-    const binding = bindingsByGroupId.get(providerGroupId);
+    const binding = activeBindingsByGroupId.get(providerGroupId);
+    const latestBinding = accessibleBindings.find(
+      (item) => item.providerGroupId === providerGroupId,
+    );
     const messagesForGroup = accessibleMessages.filter(
       (m) => m.providerGroupId === providerGroupId,
     );
@@ -79,7 +84,7 @@ export function buildInboxGroupEntries(input: {
 
     const lastActivityAt = maxIso(
       maxIso(latestMessageAt, latestTodoAt),
-      binding?.updatedAt,
+      latestBinding?.updatedAt,
     );
 
     const displayTitle = resolveGroupTitle({
@@ -96,7 +101,7 @@ export function buildInboxGroupEntries(input: {
       kind: isDirectChat(providerGroupId) ? "direct" : "group",
       bound: Boolean(binding),
       bindingId: binding?.id,
-      bindingStatus: binding?.status,
+      bindingStatus: binding?.status ?? latestBinding?.status,
       lastActivityAt,
       messageCount: messagesForGroup.length,
       mediaCount: messagesForGroup.filter((m) => m.hasMedia).length,

@@ -26,7 +26,8 @@ export default async function InboxSettingsTabPage({
 
   const bindings = await listBindings();
   const binding = bindings.find(
-    (item) => item.providerGroupId === providerGroupId,
+    (item) =>
+      item.providerGroupId === providerGroupId && item.status === "active",
   );
 
   return (

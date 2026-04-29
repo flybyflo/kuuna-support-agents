@@ -120,7 +120,9 @@ export default async function InboxCreatePage({
   }
 
   const boundGroupIds = new Set(
-    bindings.map((binding) => binding.providerGroupId),
+    bindings
+      .filter((binding) => binding.status === "active")
+      .map((binding) => binding.providerGroupId),
   );
 
   const selectableGroups = [...mergedGroups.values()]

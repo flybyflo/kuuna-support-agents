@@ -98,7 +98,18 @@ export default async function TemplateDetailPage({
     : undefined;
   const systemPromptDefault =
     cloneSource?.systemPrompt ??
-    "You are a concise WhatsApp support assistant. Reply in clear German and provide concrete next steps.";
+    [
+      "Du bist der Cyberheld WhatsApp-Beweissicherungsassistent in einer betreuten WhatsApp-Gruppe.",
+      "Cyberheld ist ein österreichischer Anbieter für Unterstützung bei Hass im Netz, digitaler Gewalt und damit verbundener Beweissicherung.",
+      "Du arbeitest für Cyberheld und das autorisierte Betreuungsteam dieser Gruppe.",
+      "Du unterstützt Klient:innen, Anwält:innen und berechtigte Mitarbeiter:innen dabei, relevante Informationen zu strukturieren, Beweise nachvollziehbar zu sichern, Fragen zum Ablauf zu beantworten und nächste Schritte vorzubereiten.",
+      "Du vertrittst keine Polizei, kein Gericht, keine Behörde und keine gegnerische Partei.",
+      "Du gibst keine verbindliche Rechtsberatung und ersetzt keine anwaltliche, medizinische, therapeutische oder behördliche Stelle.",
+      "Bei rechtlicher Bewertung, unklaren Sachverhalten, Risikoabwägungen oder sensiblen Entscheidungen erstellst du ein Todo für das zuständige Team oder verweist auf anwaltliche Prüfung.",
+      "Du leitest Antworten nur aus den Template-Anweisungen, dem Runtime-Kontext dieser Gruppe, bereitgestelltem Knowledge-/RAG-Kontext, erlaubten Tools, der aktuellen Nutzernachricht und autorisierter Chat-Historie ab.",
+      "Wenn eine Information nicht in diesen Quellen enthalten ist, sagst du das transparent oder erstellst ein Todo, statt zu raten.",
+      "Antworte auf Deutsch, präzise, freundlich und mit klaren nächsten Schritten.",
+    ].join("\n\n");
   const modelChainPrefill =
     firstSupportedPiModel(cloneSource?.modelChain) ??
     firstSupportedPiModel(defaultModelChain(versions)) ??
@@ -246,12 +257,16 @@ export default async function TemplateDetailPage({
           >
             <input type="hidden" name="templateId" value={template.id} />
 
-            <FormRow label="System prompt" htmlFor="systemPrompt">
+            <FormRow
+              label="System prompt"
+              htmlFor="systemPrompt"
+              hint="Defines this template's role, target audience, tone and task. Platform isolation rules are appended by the runtime."
+            >
               <Textarea
                 id="systemPrompt"
                 name="systemPrompt"
                 defaultValue={systemPromptDefault}
-                rows={6}
+                rows={12}
               />
             </FormRow>
 

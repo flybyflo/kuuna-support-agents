@@ -3,8 +3,10 @@ import { and, eq } from "drizzle-orm";
 import type { DbLike } from "../db/client.js";
 import {
   embeddings,
+  knowledgeCommonDocs,
   knowledgeCustomerDocs,
   knowledgeGroupDocs,
+  knowledgePersonalDocs,
   knowledgeVersions,
   retrievalChunks,
 } from "../db/schema.js";
@@ -49,12 +51,7 @@ export async function processKnowledgeIndexingJob(
     .delete(retrievalChunks)
     .where(and(eq(retrievalChunks.sourceType, "knowledge_version"), eq(retrievalChunks.sourceId, version.id)));
 
-  const providerGroupId =
-    version.scope === "group"
-      ? await providerGroupIdForGroupVersion(database, version.docRefId)
-      : version.scope === "customer"
-        ? await providerGroupIdForCustomerVersion(database, version.docRefId)
-        : null;
+  const metadata = await knowledgeDocMetadata(database, version.scope, version.docRefId);
   let chunkCount = 0;
 
   for (const [index, chunkContent] of chunks.entries()) {
@@ -66,6 +63,7 @@ export async function processKnowledgeIndexingJob(
       content: chunkContent,
       tokenCount: tokenCount(chunkContent),
       embedding: vectorLiteral(embedding),
+      embeddingVector: vectorLiteral(embedding),
     });
 
     const normalizedChunk = chunkContent.trim();
@@ -76,17 +74,21 @@ export async function processKnowledgeIndexingJob(
     chunkCount += 1;
     await database.insert(retrievalChunks).values({
       scope: version.scope,
-      providerGroupId,
+      providerGroupId: metadata.providerGroupId,
+      clientProfileId: metadata.clientProfileId,
       sourceType: "knowledge_version",
       sourceId: version.id,
       chunkNo: index + 1,
       content: normalizedChunk,
       tokenCount: tokenCount(normalizedChunk),
       embedding: vectorLiteral(embedding),
+      embeddingVector: vectorLiteral(embedding),
       metadataJson: {
         knowledge_version_id: version.id,
         knowledge_scope: version.scope,
         doc_ref_id: version.docRefId,
+        doc_key: metadata.docKey,
+        client_profile_id: metadata.clientProfileId,
       },
     });
   }
@@ -106,20 +108,42 @@ export async function processKnowledgeIndexingJob(
   return { indexed: chunkCount > 0, chunkCount };
 }
 
-async function providerGroupIdForGroupVersion(database: DbLike, docRefId: string): Promise<string | null> {
-  const [doc] = await database
-    .select({ providerGroupId: knowledgeGroupDocs.providerGroupId })
-    .from(knowledgeGroupDocs)
-    .where(eq(knowledgeGroupDocs.id, docRefId))
-    .limit(1);
-  return doc?.providerGroupId ?? null;
-}
-
-async function providerGroupIdForCustomerVersion(database: DbLike, docRefId: string): Promise<string | null> {
-  const [doc] = await database
-    .select({ providerGroupId: knowledgeCustomerDocs.providerGroupId })
-    .from(knowledgeCustomerDocs)
-    .where(eq(knowledgeCustomerDocs.id, docRefId))
-    .limit(1);
-  return doc?.providerGroupId ?? null;
+async function knowledgeDocMetadata(
+  database: DbLike,
+  scope: string,
+  docRefId: string,
+): Promise<{ providerGroupId: string | null; clientProfileId: string | null; docKey: string | null }> {
+  if (scope === "common") {
+    const [doc] = await database
+      .select({ docKey: knowledgeCommonDocs.docKey })
+      .from(knowledgeCommonDocs)
+      .where(eq(knowledgeCommonDocs.id, docRefId))
+      .limit(1);
+    return { providerGroupId: null, clientProfileId: null, docKey: doc?.docKey ?? null };
+  }
+  if (scope === "group") {
+    const [doc] = await database
+      .select({ providerGroupId: knowledgeGroupDocs.providerGroupId, docKey: knowledgeGroupDocs.docKey })
+      .from(knowledgeGroupDocs)
+      .where(eq(knowledgeGroupDocs.id, docRefId))
+      .limit(1);
+    return { providerGroupId: doc?.providerGroupId ?? null, clientProfileId: null, docKey: doc?.docKey ?? null };
+  }
+  if (scope === "customer") {
+    const [doc] = await database
+      .select({ providerGroupId: knowledgeCustomerDocs.providerGroupId, docKey: knowledgeCustomerDocs.docKey })
+      .from(knowledgeCustomerDocs)
+      .where(eq(knowledgeCustomerDocs.id, docRefId))
+      .limit(1);
+    return { providerGroupId: doc?.providerGroupId ?? null, clientProfileId: null, docKey: doc?.docKey ?? null };
+  }
+  if (scope === "personal") {
+    const [doc] = await database
+      .select({ clientProfileId: knowledgePersonalDocs.clientProfileId, docKey: knowledgePersonalDocs.docKey })
+      .from(knowledgePersonalDocs)
+      .where(eq(knowledgePersonalDocs.id, docRefId))
+      .limit(1);
+    return { providerGroupId: null, clientProfileId: doc?.clientProfileId ?? null, docKey: doc?.docKey ?? null };
+  }
+  return { providerGroupId: null, clientProfileId: null, docKey: null };
 }

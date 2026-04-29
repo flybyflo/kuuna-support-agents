@@ -1,11 +1,16 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
+  clientProfiles,
+  groupClientProfiles,
   knowledgeCommonDocs,
   knowledgeCustomerDocs,
+  knowledgeClaims,
   knowledgeGroupDocs,
+  knowledgePersonalDocs,
+  knowledgeStatements,
   knowledgeVersions,
   mediaAssets,
   messages,
@@ -29,14 +34,18 @@ const customerDocInput = groupDocInput.extend({
   customerKey: z.string().trim().min(1).max(255).optional(),
 });
 
+const personalDocInput = commonDocInput.extend({
+  clientProfileId: z.string().uuid(),
+});
+
 const versionInput = z.object({
-  scope: z.enum(["common", "group", "customer"]),
+  scope: z.enum(["common", "group", "customer", "personal"]),
   docRefId: z.string().uuid(),
   contentMarkdown: z.string(),
 });
 
 const versionTargetInput = z.object({
-  scope: z.enum(["common", "group", "customer"]),
+  scope: z.enum(["common", "group", "customer", "personal"]),
   docRefId: z.string().uuid(),
   versionId: z.string().uuid(),
 });
@@ -66,42 +75,8 @@ export const knowledgeRouter = createTRPCRouter({
     }));
   }),
 
-  ingestedCommonDocs: protectedProcedure.query(async ({ ctx }) => {
-    const statsByGroup = await collectIngestStats(ctx.db);
-    const populated = Array.from(statsByGroup.values()).filter((stats) => stats.chunkCount > 0 && stats.updatedAt);
-    if (populated.length === 0) {
-      return [];
-    }
-
-    const updatedAt = populated.reduce<Date | null>(
-      (current, stats) => maxDate(current, stats.updatedAt),
-      null,
-    );
-    if (!updatedAt) {
-      return [];
-    }
-
-    const aggregate: GroupIngestStats = {
-      providerGroupId: "common-ingested",
-      chunkCount: populated.reduce((sum, stats) => sum + stats.chunkCount, 0),
-      updatedAt,
-      hasPendingMedia: populated.some((stats) => stats.hasPendingMedia),
-      hasFailedMedia: populated.some((stats) => stats.hasFailedMedia),
-    };
-
-    return [
-      {
-        id: "common-ingested",
-        doc_key: "ingested-chat-history",
-        scope: "common",
-        provider_group_id: null,
-        title: "Common Knowledge (Ingested)",
-        status: deriveIngestedStatus(aggregate),
-        updated_at: updatedAt.toISOString(),
-        updated_by: "ingest-pipeline",
-        chunk_count: aggregate.chunkCount,
-      },
-    ];
+  ingestedCommonDocs: protectedProcedure.query(async () => {
+    return [];
   }),
 
   ingestedGroupDocs: protectedProcedure
@@ -124,6 +99,155 @@ export const knowledgeRouter = createTRPCRouter({
         updated_by: "ingest-pipeline",
         chunk_count: stats.chunkCount,
       }));
+    }),
+
+  groupExplorer: protectedProcedure
+    .input(z.object({
+      providerGroupId: z.string().trim().min(1).max(255),
+      q: z.string().trim().max(255).optional(),
+      scope: z.enum(["common", "group", "personal"]).optional(),
+      sourceRole: z.enum(["client", "lawyer", "company_staff", "bot", "unknown"]).optional(),
+      limit: z.number().int().min(1).max(200).default(100),
+    }))
+    .query(async ({ ctx, input }) => {
+      const [primary] = await ctx.db
+        .select({
+          clientProfileId: groupClientProfiles.clientProfileId,
+          clientDisplayName: clientProfiles.displayName,
+        })
+        .from(groupClientProfiles)
+        .leftJoin(clientProfiles, eq(clientProfiles.id, groupClientProfiles.clientProfileId))
+        .where(and(eq(groupClientProfiles.providerGroupId, input.providerGroupId), eq(groupClientProfiles.isPrimary, true)))
+        .limit(1);
+      const query = input.q?.toLowerCase().trim() ?? "";
+      const sourceRole = input.sourceRole === "unknown" ? null : input.sourceRole;
+
+      const [commonDocs, groupDocs, personalDocs, statementRows, claimRows] = await Promise.all([
+        input.scope && input.scope !== "common"
+          ? Promise.resolve([])
+          : ctx.db.select().from(knowledgeCommonDocs).orderBy(desc(knowledgeCommonDocs.updatedAt)).limit(50),
+        input.scope && input.scope !== "group"
+          ? Promise.resolve([])
+          : ctx.db
+              .select()
+              .from(knowledgeGroupDocs)
+              .where(eq(knowledgeGroupDocs.providerGroupId, input.providerGroupId))
+              .orderBy(desc(knowledgeGroupDocs.updatedAt))
+              .limit(50),
+        !primary?.clientProfileId || (input.scope && input.scope !== "personal")
+          ? Promise.resolve([])
+          : ctx.db
+              .select()
+              .from(knowledgePersonalDocs)
+              .where(eq(knowledgePersonalDocs.clientProfileId, primary.clientProfileId))
+              .orderBy(desc(knowledgePersonalDocs.updatedAt))
+              .limit(50),
+        ctx.db
+          .select()
+          .from(knowledgeStatements)
+          .where(and(
+            eq(knowledgeStatements.providerGroupId, input.providerGroupId),
+            input.scope ? eq(knowledgeStatements.scope, input.scope) : sql`true`,
+            input.sourceRole ? (sourceRole ? eq(knowledgeStatements.speakerRole, sourceRole) : isNull(knowledgeStatements.speakerRole)) : sql`true`,
+          ))
+          .orderBy(desc(knowledgeStatements.occurredAt))
+          .limit(input.limit),
+        ctx.db
+          .select({ claim: knowledgeClaims, statement: knowledgeStatements })
+          .from(knowledgeClaims)
+          .innerJoin(knowledgeStatements, eq(knowledgeStatements.id, knowledgeClaims.statementId))
+          .where(and(
+            eq(knowledgeClaims.providerGroupId, input.providerGroupId),
+            input.scope ? eq(knowledgeClaims.scope, input.scope) : sql`true`,
+            input.sourceRole ? (sourceRole ? eq(knowledgeStatements.speakerRole, sourceRole) : isNull(knowledgeStatements.speakerRole)) : sql`true`,
+          ))
+          .orderBy(desc(knowledgeClaims.updatedAt))
+          .limit(input.limit),
+      ]);
+
+      const documents = input.sourceRole ? [] : [
+        ...commonDocs.map((doc) => ({
+          id: doc.id,
+          kind: "document" as const,
+          scope: "common" as const,
+          title: doc.title,
+          text: doc.docKey,
+          source_role: null,
+          speaker_display_name: null,
+          provider_message_id: null,
+          source_message_id: null,
+          client_profile_id: null,
+          occurred_at: doc.updatedAt.toISOString(),
+          updated_at: doc.updatedAt.toISOString(),
+        })),
+        ...groupDocs.map((doc) => ({
+          id: doc.id,
+          kind: "document" as const,
+          scope: "group" as const,
+          title: doc.title,
+          text: doc.docKey,
+          source_role: null,
+          speaker_display_name: null,
+          provider_message_id: null,
+          source_message_id: null,
+          client_profile_id: null,
+          occurred_at: doc.updatedAt.toISOString(),
+          updated_at: doc.updatedAt.toISOString(),
+        })),
+        ...personalDocs.map((doc) => ({
+          id: doc.id,
+          kind: "document" as const,
+          scope: "personal" as const,
+          title: doc.title,
+          text: doc.docKey,
+          source_role: null,
+          speaker_display_name: primary?.clientDisplayName ?? null,
+          provider_message_id: null,
+          source_message_id: null,
+          client_profile_id: doc.clientProfileId,
+          occurred_at: doc.updatedAt.toISOString(),
+          updated_at: doc.updatedAt.toISOString(),
+        })),
+      ];
+      const statements = statementRows.map((statement) => ({
+        id: statement.id,
+        kind: "statement" as const,
+        scope: normalizeExplorerScope(statement.scope),
+        title: sourceTitle(statement.attributionLabel, statement.speakerDisplayName),
+        text: statement.statementText,
+        source_role: statement.speakerRole,
+        speaker_display_name: statement.speakerDisplayName,
+        provider_message_id: statement.providerMessageId,
+        source_message_id: statement.sourceMessageId,
+        client_profile_id: statement.clientProfileId,
+        occurred_at: statement.occurredAt.toISOString(),
+        updated_at: statement.updatedAt.toISOString(),
+      }));
+      const claims = claimRows.map(({ claim, statement }) => ({
+        id: claim.id,
+        kind: "claim" as const,
+        scope: normalizeExplorerScope(claim.scope),
+        title: `${humanClaimKind(claim.claimKind)} from ${sourceTitle(claim.attributionLabel, statement.speakerDisplayName)}`,
+        text: claim.claimText,
+        source_role: statement.speakerRole,
+        speaker_display_name: statement.speakerDisplayName,
+        provider_message_id: statement.providerMessageId,
+        source_message_id: statement.sourceMessageId,
+        client_profile_id: claim.clientProfileId,
+        occurred_at: statement.occurredAt.toISOString(),
+        updated_at: claim.updatedAt.toISOString(),
+      }));
+      const items = [...documents, ...statements, ...claims]
+        .filter((item) => !query || `${item.title} ${item.text} ${item.speaker_display_name ?? ""}`.toLowerCase().includes(query))
+        .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+        .slice(0, input.limit);
+
+      return {
+        provider_group_id: input.providerGroupId,
+        primary_client_profile_id: primary?.clientProfileId ?? null,
+        primary_client_display_name: primary?.clientDisplayName ?? null,
+        items,
+      };
     }),
 
   createCommonDoc: roleProcedure("owner", "admin").input(commonDocInput).mutation(async ({ ctx, input }) => {
@@ -222,6 +346,51 @@ export const knowledgeRouter = createTRPCRouter({
       .values({
         providerGroupId: input.providerGroupId,
         customerKey,
+        docKey: input.docKey,
+        title: input.title,
+      })
+      .returning();
+    return doc;
+  }),
+
+  personalDocs: protectedProcedure
+    .input(z.object({ clientProfileId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const rows = await ctx.db
+        .select()
+        .from(knowledgePersonalDocs)
+        .where(eq(knowledgePersonalDocs.clientProfileId, input.clientProfileId))
+        .orderBy(desc(knowledgePersonalDocs.updatedAt));
+      return rows.map((doc) => ({
+        id: doc.id,
+        doc_key: doc.docKey,
+        scope: "personal" as const,
+        provider_group_id: null,
+        client_profile_id: doc.clientProfileId,
+        title: doc.title,
+        created_at: doc.createdAt.toISOString(),
+        updated_at: doc.updatedAt.toISOString(),
+      }));
+    }),
+
+  createPersonalDoc: roleProcedure("owner", "admin").input(personalDocInput).mutation(async ({ ctx, input }) => {
+    const [existing] = await ctx.db
+      .select({ id: knowledgePersonalDocs.id })
+      .from(knowledgePersonalDocs)
+      .where(
+        and(
+          eq(knowledgePersonalDocs.clientProfileId, input.clientProfileId),
+          eq(knowledgePersonalDocs.docKey, input.docKey),
+        ),
+      )
+      .limit(1);
+    if (existing) {
+      throw new TRPCError({ code: "CONFLICT", message: "personal knowledge doc already exists" });
+    }
+    const [doc] = await ctx.db
+      .insert(knowledgePersonalDocs)
+      .values({
+        clientProfileId: input.clientProfileId,
         docKey: input.docKey,
         title: input.title,
       })
@@ -356,7 +525,7 @@ export const knowledgeRouter = createTRPCRouter({
 
 async function findKnowledgeDoc(
   database: DbLike,
-  scope: "common" | "group" | "customer",
+  scope: "common" | "group" | "customer" | "personal",
   docRefId: string,
 ): Promise<{ id: string } | null> {
   if (scope === "common") {
@@ -375,10 +544,18 @@ async function findKnowledgeDoc(
       .limit(1);
     return doc ?? null;
   }
+  if (scope === "customer") {
+    const [doc] = await database
+      .select({ id: knowledgeCustomerDocs.id })
+      .from(knowledgeCustomerDocs)
+      .where(eq(knowledgeCustomerDocs.id, docRefId))
+      .limit(1);
+    return doc ?? null;
+  }
   const [doc] = await database
-    .select({ id: knowledgeCustomerDocs.id })
-    .from(knowledgeCustomerDocs)
-    .where(eq(knowledgeCustomerDocs.id, docRefId))
+    .select({ id: knowledgePersonalDocs.id })
+    .from(knowledgePersonalDocs)
+    .where(eq(knowledgePersonalDocs.id, docRefId))
     .limit(1);
   return doc ?? null;
 }
@@ -479,6 +656,31 @@ function deriveIngestedStatus(stats: GroupIngestStats): "processing" | "failed" 
     return "failed";
   }
   return "ready";
+}
+
+function normalizeExplorerScope(scope: string): "common" | "group" | "personal" {
+  return scope === "personal" ? "personal" : scope === "common" ? "common" : "group";
+}
+
+function sourceTitle(attributionLabel: string, speakerDisplayName: string | null): string {
+  const speaker = speakerDisplayName?.trim();
+  const label = humanAttributionLabel(attributionLabel);
+  return speaker ? `${label} by ${speaker}` : label;
+}
+
+function humanAttributionLabel(value: string): string {
+  if (value === "client_statement") return "Client statement";
+  if (value === "lawyer_statement") return "Lawyer statement";
+  if (value === "company_staff_statement") return "Company staff statement";
+  if (value === "bot_statement") return "Bot statement";
+  return "Participant statement";
+}
+
+function humanClaimKind(value: string): string {
+  if (value === "profile_statement") return "Profile claim";
+  if (value === "incident_or_evidence_statement") return "Incident or evidence claim";
+  if (value === "case_statement") return "Case claim";
+  return "Claim";
 }
 
 function maxDate(current: Date | null, candidate: Date | null): Date | null {

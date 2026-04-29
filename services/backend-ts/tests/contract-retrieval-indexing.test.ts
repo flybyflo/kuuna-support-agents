@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 
 import {
   mediaAssets,
+  knowledgeClaims,
+  knowledgeStatements,
   messageLinks,
   messages,
   messageVersions,
@@ -50,7 +52,7 @@ test("contract: retrieval indexing writes latest non-deleted message chunk", { s
     traceId: "trace-1",
   });
 
-  assert.deepEqual(result, { indexed: true, chunkCount: 1 });
+  assert.deepEqual(result, { indexed: true, chunkCount: 2 });
 
   const [chunk] = await harness.db
     .select()
@@ -65,6 +67,19 @@ test("contract: retrieval indexing writes latest non-deleted message chunk", { s
   assert.equal(chunk.content, "hello retrieval world");
   assert.equal(chunk.tokenCount, 3);
   assert.equal((chunk.metadataJson as Record<string, unknown>).trace_id, "trace-1");
+
+  const [statement] = await harness.db
+    .select()
+    .from(knowledgeStatements)
+    .where(eq(knowledgeStatements.sourceMessageId, message.id))
+    .limit(1);
+  assert.ok(statement);
+  assert.equal(statement.scope, "group");
+  assert.equal(statement.speakerProviderUserId, "user-1");
+  assert.equal(statement.attributionLabel, "participant_statement");
+
+  const claims = await harness.db.select().from(knowledgeClaims).where(eq(knowledgeClaims.statementId, statement.id));
+  assert.equal(claims.length, 0);
 });
 
 test("contract: retrieval indexing writes message link chunk", { skip: skipReason }, async (t) => {

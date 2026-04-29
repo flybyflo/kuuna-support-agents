@@ -13,6 +13,22 @@ export type GatewayGroup = {
   participants_count: number;
 };
 
+export type GatewayGroupParticipant = {
+  jid: string;
+  phone: string | null;
+  display_name: string | null;
+  is_admin: boolean | null;
+  is_self: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type GatewaySelfIdentity = {
+  jid: string | null;
+  phone: string | null;
+  display_name: string | null;
+  metadata: Record<string, unknown>;
+};
+
 export type ConnectionSnapshot = {
   connected: boolean;
   last_event: string;
@@ -30,6 +46,8 @@ export type GatewayClient = {
   start(): Promise<void>;
   stop(): Promise<void>;
   listGroups(): Promise<GatewayGroup[]>;
+  listGroupParticipants(providerGroupId: string): Promise<GatewayGroupParticipant[]>;
+  selfIdentity(): GatewaySelfIdentity;
   createGroup(name: string, participants: string[]): Promise<GatewayGroup>;
   sendText(input: {
     providerGroupId: string;

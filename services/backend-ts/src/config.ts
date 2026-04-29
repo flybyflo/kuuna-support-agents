@@ -38,6 +38,7 @@ const envSchema = z.object({
   MEDIA_DOWNLOAD_TIMEOUT_SECONDS: z.coerce.number().positive().default(20),
   GATEWAY_BASE_URL: z.string().default("http://gateway:8090"),
   GATEWAY_SERVICE_TOKEN: z.string().optional(),
+  GATEWAY_OPS_TOKEN: z.string().optional(),
   OUTBOUND_DISPATCH_TIMEOUT_SECONDS: z.coerce.number().positive().default(10),
   TODO_EXPORT_ENABLED: z.coerce.boolean().default(false),
   TODO_EXPORT_WEBHOOK_URL: z.string().optional(),

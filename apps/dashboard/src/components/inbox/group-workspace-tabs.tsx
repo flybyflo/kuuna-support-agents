@@ -32,6 +32,8 @@ function buildTabs(
         pathname === base ||
         (pathname.startsWith(base) &&
           !pathname.startsWith(`${base}/todos`) &&
+          !pathname.startsWith(`${base}/knowledge`) &&
+          !pathname.startsWith(`${base}/runs`) &&
           !pathname.startsWith(`${base}/settings`) &&
           !pathname.startsWith(`${base}/activity`)),
     },
@@ -47,6 +49,18 @@ function buildTabs(
       label: "Settings",
       href: `${base}/settings`,
       match: (pathname) => pathname.startsWith(`${base}/settings`),
+    },
+    {
+      id: "knowledge",
+      label: "Knowledge",
+      href: `${base}/knowledge`,
+      match: (pathname) => pathname.startsWith(`${base}/knowledge`),
+    },
+    {
+      id: "runs",
+      label: "Agent Runs",
+      href: `${base}/runs`,
+      match: (pathname) => pathname.startsWith(`${base}/runs`),
     },
     {
       id: "activity",

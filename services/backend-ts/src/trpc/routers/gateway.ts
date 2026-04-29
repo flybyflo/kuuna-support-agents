@@ -240,7 +240,7 @@ export async function ingestGatewayInbound(
         `retrieval_indexing_message_link_${jobToken(messageLinkId)}_${jobToken(event.trace_id)}`,
       );
     }
-    if (event.event_type !== "message_deleted" && (result.mediaAssetIds.length > 0 || result.messageLinkIds.length > 0)) {
+    if (event.event_type !== "message_deleted") {
       await ensureAutomaticFollowupTodo(database, {
         providerGroupId: event.provider_group_id,
         messageId: result.messageId,

@@ -20,9 +20,13 @@ import type {
   BindingTimelineEvent,
   GroupAssignment,
   GroupBinding,
+  GroupKnowledgeExplorer,
+  GroupPrivateRetrievalStatus,
   GroupTemplate,
   KnownProviderGroup,
   KnowledgeDoc,
+  KnowledgeDocVersion,
+  KnowledgeExplorerItem,
   MediaAsset,
   MessageDecisionRecord,
   MessageRecord,
@@ -39,6 +43,8 @@ import type {
   ToolCatalogItem,
   ToolInvocationRecord,
   TraceDetail,
+  WhatsAppGroupMember,
+  WhatsAppGroupMembersResult,
   WorkflowStatus,
 } from "@/lib/api-client/types";
 import { createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
@@ -221,12 +227,76 @@ function mapBinding(row: {
   };
 }
 
+function mapPrivateRetrievalStatus(row: {
+  complete: boolean;
+  primary_client_count: number;
+  client_member_count: number;
+  missing_role_count: number;
+  reason?: string | null;
+}): GroupPrivateRetrievalStatus {
+  return {
+    complete: row.complete,
+    primaryClientCount: row.primary_client_count,
+    clientMemberCount: row.client_member_count,
+    missingRoleCount: row.missing_role_count,
+    reason: row.reason ?? null,
+  };
+}
+
+function mapWhatsAppGroupMember(row: {
+  provider_group_id: string;
+  provider_user_id: string;
+  role?: WhatsAppGroupMember["role"];
+  display_name?: string | null;
+  derived_phone?: string | null;
+  phone_override?: string | null;
+  phone_display?: string | null;
+  push_name?: string | null;
+  linked_client_profile?: {
+    id: string;
+    display_name: string;
+    notes?: string | null;
+  } | null;
+  gateway_metadata?: unknown;
+  is_primary_client: boolean;
+  setup_status: string;
+  updated_at: string;
+}): WhatsAppGroupMember {
+  return {
+    providerGroupId: row.provider_group_id,
+    providerUserId: row.provider_user_id,
+    role: row.role ?? null,
+    displayName: row.display_name ?? null,
+    derivedPhone: row.derived_phone ?? null,
+    phoneOverride: row.phone_override ?? null,
+    phoneDisplay: row.phone_display ?? null,
+    pushName: row.push_name ?? null,
+    linkedClientProfile: row.linked_client_profile
+      ? {
+          id: row.linked_client_profile.id,
+          displayName: row.linked_client_profile.display_name,
+          notes: row.linked_client_profile.notes ?? null,
+        }
+      : null,
+    gatewayMetadata: asRecord(row.gateway_metadata ?? {}),
+    isPrimaryClient: row.is_primary_client,
+    setupStatus:
+      row.setup_status === "configured" ||
+      row.setup_status === "missing_profile" ||
+      row.setup_status === "missing_role"
+        ? row.setup_status
+        : "missing_role",
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapKnowledgeDoc(row: {
   id: string;
   doc_key: string;
   scope: string;
   provider_group_id?: string | null;
   customer_key?: string | null;
+  client_profile_id?: string | null;
   title: string;
   status?: string;
   updated_at?: string;
@@ -239,16 +309,86 @@ function mapKnowledgeDoc(row: {
     scope:
       row.scope === "customer"
         ? "customer"
+        : row.scope === "personal"
+          ? "personal"
         : row.scope === "group"
           ? "group"
           : "common",
     providerGroupId: row.provider_group_id ?? undefined,
     customerKey: row.customer_key ?? undefined,
+    clientProfileId: row.client_profile_id ?? undefined,
     title: row.title,
     status: workflowStatus(row.status ?? "ready"),
     updatedAt: row.updated_at ?? new Date(0).toISOString(),
     updatedBy: row.updated_by ?? "backend",
     chunkCount: row.chunk_count ?? 0,
+  };
+}
+
+function mapKnowledgeExplorerItem(row: {
+  id: string;
+  kind: string;
+  scope: string;
+  title: string;
+  text: string;
+  source_role?: string | null;
+  speaker_display_name?: string | null;
+  provider_message_id?: string | null;
+  source_message_id?: string | null;
+  client_profile_id?: string | null;
+  occurred_at: string;
+  updated_at: string;
+}): KnowledgeExplorerItem {
+  return {
+    id: row.id,
+    kind: row.kind === "claim" || row.kind === "statement" ? row.kind : "document",
+    scope: row.scope === "personal" ? "personal" : row.scope === "group" ? "group" : "common",
+    title: row.title,
+    text: row.text,
+    sourceRole:
+      row.source_role === "client" ||
+      row.source_role === "lawyer" ||
+      row.source_role === "company_staff" ||
+      row.source_role === "bot"
+        ? row.source_role
+        : null,
+    speakerDisplayName: row.speaker_display_name ?? null,
+    providerMessageId: row.provider_message_id ?? null,
+    sourceMessageId: row.source_message_id ?? null,
+    clientProfileId: row.client_profile_id ?? null,
+    occurredAt: row.occurred_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapKnowledgeDocVersion(row: {
+  id: string;
+  scope: string;
+  doc_ref_id: string;
+  version_no: number;
+  status: string;
+  content_markdown: string;
+  created_at: string;
+  updated_at: string;
+  updated_by?: string;
+}): KnowledgeDocVersion {
+  return {
+    id: row.id,
+    scope:
+      row.scope === "customer"
+        ? "customer"
+        : row.scope === "personal"
+          ? "personal"
+          : row.scope === "group"
+            ? "group"
+            : "common",
+    docRefId: row.doc_ref_id,
+    versionNo: row.version_no,
+    status: workflowStatus(row.status),
+    contentMarkdown: row.content_markdown,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    updatedBy: row.updated_by ?? "backend",
   };
 }
 
@@ -648,6 +788,34 @@ export async function getBinding(bindingId: string): Promise<GroupBinding | unde
   );
 }
 
+export async function listGroupMembers(providerGroupId: string): Promise<WhatsAppGroupMembersResult> {
+  return withOptionalMock<WhatsAppGroupMembersResult>(
+    "listGroupMembers",
+    async () => {
+      const client = await createSessionBackendTrpcClient();
+      const row = await client.groupMembers.list.query({ providerGroupId });
+      return {
+        providerGroupId: row.provider_group_id,
+        primaryClientProfileId: row.primary_client_profile_id ?? null,
+        privateRetrievalStatus: mapPrivateRetrievalStatus(row.private_retrieval_status),
+        items: row.items.map(mapWhatsAppGroupMember),
+      };
+    },
+    () => ({
+      providerGroupId,
+      primaryClientProfileId: null,
+      privateRetrievalStatus: {
+        complete: false,
+        primaryClientCount: 0,
+        clientMemberCount: 0,
+        missingRoleCount: 0,
+        reason: "backend_unavailable",
+      },
+      items: [],
+    }),
+  );
+}
+
 export async function listBindingTimeline(bindingId: string): Promise<BindingTimelineEvent[]> {
   const binding = await getBinding(bindingId);
   if (!binding) {
@@ -699,7 +867,7 @@ export async function listPromptAssets(instanceId?: string): Promise<PromptAsset
 }
 
 export async function listKnowledgeDocs(
-  scope?: "common" | "group" | "customer",
+  scope?: "common" | "group" | "customer" | "personal",
   providerGroupId?: string,
 ): Promise<KnowledgeDoc[]> {
   return withOptionalMock(
@@ -707,7 +875,7 @@ export async function listKnowledgeDocs(
     async () => {
       const client = await createSessionBackendTrpcClient();
       if (scope === "common") {
-        return (await client.knowledge.ingestedCommonDocs.query()).map(mapKnowledgeDoc);
+        return (await client.knowledge.commonDocs.query()).map(mapKnowledgeDoc);
       }
       if (scope === "group") {
         return (await client.knowledge.ingestedGroupDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
@@ -716,7 +884,7 @@ export async function listKnowledgeDocs(
         return (await client.knowledge.customerDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
       }
       const [commonDocs, groupDocs, customerDocs] = await Promise.all([
-        client.knowledge.ingestedCommonDocs.query(),
+        client.knowledge.commonDocs.query(),
         client.knowledge.ingestedGroupDocs.query({ providerGroupId }),
         providerGroupId
           ? client.knowledge.customerDocs.query({ providerGroupId })
@@ -725,6 +893,51 @@ export async function listKnowledgeDocs(
       return [...commonDocs, ...groupDocs, ...customerDocs].map(mapKnowledgeDoc);
     },
     () => [],
+  );
+}
+
+export async function listKnowledgeVersions(docRefId: string): Promise<KnowledgeDocVersion[]> {
+  return withOptionalMock(
+    "listKnowledgeVersions",
+    async () => {
+      const client = await createSessionBackendTrpcClient();
+      return (await client.knowledge.versions.query({ docRefId })).map(mapKnowledgeDocVersion);
+    },
+    () => [],
+  );
+}
+
+export async function listGroupKnowledgeExplorer(
+  providerGroupId: string,
+  filters: {
+    q?: string;
+    scope?: "common" | "group" | "personal";
+    sourceRole?: "client" | "lawyer" | "company_staff" | "bot" | "unknown";
+  } = {},
+): Promise<GroupKnowledgeExplorer> {
+  return withOptionalMock<GroupKnowledgeExplorer>(
+    "listGroupKnowledgeExplorer",
+    async () => {
+      const client = await createSessionBackendTrpcClient();
+      const row = await client.knowledge.groupExplorer.query({
+        providerGroupId,
+        q: filters.q,
+        scope: filters.scope,
+        sourceRole: filters.sourceRole,
+      });
+      return {
+        providerGroupId: row.provider_group_id,
+        primaryClientProfileId: row.primary_client_profile_id ?? null,
+        primaryClientDisplayName: row.primary_client_display_name ?? null,
+        items: row.items.map(mapKnowledgeExplorerItem),
+      };
+    },
+    () => ({
+      providerGroupId,
+      primaryClientProfileId: null,
+      primaryClientDisplayName: null,
+      items: [],
+    }),
   );
 }
 
@@ -740,8 +953,20 @@ export async function listMessages(providerGroupId?: string): Promise<MessageRec
           id: row.id,
           providerGroupId: row.provider_group_id,
           sender: row.sender_provider_user_id ?? "unknown",
-          senderPhone: typeof raw.sender_phone === "string" ? raw.sender_phone : undefined,
-          senderPushName: typeof raw.sender_push_name === "string" ? raw.sender_push_name : undefined,
+          senderPhone:
+            typeof row.sender_phone === "string"
+              ? row.sender_phone
+              : typeof raw.sender_phone === "string"
+                ? raw.sender_phone
+                : undefined,
+          senderPushName:
+            typeof row.sender_display_name === "string"
+              ? row.sender_display_name
+              : typeof row.sender_push_name === "string"
+                ? row.sender_push_name
+                : typeof raw.sender_push_name === "string"
+                  ? raw.sender_push_name
+                  : undefined,
           preview: row.latest_text ?? "",
           hasMedia: row.has_media,
           isDeleted: row.latest_is_deleted,

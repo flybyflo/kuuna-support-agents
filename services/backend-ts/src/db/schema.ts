@@ -1,5 +1,6 @@
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -41,14 +42,20 @@ export const messageEventType = pgEnum("message_event_type", [
 ]);
 export const mediaStatus = pgEnum("media_status", ["pending", "ready", "failed"]);
 export const transcriptStatus = pgEnum("transcript_status", ["pending", "ready", "failed"]);
-export const knowledgeScope = pgEnum("knowledge_scope", ["common", "group", "customer"]);
+export const knowledgeScope = pgEnum("knowledge_scope", ["common", "group", "customer", "personal"]);
 export const knowledgeVersionStatus = pgEnum("knowledge_version_status", [
   "draft",
   "ready",
   "published",
   "archived",
 ]);
-export const embeddingScope = pgEnum("embedding_scope", ["common", "group", "customer"]);
+export const embeddingScope = pgEnum("embedding_scope", ["common", "group", "customer", "personal"]);
+export const groupMemberRole = pgEnum("group_member_role", [
+  "client",
+  "lawyer",
+  "company_staff",
+  "bot",
+]);
 export const outboundStatus = pgEnum("outbound_status", [
   "pending",
   "sending",
@@ -75,6 +82,12 @@ export const agentRunStatus = pgEnum("agent_run_status", ["running", "succeeded"
 
 const createdAt = timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = timestamp("updated_at", { withTimezone: true }).defaultNow().notNull();
+
+const vector1536 = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return "vector(1536)";
+  },
+});
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -107,6 +120,74 @@ export const groupAssignments = pgTable("group_assignments", {
   createdAt,
   updatedAt,
 });
+
+export const clientProfiles = pgTable("client_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  displayName: text("display_name").notNull(),
+  notes: text("notes"),
+  createdAt,
+  updatedAt,
+});
+
+export const clientProfileIdentities = pgTable(
+  "client_profile_identities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientProfileId: uuid("client_profile_id").notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    derivedPhone: text("derived_phone"),
+    phoneOverride: text("phone_override"),
+    pushName: text("push_name"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    providerUserUnique: uniqueIndex("uq_client_profile_identities_provider_user")
+      .on(table.providerUserId),
+  }),
+);
+
+export const groupMembers = pgTable(
+  "group_members",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    providerGroupId: text("provider_group_id").notNull(),
+    providerUserId: text("provider_user_id").notNull(),
+    role: groupMemberRole("role"),
+    displayName: text("display_name"),
+    derivedPhone: text("derived_phone"),
+    phoneOverride: text("phone_override"),
+    pushName: text("push_name"),
+    clientProfileId: uuid("client_profile_id"),
+    gatewayMetadata: jsonb("gateway_metadata").default({}).notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    groupMemberUnique: uniqueIndex("uq_group_members_group_user")
+      .on(table.providerGroupId, table.providerUserId),
+    groupMemberGroupIdx: index("ix_group_members_provider_group_id").on(table.providerGroupId),
+  }),
+);
+
+export const groupClientProfiles = pgTable(
+  "group_client_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    providerGroupId: text("provider_group_id").notNull(),
+    clientProfileId: uuid("client_profile_id").notNull(),
+    isPrimary: boolean("is_primary").default(true).notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    primaryGroupUnique: uniqueIndex("uq_group_client_profiles_primary_group")
+      .on(table.providerGroupId)
+      .where(sql`is_primary = true`),
+    clientGroupUnique: uniqueIndex("uq_group_client_profiles_group_client")
+      .on(table.providerGroupId, table.clientProfileId),
+  }),
+);
 
 export const groupTemplates = pgTable("group_templates", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -264,6 +345,75 @@ export const knowledgeCustomerDocs = pgTable("knowledge_customer_docs", {
   updatedAt,
 });
 
+export const knowledgePersonalDocs = pgTable(
+  "knowledge_personal_docs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    clientProfileId: uuid("client_profile_id").notNull(),
+    docKey: text("doc_key").notNull(),
+    title: text("title").notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    clientDocKeyUnique: uniqueIndex("uq_knowledge_personal_docs_client_doc_key")
+      .on(table.clientProfileId, table.docKey),
+  }),
+);
+
+export const knowledgeStatements = pgTable(
+  "knowledge_statements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    scope: text("scope").notNull(),
+    providerGroupId: text("provider_group_id").notNull(),
+    clientProfileId: uuid("client_profile_id"),
+    sourceMessageId: uuid("source_message_id").notNull(),
+    sourceMessageVersionId: uuid("source_message_version_id").notNull(),
+    providerMessageId: text("provider_message_id").notNull(),
+    speakerProviderUserId: text("speaker_provider_user_id"),
+    speakerRole: text("speaker_role"),
+    speakerDisplayName: text("speaker_display_name"),
+    statementText: text("statement_text").notNull(),
+    attributionLabel: text("attribution_label").notNull(),
+    sourceType: text("source_type").default("message").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    metadataJson: jsonb("metadata_json").default({}).notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    sourceMessageUnique: uniqueIndex("uq_knowledge_statements_source_message")
+      .on(table.sourceMessageId),
+    scopeGroupIdx: index("ix_knowledge_statements_scope_group").on(table.scope, table.providerGroupId),
+    profileIdx: index("ix_knowledge_statements_client_profile").on(table.clientProfileId),
+  }),
+);
+
+export const knowledgeClaims = pgTable(
+  "knowledge_claims",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    statementId: uuid("statement_id").notNull(),
+    scope: text("scope").notNull(),
+    providerGroupId: text("provider_group_id").notNull(),
+    clientProfileId: uuid("client_profile_id"),
+    claimText: text("claim_text").notNull(),
+    claimKind: text("claim_kind").default("general_statement").notNull(),
+    attributionLabel: text("attribution_label").notNull(),
+    confidence: integer("confidence").default(100).notNull(),
+    extractionMethod: text("extraction_method").default("sentence_split_v1").notNull(),
+    metadataJson: jsonb("metadata_json").default({}).notNull(),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    statementIdx: index("ix_knowledge_claims_statement").on(table.statementId),
+    scopeGroupIdx: index("ix_knowledge_claims_scope_group").on(table.scope, table.providerGroupId),
+    profileIdx: index("ix_knowledge_claims_client_profile").on(table.clientProfileId),
+  }),
+);
+
 export const knowledgeVersions = pgTable("knowledge_versions", {
   id: uuid("id").defaultRandom().primaryKey(),
   scope: knowledgeScope("scope").notNull(),
@@ -284,6 +434,7 @@ export const embeddings = pgTable("embeddings", {
   tokenCount: integer("token_count").notNull(),
   // pgvector is queried with raw SQL in TS until a typed vector helper is introduced.
   embedding: text("embedding").notNull(),
+  embeddingVector: vector1536("embedding_vector"),
   createdAt,
   updatedAt,
 });
@@ -355,6 +506,7 @@ export const todos = pgTable("todos", {
   exportAttemptCount: integer("export_attempt_count").default(0).notNull(),
   externalRef: text("external_ref"),
   lastExportError: text("last_export_error"),
+  metadataJson: jsonb("metadata_json").default({}).notNull(),
   createdAt,
   updatedAt,
 });
@@ -406,12 +558,14 @@ export const retrievalChunks = pgTable("retrieval_chunks", {
   id: uuid("id").defaultRandom().primaryKey(),
   scope: text("scope").notNull(),
   providerGroupId: text("provider_group_id"),
+  clientProfileId: uuid("client_profile_id"),
   sourceType: text("source_type").notNull(),
   sourceId: uuid("source_id").notNull(),
   chunkNo: integer("chunk_no").notNull(),
   content: text("content").notNull(),
   tokenCount: integer("token_count").default(0).notNull(),
   embedding: text("embedding"),
+  embeddingVector: vector1536("embedding_vector"),
   metadataJson: jsonb("metadata_json").default({}).notNull(),
   createdAt,
   updatedAt,

@@ -4,6 +4,7 @@ import { auditRouter } from "./audit.js";
 import { authRouter } from "./auth.js";
 import { bindingsRouter } from "./bindings.js";
 import { gatewayRouter } from "./gateway.js";
+import { groupMembersRouter } from "./group-members.js";
 import { internalRouter } from "./internal.js";
 import { knowledgeRouter } from "./knowledge.js";
 import { messagesRouter } from "./messages.js";
@@ -27,6 +28,7 @@ export const appRouter = createTRPCRouter({
   knowledge: knowledgeRouter,
   audit: auditRouter,
   gateway: gatewayRouter,
+  groupMembers: groupMembersRouter,
   internal: internalRouter,
 });
 

@@ -1,7 +1,7 @@
 import { desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
-import { mediaAssets, messageVersions, messages, transcripts } from "../../db/schema.js";
+import { groupMembers, mediaAssets, messageVersions, messages, transcripts } from "../../db/schema.js";
 import { createPresignedGetUrl } from "../../integrations/s3.js";
 import { createTRPCRouter, protectedProcedure } from "../init.js";
 
@@ -21,12 +21,16 @@ function mapMessageListRow(
   message: MessageRow,
   latestVersion: MessageVersionRow | undefined,
   messageIdsWithMedia: Set<string>,
+  member?: typeof groupMembers.$inferSelect,
 ) {
   return {
     id: message.id,
     provider_group_id: message.providerGroupId,
     provider_message_id: message.providerMessageId,
     sender_provider_user_id: message.senderProviderUserId,
+    sender_display_name: member?.displayName ?? null,
+    sender_phone: member?.phoneOverride ?? member?.derivedPhone ?? null,
+    sender_push_name: member?.pushName ?? null,
     latest_version_no: message.latestVersionNo,
     latest_text: latestVersion?.textContent ?? null,
     latest_raw_event: latestVersion?.rawEvent ?? null,
@@ -90,8 +94,31 @@ export const messagesRouter = createTRPCRouter({
               .where(inArray(mediaAssets.messageId, messageIds))
           : [];
       const messageIdsWithMedia = new Set(mediaRows.map((row) => row.messageId));
+      const memberRows = rows.length > 0
+        ? await ctx.db
+            .select()
+            .from(groupMembers)
+            .where(
+              inArray(
+                groupMembers.providerGroupId,
+                Array.from(new Set(rows.map((message) => message.providerGroupId))),
+              ),
+            )
+        : [];
+      const membersByGroupAndSender = new Map(
+        memberRows.map((member) => [`${member.providerGroupId}\n${member.providerUserId}`, member]),
+      );
 
-      return rows.map((message) => mapMessageListRow(message, latestByMessageId.get(message.id), messageIdsWithMedia));
+      return rows.map((message) =>
+        mapMessageListRow(
+          message,
+          latestByMessageId.get(message.id),
+          messageIdsWithMedia,
+          message.senderProviderUserId
+            ? membersByGroupAndSender.get(`${message.providerGroupId}\n${message.senderProviderUserId}`)
+            : undefined,
+        ),
+      );
     }),
 
   versions: protectedProcedure
