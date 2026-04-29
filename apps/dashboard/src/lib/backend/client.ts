@@ -25,6 +25,24 @@ export function createBackendTrpcClient(token?: string, headers?: Record<string,
   return createKuunaTrpcClient({ baseUrl, token, headers });
 }
 
+export type DashboardAuthErrorCode =
+  | "invalid"
+  | "inactive"
+  | "locked"
+  | "current-password"
+  | "weak-password"
+  | "backend";
+
+export class DashboardAuthError extends Error {
+  constructor(
+    readonly code: DashboardAuthErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DashboardAuthError";
+  }
+}
+
 export function createInternalBackendTrpcClient() {
   const internalToken = getInternalOpsToken();
   if (!internalToken) {
@@ -70,11 +88,42 @@ export async function loginWithBackend(email: string, password: string) {
         ...expiry,
       };
     } catch (error) {
+      const authError = dashboardAuthErrorFromUnknown(error);
+      if (authError && authError.code !== "backend") {
+        throw authError;
+      }
       errors.push(`${normalizedBaseUrl} -> ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  throw new Error(errors.join(" | ") || "no-backend-url");
+  throw new DashboardAuthError("backend", errors.join(" | ") || "no-backend-url");
+}
+
+export function dashboardAuthErrorFromUnknown(error: unknown): DashboardAuthError | null {
+  const message = errorMessage(error).toLowerCase();
+  if (message.includes("invalid current password")) {
+    return new DashboardAuthError("current-password", "invalid current password");
+  }
+  if (message.includes("password policy violation")) {
+    return new DashboardAuthError("weak-password", errorMessage(error));
+  }
+  if (message.includes("invalid credentials")) {
+    return new DashboardAuthError("invalid", "invalid credentials");
+  }
+  if (message.includes("inactive user")) {
+    return new DashboardAuthError("inactive", "inactive user");
+  }
+  if (message.includes("user locked")) {
+    return new DashboardAuthError("locked", "user locked");
+  }
+  return null;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function displayNameFromEmail(email: string): string {

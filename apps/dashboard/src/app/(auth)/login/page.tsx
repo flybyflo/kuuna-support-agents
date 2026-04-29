@@ -16,6 +16,12 @@ function getMessage(error: string | undefined): string | null {
       return "Enter both email and password.";
     case "invalid":
       return "Invalid email or password.";
+    case "inactive":
+      return "This account is inactive. Ask an admin to reactivate it.";
+    case "locked":
+      return "This account is temporarily locked after failed sign-in attempts. Try again later or ask an admin.";
+    case "backend":
+      return "Could not reach the backend authentication service. Check the backend logs and configuration.";
     case "db":
       return "Database connection failed. Check dashboard DB configuration.";
     case "schema-missing":
