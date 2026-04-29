@@ -137,7 +137,7 @@ function mediaSourceUrl(
   kind: RuntimeMediaInsight["kind"],
 ): string | null {
   if (kind === "image") {
-    return attachment.preview_url ?? attachment.object_url ?? null;
+    return attachment.object_url ?? attachment.preview_url ?? null;
   }
   return attachment.object_url ?? attachment.preview_url ?? null;
 }

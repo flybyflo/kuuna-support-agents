@@ -217,25 +217,6 @@ async function processPendingAsset(
   }
 
   if (!bytes && !downloadUrl) {
-    if (kind === "image" && typeof metadata.preview_url === "string") {
-      metadata.processing_mode = "thumbnail-only";
-      await markMediaReady(database, asset, {
-        metadata,
-        mimeType,
-        transcript: successTranscript({ kind, mimeType, mediaPayload }),
-      });
-      await publishRuntimeEvent({
-        type: "media.updated",
-        providerGroupId,
-        traceId,
-        entityId: asset.id,
-        entityType: "media_asset",
-        payload: { status: "ready", message_id: asset.messageId, kind, processing_mode: "thumbnail-only" },
-      });
-      await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
-      await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
-      return "ready";
-    }
     metadata.error = "download_url_missing";
     await markMediaFailed(database, asset, "download_url_missing", metadata);
     await publishRuntimeEvent({
@@ -278,11 +259,8 @@ async function processPendingAsset(
   metadata.object_url = objectUrl;
   metadata.source_download_url = downloadUrl;
   if (kind === "image") {
-    const existingPreview = typeof metadata.preview_url === "string" ? metadata.preview_url : null;
     if (usedInlineData && inlineData) {
-      metadata.preview_url = `data:${mimeType};base64,${inlineData}`;
-    } else if (existingPreview?.startsWith("data:image/")) {
-      metadata.preview_url = existingPreview;
+      metadata.preview_url = objectUrl ?? `data:${mimeType};base64,${inlineData}`;
     } else {
       metadata.preview_url = objectUrl ?? downloadUrl;
     }

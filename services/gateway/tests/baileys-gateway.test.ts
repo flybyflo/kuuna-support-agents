@@ -12,6 +12,7 @@ class FakeSocket {
   ev = new EventEmitter();
   sent: Array<{ jid: string; content: unknown }> = [];
   ended = false;
+  mediaBytes = Buffer.from("original-media-bytes");
 
   async groupFetchAllParticipating() {
     return {
@@ -32,6 +33,10 @@ class FakeSocket {
     return { key: { id: "provider-msg-123" } };
   }
 
+  async updateMediaMessage(message: unknown) {
+    return message;
+  }
+
   end() {
     this.ended = true;
   }
@@ -48,6 +53,7 @@ function fakeBaileys(socket: FakeSocket) {
     }),
     fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
     makeWASocket: () => socket,
+    downloadMediaMessage: async () => socket.mediaBytes,
   };
 }
 
@@ -160,7 +166,10 @@ test("forwards self messages not sent by this gateway", async () => {
 
   assert.equal(calls.length, 1);
   assert.equal((calls[0] as Record<string, unknown>).provider_message_id, "human-phone-msg");
-  assert.equal(((calls[0] as { message: { media: unknown[] } }).message.media).length, 1);
+  const media = (calls[0] as { message: { media: Array<Record<string, unknown>> } }).message.media;
+  assert.equal(media.length, 1);
+  assert.equal(media[0]?.inline_data_base64, socket.mediaBytes.toString("base64"));
+  assert.equal(media[0]?.byte_size, socket.mediaBytes.byteLength);
 });
 
 test("group and outbound methods delegate to socket", async () => {

@@ -4,11 +4,12 @@ import qrcode from "qrcode-terminal";
 import { BackendIngestClient } from "./backend.js";
 import { mapBaileysMessage, isSelfMessage } from "./mapping.js";
 import { GatewayConnectionStatus, GatewayQrStatus } from "./status.js";
-import type { ConnectionSnapshot, GatewayClient, GatewayGroup, QrSnapshot } from "./types.js";
+import type { ConnectionSnapshot, GatewayClient, GatewayGroup, GatewayInboundEvent, QrSnapshot } from "./types.js";
 
 type AnyRecord = Record<string, unknown>;
 type BaileysModule = typeof import("@whiskeysockets/baileys");
 type WASocket = import("@whiskeysockets/baileys").WASocket;
+type WAMessage = import("@whiskeysockets/baileys").WAMessage;
 
 export class BaileysGateway implements GatewayClient {
   private socket: WASocket | null = null;
@@ -192,7 +193,7 @@ export class BaileysGateway implements GatewayClient {
     });
 
     socket.ev.on("messages.upsert", (event: { messages?: unknown; type?: unknown }) => {
-      const messages = Array.isArray(event.messages) ? (event.messages as AnyRecord[]) : [];
+      const messages = Array.isArray(event.messages) ? (event.messages as WAMessage[]) : [];
       this.logger.info({
         event: "gateway_messages_upsert_received",
         upsert_type: typeof event.type === "string" ? event.type : null,
@@ -216,9 +217,10 @@ export class BaileysGateway implements GatewayClient {
     }, 3000);
   }
 
-  private async handleMessages(messages: AnyRecord[]): Promise<void> {
+  private async handleMessages(messages: WAMessage[]): Promise<void> {
     for (const message of messages) {
-      const summary = messageSummary(message);
+      const messageRecord = message as unknown as AnyRecord;
+      const summary = messageSummary(messageRecord);
       if (!message.message) {
         this.logger.info({
           event: "gateway_inbound_skipped",
@@ -227,7 +229,7 @@ export class BaileysGateway implements GatewayClient {
         });
         continue;
       }
-      if (isSelfMessage(message) && summary.provider_message_id && this.gatewayOutboundMessageIds.has(summary.provider_message_id)) {
+      if (isSelfMessage(messageRecord) && summary.provider_message_id && this.gatewayOutboundMessageIds.has(summary.provider_message_id)) {
         this.logger.info({
           event: "gateway_inbound_skipped",
           reason: "known_gateway_outbound_echo",
@@ -235,7 +237,8 @@ export class BaileysGateway implements GatewayClient {
         });
         continue;
       }
-      const payload = mapBaileysMessage(message);
+      const payload = mapBaileysMessage(messageRecord);
+      await this.attachOriginalMediaBytes(payload, message);
       if (!payload.provider_group_id) {
         this.logger.warn({
           event: "gateway_inbound_skipped",
@@ -268,6 +271,48 @@ export class BaileysGateway implements GatewayClient {
         });
       }
     }
+  }
+
+  private async attachOriginalMediaBytes(payload: GatewayInboundEvent, message: WAMessage): Promise<void> {
+    if (payload.message.media.length === 0) return;
+    const baileys = await this.loadBaileys();
+    const socket = this.requireSocket();
+
+    let mediaBytes: Buffer;
+    try {
+      mediaBytes = await baileys.downloadMediaMessage(
+        message,
+        "buffer",
+        {},
+        {
+          logger: this.logger,
+          reuploadRequest: socket.updateMediaMessage.bind(socket),
+        },
+      );
+    } catch (error) {
+      this.logger.warn({
+        event: "gateway_media_download_failed",
+        trace_id: payload.trace_id,
+        provider_group_id: payload.provider_group_id,
+        provider_message_id: payload.provider_message_id,
+        error: errorMessage(error),
+      });
+      return;
+    }
+
+    const encoded = mediaBytes.toString("base64");
+    for (const media of payload.message.media) {
+      media.inline_data_base64 = encoded;
+      media.byte_size = mediaBytes.byteLength;
+    }
+    this.logger.info({
+      event: "gateway_media_downloaded",
+      trace_id: payload.trace_id,
+      provider_group_id: payload.provider_group_id,
+      provider_message_id: payload.provider_message_id,
+      media_count: payload.message.media.length,
+      byte_size: mediaBytes.byteLength,
+    });
   }
 
   private rememberGatewayOutboundMessage(providerMessageId: string): void {

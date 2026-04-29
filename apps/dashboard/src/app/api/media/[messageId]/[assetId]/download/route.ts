@@ -101,7 +101,7 @@ export async function GET(
   const filename = fallbackFilename(asset);
   const isInlineImage = disposition === "inline" && asset.mime_type.startsWith("image/");
   const downloadUrls = isInlineImage
-    ? uniqueUrls([asset.preview_url, asset.download_url])
+    ? uniqueUrls([asset.download_url, asset.preview_url])
     : uniqueUrls([
         asset.download_url,
         asset.mime_type.startsWith("image/") ? asset.preview_url : null,
