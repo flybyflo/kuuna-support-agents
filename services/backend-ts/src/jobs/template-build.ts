@@ -276,6 +276,20 @@ export async function processTemplateBuildJob(
     }
 
     inspect = await runner(docker, ["image", "inspect", "--format", "{{json .RepoDigests}}", imageTag]);
+  } catch (error) {
+    const message = errorMessage(error);
+    const logs = JSON.stringify({
+      command: [docker, ...buildArgs],
+      returncode: null,
+      stdout_tail: "",
+      stderr_tail: tail(message, 4000),
+    });
+    await database
+      .update(templateBuilds)
+      .set({ logsRef: logs, updatedAt: new Date() })
+      .where(eq(templateBuilds.id, build.id));
+    await markFailed(database, build, `docker build failed: ${message}`);
+    return { processed: true, status: "failed" };
   } finally {
     await generatedDockerfile.cleanup();
   }

@@ -32,6 +32,7 @@ export type RuntimeToolState = {
 };
 
 const knownToolNames = new Set<string>(KUUNA_TOOL_NAMES);
+const unsafeBashCommandPattern = /[;&|<>\n\r`$()]/;
 
 function textArg(args: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -373,8 +374,7 @@ function createAllowlistedBashTool(state: RuntimeToolState, allowlist: string[])
       const bashParams = params as BashToolInput;
       const startedAt = Date.now();
       const command = bashParams.command.trim();
-      const allowed = allowedPrefixes.some((prefix) => command.toLowerCase().startsWith(prefix));
-      if (!allowed) {
+      if (!isBashCommandAllowed(command, allowedPrefixes)) {
         const stderr = `Command is not allowed. Allowed prefixes: ${allowedPrefixes.join(", ")}`;
         pushResult(state, startedAt, {
           name: "bash",
@@ -416,6 +416,22 @@ function createAllowlistedBashTool(state: RuntimeToolState, allowlist: string[])
     },
   };
   return wrapped as ToolDefinition;
+}
+
+export function isBashCommandAllowed(command: string, allowlist: string[]): boolean {
+  const normalizedCommand = normalizeBashCommand(command);
+  if (!normalizedCommand || unsafeBashCommandPattern.test(command)) {
+    return false;
+  }
+
+  return allowlist
+    .map(normalizeBashCommand)
+    .filter(Boolean)
+    .some((prefix) => normalizedCommand === prefix || normalizedCommand.startsWith(`${prefix} `));
+}
+
+function normalizeBashCommand(command: string): string {
+  return command.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function resultText(content: Array<{ type: string; text?: string }>): string {

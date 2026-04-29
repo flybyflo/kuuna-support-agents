@@ -223,6 +223,38 @@ test("contract: template build job records docker failure logs", { skip: skipRea
   assert.deepEqual(event.payload, { error: "docker build failed (exit 17)" });
 });
 
+test("contract: template build job marks failed when docker runner throws", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: { base_image: "node:22-alpine" },
+    })
+    .returning();
+  assert.ok(build);
+
+  const result = await processTemplateBuildJob(
+    harness.db,
+    { buildId: build.id },
+    { commandRunner: async () => { throw new Error("spawn docker ENOENT"); } },
+  );
+  assert.deepEqual(result, { processed: true, status: "failed" });
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "failed");
+  const logs = JSON.parse(stored.logsRef ?? "{}") as Record<string, unknown>;
+  assert.equal(logs.returncode, null);
+  assert.equal(logs.stderr_tail, "spawn docker ENOENT");
+  const event = await findAuditEvent(harness, "template_build.failed");
+  assert.deepEqual(event.payload, { error: "docker build failed: spawn docker ENOENT" });
+});
+
 test("contract: template build job succeeds and uses digest fallback", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
