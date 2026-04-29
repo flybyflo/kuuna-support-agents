@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { AppShellScrollReset } from "@/components/layout/app-shell-scroll-reset";
 import type { StaffSession } from "@/lib/auth/session";
 import { cn } from "@/lib/utils/cn";
 
@@ -43,7 +44,7 @@ export function AppShell({
     <div className="fixed inset-0 grid overflow-hidden grid-cols-[260px_1fr] bg-background text-foreground">
       <aside
         className={cn(
-          "sticky top-0 flex h-screen flex-col gap-6 border-r border-sidebar-border bg-sidebar",
+          "flex h-screen flex-col gap-6 border-r border-sidebar-border bg-sidebar",
           "px-4 py-6",
         )}
       >
@@ -90,7 +91,7 @@ export function AppShell({
       </aside>
 
       <div className="flex h-screen min-h-0 flex-col overflow-hidden">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-border bg-background/85 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-8">
+        <header className="z-30 flex h-16 items-center justify-between gap-4 border-b border-border bg-background/85 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:px-8">
           <div className="relative flex w-full max-w-sm items-center">
             <Search
               className="pointer-events-none absolute left-3 size-4 text-muted-foreground"
@@ -127,7 +128,11 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8 sm:px-8 sm:py-10">
+        <main
+          data-dashboard-scroll-container
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-8 sm:px-8 sm:py-10"
+        >
+          <AppShellScrollReset />
           <div className="mx-auto min-h-full w-full max-w-[1400px]">{children}</div>
         </main>
       </div>
