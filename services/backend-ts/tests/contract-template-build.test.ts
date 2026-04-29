@@ -28,6 +28,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
     actorUserId: actor.id,
     baseImage: "ghcr.io/kuuna/runtime-base:1",
     allowedTools: [" Search ", "SEND_WHATSAPP"],
+    dockerfileSnippet: "RUN apt-get update",
+    piBashEnabled: true,
+    piBashAllowlist: [" jq ", "PYTHON"],
   });
 
   assert.equal(body.template_id, seeded.templateId);
@@ -35,6 +38,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.equal(body.status, "queued");
   assert.equal((body.build_inputs as Record<string, unknown>).base_image, "ghcr.io/kuuna/runtime-base:1");
   assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "send_whatsapp"]);
+  assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
+  assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
+  assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
 
   assert.equal(harness.jobs.length, 1);
   assert.equal(harness.jobs[0]?.name, "template_build");
@@ -78,6 +84,39 @@ test("contract: template build tRPC rejects unpublished or missing versions", { 
       baseImage: "node:22-alpine",
     }),
     /template version not found/,
+  );
+});
+
+test("contract: template build tRPC rejects bash without allowlist and blocked Dockerfile instructions", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const actor = await harness.seedUser({ email: "builder4@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder4@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
+  const seeded = await seedTemplate(harness, { status: "published" });
+
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: seeded.versionId,
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+      piBashEnabled: true,
+      piBashAllowlist: [],
+    }),
+    /pi_bash_allowlist is required/,
+  );
+
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: seeded.versionId,
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+      dockerfileSnippet: "ENTRYPOINT [\"bad\"]",
+    }),
+    /dockerfile_snippet cannot contain ENTRYPOINT/,
   );
 });
 

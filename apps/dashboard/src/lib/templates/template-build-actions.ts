@@ -18,6 +18,19 @@ function parseCsvTools(raw: string | null): string[] | undefined {
   return items.length ? items : undefined;
 }
 
+function parseList(raw: string | null): string[] | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const items = raw
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length ? items : undefined;
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value,
@@ -31,14 +44,28 @@ export async function queueTemplateBuildAction(formData: FormData): Promise<void
   const versionIdRaw = formData.get("versionId");
   const baseImageRaw = formData.get("baseImage");
   const allowedToolsRaw = formData.get("allowedTools");
+  const dockerfileSnippetRaw = formData.get("dockerfileSnippet");
+  const piBashEnabledRaw = formData.get("piBashEnabled");
+  const piBashAllowlistRaw = formData.get("piBashAllowlist");
 
   const templateId = typeof templateIdRaw === "string" ? templateIdRaw.trim() : "";
   const versionId = typeof versionIdRaw === "string" ? versionIdRaw.trim() : "";
   const baseImage = typeof baseImageRaw === "string" ? baseImageRaw.trim() : "";
+  const dockerfileSnippet = typeof dockerfileSnippetRaw === "string" ? dockerfileSnippetRaw.trim() : "";
+  const piBashEnabled = piBashEnabledRaw === "on";
+  const piBashAllowlist = parseList(typeof piBashAllowlistRaw === "string" ? piBashAllowlistRaw : null);
 
   if (!templateId || !versionId || !baseImage) {
     redirect(
       `/templates/${encodeURIComponent(templateId || "unknown")}?error=${encodeURIComponent("Template-Builds: templateId, versionId und base_image sind erforderlich.")}`,
+    );
+  }
+
+  if (piBashEnabled && (!piBashAllowlist || piBashAllowlist.length === 0)) {
+    redirect(
+      `/templates/${encodeURIComponent(templateId)}?error=${encodeURIComponent(
+        "Template-Builds: Bash allowlist ist erforderlich, wenn Pi bash exec aktiviert ist.",
+      )}`,
     );
   }
 
@@ -59,6 +86,9 @@ export async function queueTemplateBuildAction(formData: FormData): Promise<void
       actorUserId: session.userId,
       baseImage,
       allowedTools: parseCsvTools(typeof allowedToolsRaw === "string" ? allowedToolsRaw : null),
+      dockerfileSnippet: dockerfileSnippet || null,
+      piBashEnabled,
+      piBashAllowlist,
     });
   } catch (error) {
     redirect(

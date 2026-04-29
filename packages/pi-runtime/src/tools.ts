@@ -1,7 +1,14 @@
 import { Type } from "typebox";
-import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import {
+  createBashToolDefinition,
+  defineTool,
+  type BashToolDetails,
+  type BashToolInput,
+  type ToolDefinition,
+} from "@mariozechner/pi-coding-agent";
 import {
   runtimeMediaAttachmentSchema,
+  type RuntimeAgentConfig,
   type RuntimeMediaInsight,
   type ToolExecutionResult,
   type ToolInvocation,
@@ -75,14 +82,26 @@ async function ensureMediaInsights(state: RuntimeToolState): Promise<RuntimeMedi
   return insights;
 }
 
-export function sanitizeAllowedTools(allowedTools: string[]): string[] {
-  return allowedTools
+export function sanitizeAllowedTools(allowedTools: string[], runtimeConfig?: RuntimeAgentConfig): string[] {
+  const sanitized = allowedTools
     .map((tool) => tool.trim().toLowerCase())
     .filter((tool, index, tools) => knownToolNames.has(tool) && tools.indexOf(tool) === index);
+  if (
+    runtimeConfig?.pi_bash_enabled &&
+    runtimeConfig.pi_bash_allowlist.length > 0 &&
+    allowedTools.map((tool) => tool.trim().toLowerCase()).includes("bash")
+  ) {
+    sanitized.push("bash");
+  }
+  return sanitized;
 }
 
-export function createKuunaTools(state: RuntimeToolState): ToolDefinition[] {
-  return [
+export function createKuunaTools(state: RuntimeToolState, runtimeConfig?: RuntimeAgentConfig): ToolDefinition[] {
+  const tools: ToolDefinition[] = runtimeConfig?.pi_bash_enabled && runtimeConfig.pi_bash_allowlist.length > 0
+    ? [createAllowlistedBashTool(state, runtimeConfig.pi_bash_allowlist)]
+    : [];
+  tools.push(
+    ...[
     defineTool({
       name: "uppercase",
       label: "Uppercase",
@@ -257,17 +276,20 @@ export function createKuunaTools(state: RuntimeToolState): ToolDefinition[] {
         return { content: [{ type: "text", text: stdout }], details: { todos: filtered } };
       },
     }),
-  ];
+    ],
+  );
+  return tools;
 }
 
 export function executeExplicitTool(
   invocation: ToolInvocation,
   allowedTools: string[],
   context: Record<string, unknown>,
+  runtimeConfig?: RuntimeAgentConfig,
 ): ToolExecutionResult {
   const startedAt = Date.now();
   const name = invocation.name.trim().toLowerCase();
-  if (!sanitizeAllowedTools(allowedTools).includes(name)) {
+  if (!sanitizeAllowedTools(allowedTools, runtimeConfig).includes(name)) {
     return {
       name,
       ok: false,
@@ -339,4 +361,66 @@ export function executeExplicitTool(
     timed_out: false,
     duration_ms: nowMs(startedAt),
   };
+}
+
+function createAllowlistedBashTool(state: RuntimeToolState, allowlist: string[]): ToolDefinition {
+  const bash = createBashToolDefinition(process.cwd());
+  const allowedPrefixes = allowlist.map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const wrapped = {
+    ...bash,
+    execute: async (...args: Parameters<typeof bash.execute>) => {
+      const [toolCallId, params, signal, onUpdate, ctx] = args;
+      const bashParams = params as BashToolInput;
+      const startedAt = Date.now();
+      const command = bashParams.command.trim();
+      const allowed = allowedPrefixes.some((prefix) => command.toLowerCase().startsWith(prefix));
+      if (!allowed) {
+        const stderr = `Command is not allowed. Allowed prefixes: ${allowedPrefixes.join(", ")}`;
+        pushResult(state, startedAt, {
+          name: "bash",
+          ok: false,
+          stdout: "",
+          stderr,
+          timed_out: false,
+          details: { command, allowlist: allowedPrefixes },
+        });
+        return { content: [{ type: "text", text: stderr }], details: { command, allowlist: allowedPrefixes } };
+      }
+
+      try {
+        const result = await bash.execute(toolCallId, bashParams, signal, onUpdate, ctx);
+        pushResult(state, startedAt, {
+          name: "bash",
+          ok: true,
+          stdout: resultText(result.content),
+          stderr: "",
+          timed_out: false,
+          details: {
+            command,
+            ...(result.details && typeof result.details === "object" ? (result.details as BashToolDetails) : {}),
+          },
+        });
+        return result;
+      } catch (error) {
+        const stderr = error instanceof Error ? error.message : String(error);
+        pushResult(state, startedAt, {
+          name: "bash",
+          ok: false,
+          stdout: "",
+          stderr,
+          timed_out: /timed out|timeout/i.test(stderr),
+          details: { command },
+        });
+        throw error;
+      }
+    },
+  };
+  return wrapped as ToolDefinition;
+}
+
+function resultText(content: Array<{ type: string; text?: string }>): string {
+  return content
+    .map((item) => (item.type === "text" && typeof item.text === "string" ? item.text : ""))
+    .filter(Boolean)
+    .join("\n");
 }

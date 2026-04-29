@@ -12,6 +12,23 @@ test("sanitizes allowed tools without enabling Pi coding tools", () => {
   );
 });
 
+test("sanitizes bash only when runtime config explicitly enables it", () => {
+  assert.deepEqual(
+    sanitizeAllowedTools(["uppercase", "bash"], {
+      pi_bash_enabled: true,
+      pi_bash_allowlist: ["jq"],
+    }),
+    ["uppercase", "bash"],
+  );
+  assert.deepEqual(
+    sanitizeAllowedTools(["uppercase", "bash"], {
+      pi_bash_enabled: true,
+      pi_bash_allowlist: [],
+    }),
+    ["uppercase"],
+  );
+});
+
 test("uses gpt-5.5 and medium reasoning by default", async () => {
   const previousApiKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;

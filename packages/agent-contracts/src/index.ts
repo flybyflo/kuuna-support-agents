@@ -61,11 +61,17 @@ export const runtimeAgentContextSchema = z
   })
   .catchall(z.unknown());
 
+export const runtimeAgentConfigSchema = z.object({
+  pi_bash_enabled: z.boolean().default(false),
+  pi_bash_allowlist: z.array(z.string().min(1)).default([]),
+});
+
 export const runtimeAgentRequestSchema = z.object({
   trace_id: z.string().nullable().optional(),
   system_prompt: z.string().nullable().optional(),
   user_prompt: z.string(),
   context: runtimeAgentContextSchema.default({}),
+  runtime_config: runtimeAgentConfigSchema.default({}),
   model_path: z.array(z.string().min(1)).default([]),
   reasoning_effort: reasoningEffortSchema.default(DEFAULT_REASONING_EFFORT),
   allowed_tools: z.array(z.string().min(1)).default([]),
@@ -109,6 +115,7 @@ export type RuntimeMediaAttachment = z.infer<typeof runtimeMediaAttachmentSchema
 export type RuntimeMediaInsight = z.infer<typeof runtimeMediaInsightSchema>;
 export type RuntimeLink = z.infer<typeof runtimeLinkSchema>;
 export type RuntimeAgentContext = z.infer<typeof runtimeAgentContextSchema>;
+export type RuntimeAgentConfig = z.infer<typeof runtimeAgentConfigSchema>;
 export type RuntimeAgentRequest = z.infer<typeof runtimeAgentRequestSchema>;
 export type ModelAttempt = z.infer<typeof modelAttemptSchema>;
 export type ToolExecutionResult = z.infer<typeof toolExecutionResultSchema>;
