@@ -1,9 +1,16 @@
 import { Type } from "typebox";
 import { defineTool, type ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { ToolExecutionResult, ToolInvocation } from "@kuuna/agent-contracts";
+import {
+  runtimeMediaAttachmentSchema,
+  type RuntimeMediaInsight,
+  type ToolExecutionResult,
+  type ToolInvocation,
+} from "@kuuna/agent-contracts";
+import { analyzeRuntimeMedia } from "./media-insights.js";
 
 export const KUUNA_TOOL_NAMES = [
   "uppercase",
+  "media_analyze",
   "knowledge_search",
   "message_history",
   "todo_create",
@@ -14,6 +21,7 @@ export const KUUNA_TOOL_NAMES = [
 export type RuntimeToolState = {
   context: Record<string, unknown>;
   results: ToolExecutionResult[];
+  mediaInsights?: RuntimeMediaInsight[];
 };
 
 const knownToolNames = new Set<string>(KUUNA_TOOL_NAMES);
@@ -52,6 +60,21 @@ function contextArray(context: Record<string, unknown>, keys: string[]): unknown
   return [];
 }
 
+function runtimeMediaAttachments(context: Record<string, unknown>) {
+  const parsed = runtimeMediaAttachmentSchema.array().safeParse(context.media_attachments);
+  return parsed.success ? parsed.data : [];
+}
+
+async function ensureMediaInsights(state: RuntimeToolState): Promise<RuntimeMediaInsight[]> {
+  if (state.mediaInsights) {
+    return state.mediaInsights;
+  }
+  const insights = await analyzeRuntimeMedia(runtimeMediaAttachments(state.context));
+  state.mediaInsights = insights;
+  state.context.media_insights = insights;
+  return insights;
+}
+
 export function sanitizeAllowedTools(allowedTools: string[]): string[] {
   return allowedTools
     .map((tool) => tool.trim().toLowerCase())
@@ -72,6 +95,34 @@ export function createKuunaTools(state: RuntimeToolState): ToolDefinition[] {
         const stdout = params.text.toUpperCase();
         pushResult(state, startedAt, { name: "uppercase", ok: true, stdout, stderr: "", timed_out: false });
         return { content: [{ type: "text", text: stdout }], details: { text: params.text } };
+      },
+    }),
+    defineTool({
+      name: "media_analyze",
+      label: "Analyze Media",
+      description: "Inspect image and audio insights generated inside this isolated chat runtime.",
+      parameters: Type.Object({
+        media_asset_id: Type.Optional(Type.String({ description: "Optional media asset id to inspect." })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const startedAt = Date.now();
+        const insights = await ensureMediaInsights(state);
+        const selected = params.media_asset_id
+          ? insights.filter((insight) => insight.media_asset_id === params.media_asset_id)
+          : insights;
+        const stdout = JSON.stringify({ media_insights: selected });
+        pushResult(state, startedAt, {
+          name: "media_analyze",
+          ok: true,
+          stdout,
+          stderr: "",
+          timed_out: false,
+          details: {
+            media_asset_id: params.media_asset_id ?? null,
+            insight_count: selected.length,
+          },
+        });
+        return { content: [{ type: "text", text: stdout }], details: { media_insights: selected } };
       },
     }),
     defineTool({

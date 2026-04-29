@@ -42,10 +42,10 @@ import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inboundConfirmationText = "Danke, wir haben deine Nachricht erhalten.";
 const defaultSystemPrompt = "Du bist ein hilfreicher Support-Agent für eine WhatsApp-Gruppe. Antworte präzise, freundlich und mit klaren nächsten Schritten.";
-const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Media attachments and links always require staff follow-up, and the backend creates that deterministic todo before analysis; inspect the provided media/link context and enrich the decision summary. For plain text without media or links, decide whether staff follow-up is needed and call todo_create when needed. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
+const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Media attachments and links always require staff follow-up, and the backend creates that deterministic todo before analysis; inspect the provided media/link context and enrich the decision summary. Use media_analyze for attachments, then combine those isolated-runtime media insights with message_history, knowledge_search, and todos. For plain text without media or links, decide whether staff follow-up is needed and call todo_create when needed. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
 const defaultModel = "gpt-5.5";
 const defaultReasoningEffort = "medium";
-const passiveAnalysisTools = new Set(["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);
+const passiveAnalysisTools = new Set(["media_analyze", "knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);
 
 type RuntimeAgentCaller = (runtimeBaseUrl: string, request: RuntimeAgentRequest, timeoutSeconds: number) => Promise<RuntimeAgentResult>;
 type MessageRow = typeof messages.$inferSelect;
@@ -86,7 +86,10 @@ export async function processInboundExecutionJob(
   const queryText = latest
     ? buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments)
     : userText;
-  const allowedTools = extractAllowedTools(resolved.templateVersion.toolsConfig);
+  const allowedTools = withRuntimeMediaTool(
+    extractAllowedTools(resolved.templateVersion.toolsConfig),
+    mediaAttachments,
+  );
   const modelPath = extractModelCandidates(resolved.templateVersion.modelConfig);
   const reasoningEffort = extractReasoningEffort(resolved.templateVersion.modelConfig);
   const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
@@ -205,9 +208,10 @@ export async function processPassiveMessageAnalysisJob(
   const queryText = await buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments);
   const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
   const retrievalRefs = buildRetrievalRefs(retrievalHits);
-  const allowedTools = todoRequired
+  const baseAllowedTools = todoRequired
     ? withoutAllowedTool(extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig), "todo_create")
     : extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
+  const allowedTools = withRuntimeMediaTool(baseAllowedTools, mediaAttachments);
   const result = await runViaRuntimeAgent(
     database,
     {
@@ -832,7 +836,7 @@ function buildPassiveAnalysisUserPrompt(
     "Decision policy:",
     "- If todo_required is true, the dashboard follow-up todo has already been created automatically; do not call todo_create.",
     "- Media attachments and links always require a todo, even when the image has no text caption yet.",
-    "- For images, use the media URL/context available to you in the runtime context and summarize what staff should inspect.",
+    "- For media attachments, use media_analyze and combine the result with message history, knowledge, and todos.",
     "- Create a todo for concrete staff work, deadlines, evidence review, missing documents, legal/accounting questions, or client follow-up.",
     "- Do not create todos for greetings, acknowledgements, jokes, duplicates, or messages with no actionable content.",
   );
@@ -935,12 +939,19 @@ function extractAllowedTools(toolsConfig: unknown): string[] {
 
 function extractPassiveAnalysisTools(toolsConfig: unknown): string[] {
   const configured = extractAllowedTools(toolsConfig);
-  const defaults = ["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"];
+  const defaults = ["media_analyze", "knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"];
   return configured.length ? configured.filter((tool) => passiveAnalysisTools.has(tool)) : defaults;
 }
 
 function withoutAllowedTool(tools: string[], tool: string): string[] {
   return tools.filter((item) => item !== tool);
+}
+
+function withRuntimeMediaTool(tools: string[], mediaAttachments: RuntimeMediaAttachment[]): string[] {
+  if (!mediaAttachments.length || tools.includes("media_analyze")) {
+    return tools;
+  }
+  return ["media_analyze", ...tools];
 }
 
 function extractModelCandidates(modelConfig: unknown): string[] {

@@ -7,8 +7,8 @@ import { sanitizeAllowedTools } from "../src/tools.js";
 
 test("sanitizes allowed tools without enabling Pi coding tools", () => {
   assert.deepEqual(
-    sanitizeAllowedTools(["uppercase", "bash", "read", "todo_create", "write"]),
-    ["uppercase", "todo_create"],
+    sanitizeAllowedTools(["uppercase", "bash", "read", "media_analyze", "todo_create", "write"]),
+    ["uppercase", "media_analyze", "todo_create"],
   );
 });
 

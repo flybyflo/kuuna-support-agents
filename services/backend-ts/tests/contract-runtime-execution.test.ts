@@ -150,6 +150,7 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
         return jobId ?? name;
       },
       runtimeAgentCaller: async (_runtimeBaseUrl, request) => {
+        assert.equal(request.allowed_tools.includes("media_analyze"), true);
         assert.equal(request.context.media_attachments?.[0]?.media_asset_id, asset.id);
         assert.equal(request.context.media_attachments?.[0]?.preview_url, "data:image/jpeg;base64,aGVsbG8=");
         return {

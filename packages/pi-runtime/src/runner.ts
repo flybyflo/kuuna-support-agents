@@ -143,7 +143,11 @@ async function runPiAttempt(
   });
   await resourceLoader.reload();
 
-  const toolState = { context: request.context ?? {}, results: [] as ToolExecutionResult[] };
+  const toolState = {
+    context: { ...(request.context ?? {}), media_insights: mediaInsights },
+    results: [] as ToolExecutionResult[],
+    mediaInsights,
+  };
   const { session } = await createAgentSession({
     cwd: process.cwd(),
     agentDir: "/tmp/kuuna-pi-agent",
