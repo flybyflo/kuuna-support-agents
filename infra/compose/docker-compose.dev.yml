@@ -8,7 +8,7 @@ services:
       CI: "true"
     command: >
       sh -c '
-        corepack enable &&
+        npm install -g pnpm@10.33.2 >/dev/null &&
         pnpm install
       '
     volumes:
@@ -25,7 +25,7 @@ services:
       dockerfile: apps/dashboard/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'corepack enable && pnpm --dir apps/dashboard exec next dev --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
+      sh -c 'pnpm --dir apps/dashboard exec next dev --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local
@@ -48,7 +48,7 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev'
+      sh -c 'pnpm --filter @kuuna/backend-ts dev'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -93,7 +93,7 @@ services:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
-    command: sh -c "corepack enable && pnpm --filter @kuuna/backend-ts db:migrate"
+    command: sh -c "pnpm --filter @kuuna/backend-ts db:migrate"
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -114,7 +114,7 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev:worker'
+      sh -c 'pnpm --filter @kuuna/backend-ts dev:worker'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -144,7 +144,7 @@ services:
       dockerfile: services/gateway/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'corepack enable && pnpm --filter @kuuna/gateway dev'
+      sh -c 'pnpm --filter @kuuna/gateway dev'
     env_file:
       - path: ../env/gateway.env.example
       - path: ../env/gateway.env.local

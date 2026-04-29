@@ -58,3 +58,16 @@ Scripts:
 
 Restore runbook:
 - `infra/compose/DR_RUNBOOK.md`
+
+## Database Migrations
+
+Compose runs migrations through the TypeScript backend service:
+
+```bash
+just migrate
+```
+
+This invokes `pnpm --filter @kuuna/backend-ts db:migrate` in the `migrate`
+container. The runner uses `drizzle-orm`, reads `.sql` files from
+`services/backend-ts/drizzle/`, and records applied files in
+`__kuuna_drizzle_migrations`.

@@ -105,6 +105,25 @@ pnpm lint
 
 These commands cover the dashboard, backend, gateway, runtime agent, and shared packages.
 
+## Database Migrations
+
+Database migrations are owned by the TypeScript backend. The only supported
+migration path is:
+
+```bash
+just migrate
+```
+
+or directly:
+
+```bash
+pnpm --filter @kuuna/backend-ts db:migrate
+```
+
+The migration runner uses `drizzle-orm`, records applied files in
+`__kuuna_drizzle_migrations`, and executes `.sql` files from
+`services/backend-ts/drizzle/`. New schema changes should be added there.
+
 Services:
 - Dashboard: http://localhost:3000
 - Backend API: http://localhost:8000

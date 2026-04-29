@@ -75,7 +75,7 @@ if ! wait_for_gateway_health; then
 fi
 
 log "running drizzle migrations"
-compose run --rm migrate >/dev/null
+compose run --build --rm migrate >/dev/null
 
 log "verifying core tables exist"
 compose exec -T postgres psql -U postgres -d kuuna -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('users','messages','outbound_intents','audit_events');" | grep -q '^4$'

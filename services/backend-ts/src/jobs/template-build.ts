@@ -424,7 +424,7 @@ async function createTemplateBuildDockerfile(input: {
   }
 
   const source = await readFile(input.sourceDockerfilePath, "utf8");
-  const marker = "RUN corepack enable";
+  const marker = "RUN npm install -g pnpm@10.33.2";
   const markerIndex = source.indexOf(marker);
   const content = markerIndex >= 0
     ? `${source.slice(0, markerIndex + marker.length)}\n\n# Kuuna template build customization\n${input.snippet}\n\n${source.slice(markerIndex + marker.length).trimStart()}`

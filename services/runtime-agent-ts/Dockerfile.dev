@@ -3,7 +3,7 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /workspace
 
-RUN corepack enable
+RUN npm install -g pnpm@10.33.2
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/dashboard/package.json ./apps/dashboard/package.json

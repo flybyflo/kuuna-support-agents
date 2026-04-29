@@ -28,7 +28,7 @@ ps:
     docker compose -f {{compose_file}} ps
 
 migrate:
-    docker compose -f {{compose_file}} run --rm migrate
+    docker compose -f {{compose_file}} run --build --rm migrate
 
 shell-backend:
     docker compose -f {{compose_file}} exec backend sh

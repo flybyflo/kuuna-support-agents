@@ -5,6 +5,6 @@ WORKDIR /workspace
 RUN apt-get update \
   && apt-get install -y --no-install-recommends docker.io \
   && rm -rf /var/lib/apt/lists/* \
-  && corepack enable
+  && npm install -g pnpm@10.33.2
 
 CMD ["pnpm", "--filter", "@kuuna/backend-ts", "dev"]

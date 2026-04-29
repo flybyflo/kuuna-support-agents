@@ -47,7 +47,7 @@ Checks:
 - `redis` healthy
 - backend `/health`
 - gateway ops `/healthz`
-- `pnpm --filter @kuuna/backend-ts db:migrate`
+- TypeScript backend Drizzle migrations through `pnpm --filter @kuuna/backend-ts db:migrate`
 - required core tables exist
 
 ## 3) Periodic Execution Recommendation

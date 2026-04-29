@@ -526,7 +526,7 @@ export default async function TemplateDetailPage({
                           <FormRow
                             label="Dockerfile snippet"
                             htmlFor={`dockerfileSnippet-${publishedVersionId}`}
-                            hint="Inserted after corepack enable. Use it for RUN/ENV/package installs."
+                            hint="Inserted after pnpm setup. Use it for RUN/ENV/package installs."
                             className="md:col-span-2"
                           >
                             <Textarea
