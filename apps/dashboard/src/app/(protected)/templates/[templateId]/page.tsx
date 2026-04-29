@@ -497,11 +497,11 @@ export default async function TemplateDetailPage({
                         </p>
                       </div>
 
-                      <form action={queueTemplateBuildAction} className="w-full md:max-w-xl">
+                      <form action={queueTemplateBuildAction} className="w-full md:max-w-3xl">
                         <input type="hidden" name="templateId" value={template.id} />
                         <input type="hidden" name="versionId" value={publishedVersionId} />
 
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                           <FormRow label="Node base image" htmlFor={`baseImage-${publishedVersionId}`}>
                             <Input
                               id={`baseImage-${publishedVersionId}`}
@@ -523,7 +523,49 @@ export default async function TemplateDetailPage({
                             />
                           </FormRow>
 
-                          <FormActions className="md:justify-end">
+                          <FormRow
+                            label="Dockerfile snippet"
+                            htmlFor={`dockerfileSnippet-${publishedVersionId}`}
+                            hint="Inserted after corepack enable. Use it for RUN/ENV/package installs."
+                            className="md:col-span-2"
+                          >
+                            <Textarea
+                              id={`dockerfileSnippet-${publishedVersionId}`}
+                              name="dockerfileSnippet"
+                              placeholder={"RUN apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*"}
+                              rows={4}
+                            />
+                          </FormRow>
+
+                          <div className="flex items-start gap-2 pt-6">
+                            <Checkbox id={`piBashEnabled-${publishedVersionId}`} name="piBashEnabled" />
+                            <div className="space-y-1">
+                              <label
+                                htmlFor={`piBashEnabled-${publishedVersionId}`}
+                                className="text-sm font-medium text-foreground"
+                              >
+                                Enable Pi bash exec
+                              </label>
+                              <p className="text-xs text-muted-foreground">
+                                Allows the agent to run matching commands inside this runtime image.
+                              </p>
+                            </div>
+                          </div>
+
+                          <FormRow
+                            label="Bash allowlist"
+                            htmlFor={`piBashAllowlist-${publishedVersionId}`}
+                            hint="Comma- or newline-separated command prefixes, for example jq, python, ffmpeg -i."
+                          >
+                            <Textarea
+                              id={`piBashAllowlist-${publishedVersionId}`}
+                              name="piBashAllowlist"
+                              placeholder={"jq\npython\nffmpeg -i"}
+                              rows={4}
+                            />
+                          </FormRow>
+
+                          <FormActions className="md:col-span-2 md:justify-end">
                             <Button type="submit" variant="outline">
                               Start build
                             </Button>

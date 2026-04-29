@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   runtimeAgentRequestSchema,
   runtimeAgentResultSchema,
+  type RuntimeAgentConfig,
   type RuntimeAgentContext,
   type RuntimeAgentRequest,
   type RuntimeAgentResult,
@@ -53,6 +54,7 @@ type MessageVersionRow = typeof messageVersions.$inferSelect;
 type TemplateVersionRow = typeof templateVersions.$inferSelect;
 type AgentInstanceRow = typeof agentInstances.$inferSelect;
 type GroupBindingRow = typeof groupBindings.$inferSelect;
+type TemplateBuildRow = typeof templateBuilds.$inferSelect;
 
 type RuntimeResult = {
   text: string;
@@ -86,9 +88,9 @@ export async function processInboundExecutionJob(
   const queryText = latest
     ? buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments)
     : userText;
-  const allowedTools = withRuntimeMediaTool(
-    extractAllowedTools(resolved.templateVersion.toolsConfig),
-    mediaAttachments,
+  const allowedTools = withRuntimeBashTool(
+    withRuntimeMediaTool(extractAllowedTools(resolved.templateVersion.toolsConfig), mediaAttachments),
+    resolved.runtimeConfig,
   );
   const modelPath = extractModelCandidates(resolved.templateVersion.modelConfig);
   const reasoningEffort = extractReasoningEffort(resolved.templateVersion.modelConfig);
@@ -111,6 +113,7 @@ export async function processInboundExecutionJob(
         modelPath,
         reasoningEffort,
         allowedTools,
+        runtimeConfig: resolved.runtimeConfig,
         retrievalRefs,
         retrievalHits,
         bindingId: resolved.binding.id,
@@ -211,7 +214,7 @@ export async function processPassiveMessageAnalysisJob(
   const baseAllowedTools = todoRequired
     ? withoutAllowedTool(extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig), "todo_create")
     : extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
-  const allowedTools = withRuntimeMediaTool(baseAllowedTools, mediaAttachments);
+  const allowedTools = withRuntimeBashTool(withRuntimeMediaTool(baseAllowedTools, mediaAttachments), resolved.runtimeConfig);
   const result = await runViaRuntimeAgent(
     database,
     {
@@ -223,6 +226,7 @@ export async function processPassiveMessageAnalysisJob(
       modelPath: extractModelCandidates(resolved.templateVersion.modelConfig),
       reasoningEffort: extractReasoningEffort(resolved.templateVersion.modelConfig),
       allowedTools,
+      runtimeConfig: resolved.runtimeConfig,
       retrievalRefs,
       retrievalHits,
       bindingId: resolved.binding.id,
@@ -282,7 +286,14 @@ async function resolveMessageAndRuntime(
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
   logPrefix: string,
 ): Promise<
-  | { ok: true; message: MessageRow; binding: GroupBindingRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
+  | {
+      ok: true;
+      message: MessageRow;
+      binding: GroupBindingRow;
+      templateVersion: TemplateVersionRow;
+      agentInstance: AgentInstanceRow;
+      runtimeConfig: RuntimeAgentConfig;
+    }
   | { ok: false; result: { processed: false; status: "invalid" | "not_found" | "skipped" } }
 > {
   if (!uuidPattern.test(input.messageId)) {
@@ -332,7 +343,15 @@ async function resolveMessageAndRuntime(
     });
     return { ok: false, result: { processed: false, status: "skipped" } };
   }
-  return { ok: true, message, binding: row.binding, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
+  const runtimeConfig = extractRuntimeConfig(await latestSuccessfulTemplateBuild(database, row.templateVersion.id));
+  return {
+    ok: true,
+    message,
+    binding: row.binding,
+    templateVersion: row.templateVersion,
+    agentInstance: row.agentInstance,
+    runtimeConfig,
+  };
 }
 
 async function runViaRuntimeAgent(
@@ -346,6 +365,7 @@ async function runViaRuntimeAgent(
     modelPath: string[];
     reasoningEffort: string;
     allowedTools: string[];
+    runtimeConfig: RuntimeAgentConfig;
     retrievalRefs: Array<Record<string, unknown>>;
     retrievalHits: RetrievalHit[];
     bindingId: string;
@@ -402,6 +422,7 @@ async function runViaRuntimeAgent(
       system_prompt: input.systemPrompt,
       user_prompt: input.userPrompt,
       context,
+      runtime_config: input.runtimeConfig,
       model_path: input.modelPath,
       reasoning_effort: input.reasoningEffort,
       allowed_tools: input.allowedTools,
@@ -952,6 +973,47 @@ function withRuntimeMediaTool(tools: string[], mediaAttachments: RuntimeMediaAtt
     return tools;
   }
   return ["media_analyze", ...tools];
+}
+
+function withRuntimeBashTool(tools: string[], runtimeConfig: RuntimeAgentConfig): string[] {
+  if (!runtimeConfig.pi_bash_enabled || tools.includes("bash")) {
+    return tools;
+  }
+  return [...tools, "bash"];
+}
+
+async function latestSuccessfulTemplateBuild(database: DbLike, templateVersionId: string): Promise<TemplateBuildRow | null> {
+  const [build] = await database
+    .select()
+    .from(templateBuilds)
+    .where(and(eq(templateBuilds.templateVersionId, templateVersionId), eq(templateBuilds.status, "succeeded")))
+    .orderBy(desc(templateBuilds.createdAt), desc(templateBuilds.id))
+    .limit(1);
+  return build ?? null;
+}
+
+function extractRuntimeConfig(build: TemplateBuildRow | null): RuntimeAgentConfig {
+  const inputs = objectRecord(build?.buildInputs);
+  const piBashEnabled = inputs.pi_bash_enabled === true;
+  const rawAllowlist = Array.isArray(inputs.pi_bash_allowlist)
+    ? inputs.pi_bash_allowlist.filter((item): item is string => typeof item === "string")
+    : [];
+  const piBashAllowlist = normalizeUniqueStrings(rawAllowlist);
+  return {
+    pi_bash_enabled: piBashEnabled && piBashAllowlist.length > 0,
+    pi_bash_allowlist: piBashAllowlist,
+  };
+}
+
+function normalizeUniqueStrings(values: string[]): string[] {
+  const normalized: string[] = [];
+  for (const value of values) {
+    const item = value.trim().toLowerCase();
+    if (item && !normalized.includes(item)) {
+      normalized.push(item);
+    }
+  }
+  return normalized;
 }
 
 function extractModelCandidates(modelConfig: unknown): string[] {

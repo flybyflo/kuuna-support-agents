@@ -28,6 +28,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
     actorUserId: actor.id,
     baseImage: "ghcr.io/kuuna/runtime-base:1",
     allowedTools: [" Search ", "SEND_WHATSAPP"],
+    dockerfileSnippet: "RUN apt-get update",
+    piBashEnabled: true,
+    piBashAllowlist: [" jq ", "PYTHON"],
   });
 
   assert.equal(body.template_id, seeded.templateId);
@@ -35,6 +38,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.equal(body.status, "queued");
   assert.equal((body.build_inputs as Record<string, unknown>).base_image, "ghcr.io/kuuna/runtime-base:1");
   assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "send_whatsapp"]);
+  assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
+  assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
+  assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
 
   assert.equal(harness.jobs.length, 1);
   assert.equal(harness.jobs[0]?.name, "template_build");
@@ -78,6 +84,39 @@ test("contract: template build tRPC rejects unpublished or missing versions", { 
       baseImage: "node:22-alpine",
     }),
     /template version not found/,
+  );
+});
+
+test("contract: template build tRPC rejects bash without allowlist and blocked Dockerfile instructions", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const actor = await harness.seedUser({ email: "builder4@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder4@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
+  const seeded = await seedTemplate(harness, { status: "published" });
+
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: seeded.versionId,
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+      piBashEnabled: true,
+      piBashAllowlist: [],
+    }),
+    /pi_bash_allowlist is required/,
+  );
+
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: seeded.versionId,
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+      dockerfileSnippet: "ENTRYPOINT [\"bad\"]",
+    }),
+    /dockerfile_snippet cannot contain ENTRYPOINT/,
   );
 });
 
@@ -182,6 +221,38 @@ test("contract: template build job records docker failure logs", { skip: skipRea
   assert.equal(logs.stderr_tail, "bad docker");
   const event = await findAuditEvent(harness, "template_build.failed");
   assert.deepEqual(event.payload, { error: "docker build failed (exit 17)" });
+});
+
+test("contract: template build job marks failed when docker runner throws", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: { base_image: "node:22-alpine" },
+    })
+    .returning();
+  assert.ok(build);
+
+  const result = await processTemplateBuildJob(
+    harness.db,
+    { buildId: build.id },
+    { commandRunner: async () => { throw new Error("spawn docker ENOENT"); } },
+  );
+  assert.deepEqual(result, { processed: true, status: "failed" });
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "failed");
+  const logs = JSON.parse(stored.logsRef ?? "{}") as Record<string, unknown>;
+  assert.equal(logs.returncode, null);
+  assert.equal(logs.stderr_tail, "spawn docker ENOENT");
+  const event = await findAuditEvent(harness, "template_build.failed");
+  assert.deepEqual(event.payload, { error: "docker build failed: spawn docker ENOENT" });
 });
 
 test("contract: template build job succeeds and uses digest fallback", { skip: skipReason }, async (t) => {

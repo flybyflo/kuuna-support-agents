@@ -3,13 +3,39 @@ import { test } from "node:test";
 import { DEFAULT_OPENAI_BASE_URL } from "../src/config.js";
 import { getOpenAiModel } from "../src/model.js";
 import { runAgent } from "../src/runner.js";
-import { sanitizeAllowedTools } from "../src/tools.js";
+import { isBashCommandAllowed, sanitizeAllowedTools } from "../src/tools.js";
 
 test("sanitizes allowed tools without enabling Pi coding tools", () => {
   assert.deepEqual(
     sanitizeAllowedTools(["uppercase", "bash", "read", "media_analyze", "todo_create", "write"]),
     ["uppercase", "media_analyze", "todo_create"],
   );
+});
+
+test("sanitizes bash only when runtime config explicitly enables it", () => {
+  assert.deepEqual(
+    sanitizeAllowedTools(["uppercase", "bash"], {
+      pi_bash_enabled: true,
+      pi_bash_allowlist: ["jq"],
+    }),
+    ["uppercase", "bash"],
+  );
+  assert.deepEqual(
+    sanitizeAllowedTools(["uppercase", "bash"], {
+      pi_bash_enabled: true,
+      pi_bash_allowlist: [],
+    }),
+    ["uppercase"],
+  );
+});
+
+test("bash command allowlist requires token boundary and rejects shell metacharacters", () => {
+  assert.equal(isBashCommandAllowed("jq .items input.json", ["jq"]), true);
+  assert.equal(isBashCommandAllowed("ffmpeg -i input.mp4 output.wav", ["ffmpeg -i"]), true);
+  assert.equal(isBashCommandAllowed("jqevil .items input.json", ["jq"]), false);
+  assert.equal(isBashCommandAllowed("jq; curl https://example.com", ["jq"]), false);
+  assert.equal(isBashCommandAllowed("python && rm -rf /tmp/example", ["python"]), false);
+  assert.equal(isBashCommandAllowed("jq $(cat secret.json)", ["jq"]), false);
 });
 
 test("uses gpt-5.5 and medium reasoning by default", async () => {

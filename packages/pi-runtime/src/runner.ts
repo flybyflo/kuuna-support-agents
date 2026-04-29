@@ -157,7 +157,7 @@ async function runPiAttempt(
     modelRegistry,
     noTools: "builtin",
     tools: allowedTools,
-    customTools: createKuunaTools(toolState),
+    customTools: createKuunaTools(toolState, request.runtime_config),
     sessionManager: SessionManager.inMemory(),
     settingsManager,
     resourceLoader,
@@ -202,7 +202,7 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
   const prompt = buildPrompt(enrichedRequest);
   const selectedModelPath = modelPath(request.model_path);
   const reasoningEffort = request.reasoning_effort ?? defaultReasoningEffort() ?? DEFAULT_REASONING_EFFORT;
-  const allowedTools = sanitizeAllowedTools(request.allowed_tools);
+  const allowedTools = sanitizeAllowedTools(request.allowed_tools, request.runtime_config);
 
   const attempts: ModelAttempt[] = [];
   let responseText: string | undefined;
@@ -249,7 +249,7 @@ export async function runAgent(input: unknown): Promise<RuntimeAgentResult> {
   const modelCreatedTodo = modelToolResults.some((result) => result.ok && result.name === "todo_create");
   const requestedToolResults = request.tool_requests
     .filter((toolRequest) => !(toolRequest.name.trim().toLowerCase() === "todo_create" && modelCreatedTodo))
-    .map((toolRequest) => executeExplicitTool(toolRequest, allowedTools, request.context));
+    .map((toolRequest) => executeExplicitTool(toolRequest, allowedTools, request.context, request.runtime_config));
   const toolResults = [...modelToolResults, ...requestedToolResults];
 
   return {

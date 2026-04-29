@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { and, desc, eq } from "drizzle-orm";
 
@@ -12,6 +15,8 @@ import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const baseImagePattern = /^[a-zA-Z0-9._/:@-]+$/;
 const tagSafePattern = /[^a-zA-Z0-9._-]+/g;
+const dockerfileSnippetMaxLength = 8000;
+const blockedDockerfileInstructions = new Set(["from", "cmd", "entrypoint", "expose"]);
 
 export type TemplateBuildRow = typeof templateBuilds.$inferSelect;
 
@@ -32,6 +37,9 @@ export type QueueTemplateBuildInput = {
   versionId: string;
   baseImage: string;
   allowedTools?: string[] | null;
+  dockerfileSnippet?: string | null;
+  piBashEnabled?: boolean | null;
+  piBashAllowlist?: string[] | null;
 };
 
 export async function queueTemplateBuild(
@@ -64,10 +72,19 @@ export async function queueTemplateBuild(
   const allowedTools = input.allowedTools
     ? input.allowedTools.map((tool) => tool.trim().toLowerCase()).filter(Boolean)
     : extractAllowedTools(version.toolsConfig);
+  const dockerfileSnippet = validateDockerfileSnippet(input.dockerfileSnippet ?? null);
+  const piBashEnabled = input.piBashEnabled === true;
+  const piBashAllowlist = normalizeStringList(input.piBashAllowlist ?? []);
+  if (piBashEnabled && piBashAllowlist.length === 0) {
+    throw new TemplateBuildValidationError("pi_bash_allowlist is required when Pi bash exec is enabled");
+  }
 
   const buildInputs = {
     base_image: baseImage,
     allowed_tools: allowedTools,
+    dockerfile_snippet: dockerfileSnippet || null,
+    pi_bash_enabled: piBashEnabled,
+    pi_bash_allowlist: piBashAllowlist,
     egress_policy: version.egressPolicy,
     tools_config: version.toolsConfig,
     model_config: version.modelConfig,
@@ -204,14 +221,29 @@ export async function processTemplateBuildJob(
     await markFailed(database, build, "missing base_image in build_inputs");
     return { processed: true, status: "failed" };
   }
+  const snippetResult = validateDockerfileSnippetForJob(buildInputs.dockerfile_snippet);
+  if (!snippetResult.ok) {
+    await markFailed(database, build, snippetResult.error);
+    return { processed: true, status: "failed" };
+  }
 
   const settings = getSettings();
   const docker = settings.DOCKER_CLI_PATH;
   const imageTag = buildImageTag(template.key, build.id);
+  const generatedDockerfile = await createTemplateBuildDockerfile({
+    sourceDockerfilePath: settings.TEMPLATE_BUILD_DOCKERFILE_PATH,
+    snippet: snippetResult.snippet,
+  }).catch(async (error: unknown) => {
+    await markFailed(database, build, `failed to prepare Dockerfile: ${errorMessage(error)}`);
+    return null;
+  });
+  if (!generatedDockerfile) {
+    return { processed: true, status: "failed" };
+  }
   const buildArgs = [
     "build",
     "-f",
-    settings.TEMPLATE_BUILD_DOCKERFILE_PATH,
+    generatedDockerfile.path,
     "--build-arg",
     `BASE_IMAGE=${baseImage}`,
     "--build-arg",
@@ -223,25 +255,44 @@ export async function processTemplateBuildJob(
     settings.TEMPLATE_BUILD_CONTEXT_PATH,
   ];
   const runner = options.commandRunner ?? runCommand;
-  const completed = await runner(docker, buildArgs);
-  const logs = JSON.stringify({
-    command: [docker, ...buildArgs],
-    returncode: completed.returncode,
-    stdout_tail: tail(completed.stdout, 4000),
-    stderr_tail: tail(completed.stderr, 4000),
-  });
+  let inspect: CommandResult;
+  try {
+    const completed = await runner(docker, buildArgs);
+    const logs = JSON.stringify({
+      command: [docker, ...buildArgs],
+      returncode: completed.returncode,
+      stdout_tail: tail(completed.stdout, 4000),
+      stderr_tail: tail(completed.stderr, 4000),
+    });
 
-  await database
-    .update(templateBuilds)
-    .set({ logsRef: logs, updatedAt: new Date() })
-    .where(eq(templateBuilds.id, build.id));
+    await database
+      .update(templateBuilds)
+      .set({ logsRef: logs, updatedAt: new Date() })
+      .where(eq(templateBuilds.id, build.id));
 
-  if (completed.returncode !== 0) {
-    await markFailed(database, build, `docker build failed (exit ${completed.returncode})`);
+    if (completed.returncode !== 0) {
+      await markFailed(database, build, `docker build failed (exit ${completed.returncode})`);
+      return { processed: true, status: "failed" };
+    }
+
+    inspect = await runner(docker, ["image", "inspect", "--format", "{{json .RepoDigests}}", imageTag]);
+  } catch (error) {
+    const message = errorMessage(error);
+    const logs = JSON.stringify({
+      command: [docker, ...buildArgs],
+      returncode: null,
+      stdout_tail: "",
+      stderr_tail: tail(message, 4000),
+    });
+    await database
+      .update(templateBuilds)
+      .set({ logsRef: logs, updatedAt: new Date() })
+      .where(eq(templateBuilds.id, build.id));
+    await markFailed(database, build, `docker build failed: ${message}`);
     return { processed: true, status: "failed" };
+  } finally {
+    await generatedDockerfile.cleanup();
   }
-
-  const inspect = await runner(docker, ["image", "inspect", "--format", "{{json .RepoDigests}}", imageTag]);
   const imageRef = parseFirstDigest(inspect) ?? imageTag;
 
   await database
@@ -307,6 +358,86 @@ function validateBaseImage(value: string): string {
     throw new TemplateBuildValidationError("base_image contains invalid characters");
   }
   return normalized;
+}
+
+function normalizeStringList(values: string[]): string[] {
+  const normalized: string[] = [];
+  for (const item of values) {
+    const value = item.trim().toLowerCase();
+    if (value && !normalized.includes(value)) {
+      normalized.push(value);
+    }
+  }
+  return normalized;
+}
+
+function validateDockerfileSnippet(value: string | null): string {
+  const normalized = (value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const invalid = dockerfileSnippetValidationError(normalized);
+  if (invalid) {
+    throw new TemplateBuildValidationError(invalid);
+  }
+  return normalized;
+}
+
+function validateDockerfileSnippetForJob(value: unknown): { ok: true; snippet: string } | { ok: false; error: string } {
+  if (value === null || value === undefined) {
+    return { ok: true, snippet: "" };
+  }
+  if (typeof value !== "string") {
+    return { ok: false, error: "dockerfile_snippet must be a string" };
+  }
+  const snippet = value.trim();
+  if (!snippet) {
+    return { ok: true, snippet: "" };
+  }
+  const invalid = dockerfileSnippetValidationError(snippet);
+  return invalid ? { ok: false, error: invalid } : { ok: true, snippet };
+}
+
+function dockerfileSnippetValidationError(snippet: string): string | null {
+  if (snippet.length > dockerfileSnippetMaxLength) {
+    return `dockerfile_snippet is too long (max ${dockerfileSnippetMaxLength} chars)`;
+  }
+  for (const line of snippet.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const instruction = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
+    if (instruction && blockedDockerfileInstructions.has(instruction)) {
+      return `dockerfile_snippet cannot contain ${instruction.toUpperCase()} instructions`;
+    }
+  }
+  return null;
+}
+
+async function createTemplateBuildDockerfile(input: {
+  sourceDockerfilePath: string;
+  snippet: string;
+}): Promise<{ path: string; cleanup: () => Promise<void> }> {
+  if (!input.snippet) {
+    return { path: input.sourceDockerfilePath, cleanup: async () => undefined };
+  }
+
+  const source = await readFile(input.sourceDockerfilePath, "utf8");
+  const marker = "RUN corepack enable";
+  const markerIndex = source.indexOf(marker);
+  const content = markerIndex >= 0
+    ? `${source.slice(0, markerIndex + marker.length)}\n\n# Kuuna template build customization\n${input.snippet}\n\n${source.slice(markerIndex + marker.length).trimStart()}`
+    : `${source}\n\n# Kuuna template build customization\n${input.snippet}\n`;
+  const dir = await mkdtemp(path.join(tmpdir(), "kuuna-template-build-"));
+  const generatedPath = path.join(dir, "Dockerfile");
+  await writeFile(generatedPath, content, "utf8");
+  return {
+    path: generatedPath,
+    cleanup: async () => {
+      await rm(dir, { recursive: true, force: true });
+    },
+  };
 }
 
 function extractAllowedTools(toolsConfig: unknown): string[] {
@@ -391,6 +522,10 @@ async function runCommand(command: string, args: string[]): Promise<CommandResul
       });
     });
   });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function parseFirstDigest(result: CommandResult): string | null {
