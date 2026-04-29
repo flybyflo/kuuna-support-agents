@@ -13,7 +13,7 @@ export default async function DecisionsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <AutoRefresh intervalMs={6000} />
+      <AutoRefresh intervalMs={6000} eventTypes={["message.decision"]} />
       <PageHeader
         title="Decisions"
         description="Stored message routing decisions from trigger and passive analysis."

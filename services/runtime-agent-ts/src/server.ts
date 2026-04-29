@@ -1,16 +1,15 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { defaultModel, defaultReasoningEffort, openAiApiKey, openAiBaseUrl, openAiTimeoutSeconds, port } from "./config.js";
-import { runAgent } from "./runner.js";
+import { createServer, type ServerResponse } from "node:http";
+import { createHTTPHandler } from "@trpc/server/adapters/standalone";
+import {
+  defaultModel,
+  defaultReasoningEffort,
+  openAiApiKey,
+  openAiBaseUrl,
+  openAiTimeoutSeconds,
+} from "@kuuna/pi-runtime";
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  const body = Buffer.concat(chunks).toString("utf8").trim();
-  return body ? JSON.parse(body) : {};
-}
+import { host, port } from "./config.js";
+import { runtimeAgentRouter } from "./trpc.js";
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.writeHead(statusCode, { "content-type": "application/json" });
@@ -20,6 +19,11 @@ function sendJson(response: ServerResponse, statusCode: number, payload: unknown
 function notFound(response: ServerResponse): void {
   sendJson(response, 404, { detail: "not found" });
 }
+
+const trpcHandler = createHTTPHandler({
+  router: runtimeAgentRouter,
+  basePath: "/trpc/",
+});
 
 const server = createServer(async (request, response) => {
   try {
@@ -41,10 +45,8 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "POST" && request.url === "/run") {
-      const payload = await readJson(request);
-      const result = await runAgent(payload);
-      sendJson(response, 200, result);
+    if (request.url?.startsWith("/trpc/")) {
+      trpcHandler(request, response);
       return;
     }
 
@@ -57,6 +59,6 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port(), "0.0.0.0", () => {
-  console.log(JSON.stringify({ event: "runtime_agent_ts_started", port: port() }));
+server.listen(port(), host(), () => {
+  console.log(JSON.stringify({ event: "runtime_agent_ts_started", host: host(), port: port() }));
 });

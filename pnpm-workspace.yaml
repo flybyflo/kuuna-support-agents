@@ -1,0 +1,16 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "services/backend-ts"
+  - "services/gateway"
+  - "services/runtime-agent-ts"
+
+onlyBuiltDependencies:
+  - "@sentry/cli"
+  - "@whiskeysockets/baileys"
+  - "esbuild"
+  - "koffi"
+  - "msgpackr-extract"
+  - "protobufjs"
+  - "sharp"
+  - "unrs-resolver"

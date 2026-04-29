@@ -29,7 +29,7 @@ test("maps text message with raw payload, reply, and mentions", () => {
     }),
   );
 
-  assert.equal(mapped.provider, "whatsapp-neonize");
+  assert.equal(mapped.provider, "whatsapp-baileys");
   assert.equal(mapped.provider_group_id, "1203630-group@g.us");
   assert.equal(mapped.provider_message_id, "msg-1");
   assert.equal(mapped.sender_provider_user_id, "4912345@s.whatsapp.net");

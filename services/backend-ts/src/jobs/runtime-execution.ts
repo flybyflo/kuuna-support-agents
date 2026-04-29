@@ -1,5 +1,18 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  runtimeAgentRequestSchema,
+  runtimeAgentResultSchema,
+  type RuntimeAgentContext,
+  type RuntimeAgentRequest,
+  type RuntimeAgentResult,
+  type RuntimeLink,
+  type RuntimeMediaAttachment,
+  type RuntimeMediaInsight,
+  type ToolInvocation,
+} from "@kuuna/agent-contracts";
+import type { RuntimeAgentRouter } from "@kuuna/runtime-agent-ts/trpc";
+import { createTRPCClient, httpLink } from "@trpc/client";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { getSettings } from "../config.js";
@@ -22,21 +35,24 @@ import {
   transcripts,
 } from "../db/schema.js";
 import { logger } from "../logging.js";
+import { publishRuntimeEvent } from "../runtime/events.js";
+import { ensureRuntimeForChat, type RuntimeProvisioner } from "../runtime/provisioning.js";
 import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inboundConfirmationText = "Danke, wir haben deine Nachricht erhalten.";
 const defaultSystemPrompt = "Du bist ein hilfreicher Support-Agent für eine WhatsApp-Gruppe. Antworte präzise, freundlich und mit klaren nächsten Schritten.";
-const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Decide whether the latest message, attached media transcripts, links, and recent context require staff follow-up. If staff action is needed, call todo_create with a concise title, useful description, and priority. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
+const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Media attachments and links always require staff follow-up, and the backend creates that deterministic todo before analysis; inspect the provided media/link context and enrich the decision summary. Use media_analyze for attachments, then combine those isolated-runtime media insights with message_history, knowledge_search, and todos. For plain text without media or links, decide whether staff follow-up is needed and call todo_create when needed. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
 const defaultModel = "gpt-5.5";
 const defaultReasoningEffort = "medium";
-const passiveAnalysisTools = new Set(["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);
+const passiveAnalysisTools = new Set(["media_analyze", "knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);
 
-type HttpClient = (url: string, init: RequestInit) => Promise<Response>;
+type RuntimeAgentCaller = (runtimeBaseUrl: string, request: RuntimeAgentRequest, timeoutSeconds: number) => Promise<RuntimeAgentResult>;
 type MessageRow = typeof messages.$inferSelect;
 type MessageVersionRow = typeof messageVersions.$inferSelect;
 type TemplateVersionRow = typeof templateVersions.$inferSelect;
 type AgentInstanceRow = typeof agentInstances.$inferSelect;
+type GroupBindingRow = typeof groupBindings.$inferSelect;
 
 type RuntimeResult = {
   text: string;
@@ -58,24 +74,32 @@ type RetrievalHit = {
 export async function processInboundExecutionJob(
   database: DbLike,
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
-  options: { httpClient?: HttpClient; enqueueJob?: EnqueueKuunaJob } = {},
+  options: { runtimeAgentCaller?: RuntimeAgentCaller; enqueueJob?: EnqueueKuunaJob; runtimeProvisioner?: RuntimeProvisioner } = {},
 ): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "enqueued" }> {
   const resolved = await resolveMessageAndRuntime(database, input, "inbound_execution");
   if (!resolved.ok) return resolved.result;
 
   const latest = await latestMessageVersion(database, resolved.message);
   const userText = extractUserText(latest);
-  const allowedTools = extractAllowedTools(resolved.templateVersion.toolsConfig);
+  const links = await messageLinkContexts(database, resolved.message.id);
+  const mediaAttachments = await mediaAttachmentContexts(database, resolved.message.id);
+  const queryText = latest
+    ? buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments)
+    : userText;
+  const allowedTools = withRuntimeMediaTool(
+    extractAllowedTools(resolved.templateVersion.toolsConfig),
+    mediaAttachments,
+  );
   const modelPath = extractModelCandidates(resolved.templateVersion.modelConfig);
   const reasoningEffort = extractReasoningEffort(resolved.templateVersion.modelConfig);
-  const retrievalHits = userText ? await retrieveRuntimeContext(database, input.providerGroupId, userText, 8) : [];
+  const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
   const retrievalRefs = buildRetrievalRefs(retrievalHits);
 
   let reply = inboundConfirmationText;
   let replyModelPath = modelPath.slice(0, 1);
   let agentRunId: string | null = null;
 
-  if (userText) {
+  if (userText || links.length > 0 || mediaAttachments.length > 0) {
     const runtimeResult = await runViaRuntimeAgent(
       database,
       {
@@ -83,13 +107,18 @@ export async function processInboundExecutionJob(
         providerGroupId: input.providerGroupId,
         traceId: input.traceId ?? null,
         systemPrompt: buildSystemPrompt(resolved.templateVersion.systemPrompt, allowedTools),
-        userPrompt: buildUserPrompt(userText, retrievalHits),
+        userPrompt: buildUserPrompt(buildInboundUserText(userText, links, mediaAttachments), retrievalHits),
         modelPath,
         reasoningEffort,
         allowedTools,
         retrievalRefs,
         retrievalHits,
-        runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+        bindingId: resolved.binding.id,
+        agentInstanceId: resolved.agentInstance.id,
+        extraContext: {
+          links,
+          media_attachments: mediaAttachments,
+        },
       },
       options,
     );
@@ -98,7 +127,12 @@ export async function processInboundExecutionJob(
       replyModelPath = runtimeResult.modelPath;
       agentRunId = runtimeResult.agentRunId;
     } else {
-      reply = buildFallbackReply(userText, retrievalHits);
+      logger.warn("inbound_execution_strict_runtime_failed", {
+        trace_id: input.traceId,
+        message_id: input.messageId,
+        provider_group_id: input.providerGroupId,
+      });
+      return { processed: false, status: "skipped" };
     }
   }
 
@@ -127,6 +161,14 @@ export async function processInboundExecutionJob(
       },
     },
   });
+  await publishRuntimeEvent({
+    type: "outbound_intent.updated",
+    providerGroupId: input.providerGroupId,
+    traceId: input.traceId ?? null,
+    entityId: outboundIntentId,
+    entityType: "outbound_intent",
+    payload: { status: "pending", message_id: input.messageId, agent_run_id: agentRunId },
+  });
   await (options.enqueueJob ?? enqueueKuunaJob)(
     "outbound_dispatch",
     { outbound_intent_id: outboundIntentId },
@@ -145,7 +187,7 @@ export async function processInboundExecutionJob(
 export async function processPassiveMessageAnalysisJob(
   database: DbLike,
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
-  options: { httpClient?: HttpClient } = {},
+  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner; enqueueJob?: EnqueueKuunaJob } = {},
 ): Promise<{ processed: boolean; status: "invalid" | "not_found" | "skipped" | "analyzed" | "failed" }> {
   const resolved = await resolveMessageAndRuntime(database, input, "passive_analysis");
   if (!resolved.ok) return resolved.result;
@@ -160,10 +202,16 @@ export async function processPassiveMessageAnalysisJob(
     return { processed: false, status: "skipped" };
   }
 
-  const queryText = await buildPassiveAnalysisQueryText(database, resolved.message, latest);
+  const links = await messageLinkContexts(database, resolved.message.id);
+  const mediaAttachments = await mediaAttachmentContexts(database, resolved.message.id);
+  const todoRequired = links.length > 0 || mediaAttachments.length > 0;
+  const queryText = await buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments);
   const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
   const retrievalRefs = buildRetrievalRefs(retrievalHits);
-  const allowedTools = extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
+  const baseAllowedTools = todoRequired
+    ? withoutAllowedTool(extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig), "todo_create")
+    : extractPassiveAnalysisTools(resolved.templateVersion.toolsConfig);
+  const allowedTools = withRuntimeMediaTool(baseAllowedTools, mediaAttachments);
   const result = await runViaRuntimeAgent(
     database,
     {
@@ -171,13 +219,21 @@ export async function processPassiveMessageAnalysisJob(
       providerGroupId: input.providerGroupId,
       traceId: input.traceId ?? null,
       systemPrompt: passiveAnalysisSystemPrompt,
-      userPrompt: await buildPassiveAnalysisUserPrompt(database, resolved.message, latest, input.reason ?? null),
+      userPrompt: buildPassiveAnalysisUserPrompt(resolved.message, latest, input.reason ?? null, links, mediaAttachments, todoRequired),
       modelPath: extractModelCandidates(resolved.templateVersion.modelConfig),
       reasoningEffort: extractReasoningEffort(resolved.templateVersion.modelConfig),
       allowedTools,
       retrievalRefs,
       retrievalHits,
-      runtimeBaseUrl: resolved.agentInstance.runtimeBaseUrl,
+      bindingId: resolved.binding.id,
+      agentInstanceId: resolved.agentInstance.id,
+      extraContext: {
+        links,
+        media_attachments: mediaAttachments,
+        todo_required: todoRequired,
+        todo_required_reason: todoRequired ? todoRequiredReason(links, mediaAttachments) : undefined,
+      },
+      toolRequests: [],
     },
     options,
   );
@@ -188,6 +244,9 @@ export async function processPassiveMessageAnalysisJob(
     reason: input.reason ?? null,
     allowed_tools: allowedTools,
     retrieval_refs: retrievalRefs,
+    todo_required: todoRequired,
+    link_count: links.length,
+    media_count: mediaAttachments.length,
   };
   let decisionType = "passive_analysis_failed";
   let status: "analyzed" | "failed" = "failed";
@@ -199,13 +258,21 @@ export async function processPassiveMessageAnalysisJob(
     status = "analyzed";
   }
 
-  await database.insert(messageDecisions).values({
+  const [decision] = await database.insert(messageDecisions).values({
     messageId: resolved.message.id,
     providerGroupId: input.providerGroupId,
     decisionType,
     reason: input.reason ?? "passive_analysis",
     shouldExecute: false,
     payload,
+  }).returning();
+  await publishRuntimeEvent({
+    type: "message.decision",
+    providerGroupId: input.providerGroupId,
+    traceId: input.traceId ?? null,
+    entityId: decision?.id ?? resolved.message.id,
+    entityType: "message_decision",
+    payload: { message_id: resolved.message.id, decision_type: decisionType, status },
   });
   return { processed: true, status };
 }
@@ -215,7 +282,7 @@ async function resolveMessageAndRuntime(
   input: { messageId: string; providerGroupId: string; reason?: string | null; traceId?: string | null },
   logPrefix: string,
 ): Promise<
-  | { ok: true; message: MessageRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
+  | { ok: true; message: MessageRow; binding: GroupBindingRow; templateVersion: TemplateVersionRow; agentInstance: AgentInstanceRow }
   | { ok: false; result: { processed: false; status: "invalid" | "not_found" | "skipped" } }
 > {
   if (!uuidPattern.test(input.messageId)) {
@@ -265,7 +332,7 @@ async function resolveMessageAndRuntime(
     });
     return { ok: false, result: { processed: false, status: "skipped" } };
   }
-  return { ok: true, message, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
+  return { ok: true, message, binding: row.binding, templateVersion: row.templateVersion, agentInstance: row.agentInstance };
 }
 
 async function runViaRuntimeAgent(
@@ -281,9 +348,12 @@ async function runViaRuntimeAgent(
     allowedTools: string[];
     retrievalRefs: Array<Record<string, unknown>>;
     retrievalHits: RetrievalHit[];
-    runtimeBaseUrl: string | null;
+    bindingId: string;
+    agentInstanceId: string;
+    extraContext?: Partial<RuntimeAgentContext>;
+    toolRequests?: ToolInvocation[];
   },
-  options: { httpClient?: HttpClient },
+  options: { runtimeAgentCaller?: RuntimeAgentCaller; runtimeProvisioner?: RuntimeProvisioner; enqueueJob?: EnqueueKuunaJob },
 ): Promise<RuntimeResult | null> {
   const [agentRun] = await database
     .insert(agentRuns)
@@ -301,47 +371,56 @@ async function runViaRuntimeAgent(
   if (!agentRun) {
     throw new Error("agent run creation failed");
   }
+  await publishRuntimeEvent({
+    type: "agent_run.updated",
+    providerGroupId: input.providerGroupId,
+    traceId: input.traceId,
+    entityId: agentRun.id,
+    entityType: "agent_run",
+    payload: { status: "running", message_id: input.message.id },
+  });
 
-  const runtimeBaseUrl = (input.runtimeBaseUrl?.trim() || getSettings().RUNTIME_AGENT_BASE_URL).replace(/\/$/, "");
+  const settings = getSettings();
   try {
-    const response = await (options.httpClient ?? fetch)(`${runtimeBaseUrl}/run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        trace_id: input.traceId,
-        system_prompt: input.systemPrompt,
-        user_prompt: input.userPrompt,
-        context: {
-          provider_group_id: input.providerGroupId,
-          retrieval_refs: input.retrievalRefs,
-          retrieval_hits: input.retrievalHits,
-          recent_messages: await recentMessagesContext(database, input.providerGroupId, 15),
-          todos: await todosContext(database, input.providerGroupId, 20),
-        },
-        model_path: input.modelPath,
-        reasoning_effort: input.reasoningEffort,
-        allowed_tools: input.allowedTools,
-        tool_requests: [],
-      }),
-      signal: AbortSignal.timeout(getSettings().RUNTIME_AGENT_TIMEOUT_SECONDS * 1000),
+    const runtimeBaseUrl = (await (options.runtimeProvisioner ?? ensureRuntimeForChat)(database, {
+      providerGroupId: input.providerGroupId,
+      messageId: input.message.id,
+      traceId: input.traceId,
+    })).runtimeBaseUrl.replace(/\/$/, "");
+    const context: RuntimeAgentContext = {
+      provider_group_id: input.providerGroupId,
+      binding_id: input.bindingId,
+      agent_instance_id: input.agentInstanceId,
+      retrieval_refs: input.retrievalRefs,
+      retrieval_hits: input.retrievalHits,
+      recent_messages: await recentMessagesContext(database, input.providerGroupId, 15),
+      todos: await todosContext(database, input.providerGroupId, 20),
+      ...(input.extraContext ?? {}),
+    };
+    const runtimeRequest: RuntimeAgentRequest = runtimeAgentRequestSchema.parse({
+      trace_id: input.traceId,
+      system_prompt: input.systemPrompt,
+      user_prompt: input.userPrompt,
+      context,
+      model_path: input.modelPath,
+      reasoning_effort: input.reasoningEffort,
+      allowed_tools: input.allowedTools,
+      tool_requests: input.toolRequests ?? [],
     });
-    if (!response.ok) {
-      throw new Error(`runtime_agent_http_${response.status}`);
-    }
-    const payload = await response.json() as unknown;
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      throw new Error("runtime-agent returned non-object JSON payload");
-    }
-    const result = payload as Record<string, unknown>;
+    const result = runtimeAgentResultSchema.parse(await (options.runtimeAgentCaller ?? callRuntimeAgentViaTrpc)(
+      runtimeBaseUrl,
+      runtimeRequest,
+      settings.RUNTIME_AGENT_TIMEOUT_SECONDS,
+    ));
     if (!result.success) {
       throw new Error(String(result.error || "runtime-agent returned unsuccessful result"));
     }
-    const responseText = typeof result.response_text === "string" ? result.response_text.trim() : "";
+    const responseText = result.response_text?.trim() ?? "";
     if (!responseText) {
       throw new Error("runtime-agent returned empty response");
     }
     const attemptModels = extractAttemptModels(result);
-    const modelUsed = typeof result.model_used === "string" ? result.model_used : null;
+    const modelUsed = result.model_used ?? null;
     await database
       .update(agentRuns)
       .set({
@@ -352,11 +431,29 @@ async function runViaRuntimeAgent(
         completedAt: new Date(),
       })
       .where(eq(agentRuns.id, agentRun.id));
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: {
+        status: "succeeded",
+        message_id: input.message.id,
+        model_used: modelUsed,
+      },
+    });
     await persistRuntimeToolResults(database, {
       agentRunId: agentRun.id,
       messageId: input.message.id,
       providerGroupId: input.providerGroupId,
       toolResults: result.tool_results,
+    });
+    await persistRuntimeMediaInsights(database, {
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      mediaInsights: result.media_insights,
+      enqueueJob: options.enqueueJob,
     });
     return {
       text: responseText,
@@ -369,6 +466,14 @@ async function runViaRuntimeAgent(
       .update(agentRuns)
       .set({ status: "failed", error: message, completedAt: new Date() })
       .where(eq(agentRuns.id, agentRun.id));
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: { status: "failed", message_id: input.message.id, error: message },
+    });
     logger.warn("runtime_agent_request_failed", {
       trace_id: input.traceId,
       provider_group_id: input.providerGroupId,
@@ -376,6 +481,101 @@ async function runViaRuntimeAgent(
     });
     return null;
   }
+}
+
+async function callRuntimeAgentViaTrpc(
+  runtimeBaseUrl: string,
+  request: RuntimeAgentRequest,
+  timeoutSeconds: number,
+): Promise<RuntimeAgentResult> {
+  const normalizedBaseUrl = runtimeBaseUrl.replace(/\/$/, "");
+  const client = createTRPCClient<RuntimeAgentRouter>({
+    links: [
+      httpLink({
+        url: `${normalizedBaseUrl}/trpc`,
+        fetch(url, init) {
+          return fetch(url, {
+            ...init,
+            signal: AbortSignal.timeout(timeoutSeconds * 1000),
+          });
+        },
+      }),
+    ],
+  });
+  return runtimeAgentResultSchema.parse(await client.agent.run.mutate(request));
+}
+
+async function persistRuntimeMediaInsights(
+  database: DbLike,
+  input: {
+    providerGroupId: string;
+    traceId: string | null;
+    mediaInsights: RuntimeMediaInsight[];
+    enqueueJob?: EnqueueKuunaJob;
+  },
+): Promise<void> {
+  for (const insight of input.mediaInsights) {
+    if (insight.status !== "ready") continue;
+    const text = (insight.transcript ?? insight.summary ?? "").trim();
+    if (!text) continue;
+    const [asset] = await database
+      .select({ id: mediaAssets.id, messageId: mediaAssets.messageId })
+      .from(mediaAssets)
+      .innerJoin(messages, eq(messages.id, mediaAssets.messageId))
+      .where(
+        and(
+          eq(mediaAssets.id, insight.media_asset_id),
+          eq(messages.providerGroupId, input.providerGroupId),
+        ),
+      )
+      .limit(1);
+    if (!asset) continue;
+
+    await upsertMediaTranscript(database, insight.media_asset_id, {
+      text,
+      status: "ready",
+    });
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: insight.media_asset_id,
+      entityType: "media_asset",
+      payload: {
+        status: "ready",
+        message_id: asset.messageId,
+        source: "runtime_media_insight",
+        kind: insight.kind,
+      },
+    });
+    await (input.enqueueJob ?? enqueueKuunaJob)(
+      "retrieval_indexing",
+      { source_type: "media_asset", source_id: insight.media_asset_id, trace_id: input.traceId },
+      `retrieval_indexing_media_asset_${jobToken(insight.media_asset_id)}_${jobToken(input.traceId ?? insight.media_asset_id)}_runtime_insight`,
+    );
+  }
+}
+
+async function upsertMediaTranscript(
+  database: DbLike,
+  mediaAssetId: string,
+  input: { text: string; status: "ready" | "failed" },
+): Promise<void> {
+  const [existing] = await database
+    .select({ id: transcripts.id })
+    .from(transcripts)
+    .where(eq(transcripts.mediaAssetId, mediaAssetId))
+    .limit(1);
+  const values = {
+    textContent: input.text,
+    status: input.status,
+    updatedAt: new Date(),
+  };
+  if (existing) {
+    await database.update(transcripts).set(values).where(eq(transcripts.id, existing.id));
+    return;
+  }
+  await database.insert(transcripts).values({ mediaAssetId, ...values });
 }
 
 async function persistRuntimeToolResults(
@@ -389,7 +589,7 @@ async function persistRuntimeToolResults(
     const toolName = String(result.name || "").trim().toLowerCase();
     if (!toolName) continue;
     const details = extractToolDetails(result);
-    await database.insert(toolInvocations).values({
+    const [invocation] = await database.insert(toolInvocations).values({
       agentRunId: input.agentRunId,
       messageId: input.messageId,
       providerGroupId: input.providerGroupId,
@@ -400,6 +600,18 @@ async function persistRuntimeToolResults(
       timedOut: Boolean(result.timed_out),
       durationMs: coerceInt(result.duration_ms),
       details,
+    }).returning();
+    await publishRuntimeEvent({
+      type: "tool_invocation.created",
+      providerGroupId: input.providerGroupId,
+      entityId: invocation?.id ?? null,
+      entityType: "tool_invocation",
+      payload: {
+        agent_run_id: input.agentRunId,
+        message_id: input.messageId,
+        tool_name: toolName,
+        ok: Boolean(result.ok),
+      },
     });
     if (result.ok) {
       await applyTodoToolResult(database, {
@@ -432,7 +644,7 @@ async function applyTodoToolResult(
       .where(and(eq(todos.providerGroupId, input.providerGroupId), eq(todos.messageId, input.messageId), eq(todos.title, title.slice(0, 255))))
       .limit(1);
     if (existing) return;
-    await database.insert(todos).values({
+    const [todo] = await database.insert(todos).values({
       providerGroupId: input.providerGroupId,
       messageId: input.messageId,
       agentRunId: input.agentRunId,
@@ -440,6 +652,18 @@ async function applyTodoToolResult(
       description: optionalString(input.details.description),
       priority: coerceTodoPriority(input.details.priority),
       dueAt: parseDate(input.details.due_at),
+    }).returning();
+    await publishRuntimeEvent({
+      type: "todo.updated",
+      providerGroupId: input.providerGroupId,
+      entityId: todo?.id ?? null,
+      entityType: "todo",
+      payload: {
+        status: todo?.status ?? "open",
+        action: "created",
+        message_id: input.messageId,
+        agent_run_id: input.agentRunId,
+      },
     });
     return;
   }
@@ -453,10 +677,25 @@ async function applyTodoToolResult(
     if (description !== null) patch.description = description;
     patch.priority = coerceTodoPriority(input.details.priority);
     patch.status = coerceTodoStatus(input.details.status);
-    await database
+    const [todo] = await database
       .update(todos)
       .set(patch)
-      .where(and(eq(todos.id, todoId), eq(todos.providerGroupId, input.providerGroupId)));
+      .where(and(eq(todos.id, todoId), eq(todos.providerGroupId, input.providerGroupId)))
+      .returning();
+    if (todo) {
+      await publishRuntimeEvent({
+        type: "todo.updated",
+        providerGroupId: input.providerGroupId,
+        entityId: todo.id,
+        entityType: "todo",
+        payload: {
+          status: todo.status,
+          action: "updated",
+          message_id: input.messageId,
+          agent_run_id: input.agentRunId,
+        },
+      });
+    }
   }
 }
 
@@ -494,7 +733,7 @@ async function retrieveRuntimeContext(
       return {
         source_type: row.sourceType,
         source_scope: row.scope,
-        score,
+        score: score + retrievalScopeBoost(row.scope),
         content: row.content,
         occurred_at: row.updatedAt.toISOString(),
         chunk_no: row.chunkNo,
@@ -503,6 +742,13 @@ async function retrieveRuntimeContext(
     .filter((hit) => hit.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+function retrievalScopeBoost(scope: string): number {
+  if (scope === "customer") return 0.3;
+  if (scope === "group") return 0.2;
+  if (scope === "conversation") return 0.1;
+  return 0;
 }
 
 function buildRetrievalRefs(hits: RetrievalHit[]): Array<Record<string, unknown>> {
@@ -548,19 +794,27 @@ async function todosContext(database: DbLike, providerGroupId: string, limit: nu
   }));
 }
 
-async function buildPassiveAnalysisQueryText(database: DbLike, message: MessageRow, latest: MessageVersionRow): Promise<string> {
+function buildPassiveAnalysisQueryText(
+  _database: DbLike,
+  _message: MessageRow,
+  latest: MessageVersionRow,
+  links: RuntimeLink[],
+  mediaAttachments: RuntimeMediaAttachment[],
+): string {
   const parts = [(latest.textContent || "").trim()];
-  parts.push(...await messageLinkTexts(database, message.id));
-  parts.push(...await mediaTranscriptTexts(database, message.id));
+  parts.push(...links.map((link) => `${link.title || ""} ${link.normalized_url || link.url}`.trim()));
+  parts.push(...mediaAttachments.map((asset) => mediaAttachmentText(asset)));
   return parts.filter(Boolean).join("\n\n").trim();
 }
 
-async function buildPassiveAnalysisUserPrompt(
-  database: DbLike,
+function buildPassiveAnalysisUserPrompt(
   message: MessageRow,
   latest: MessageVersionRow,
   reason: string | null,
-): Promise<string> {
+  links: RuntimeLink[],
+  mediaAttachments: RuntimeMediaAttachment[],
+  todoRequired: boolean,
+): string {
   const lines = [
     `provider_group_id: ${message.providerGroupId}`,
     `provider_message_id: ${message.providerMessageId}`,
@@ -571,38 +825,90 @@ async function buildPassiveAnalysisUserPrompt(
     "latest_message_text:",
     (latest.textContent || "").trim() || "(no text)",
   ];
-  const links = await messageLinkTexts(database, message.id);
-  if (links.length) lines.push("", "links:", ...links.map((link) => `- ${link}`));
-  const transcriptTexts = await mediaTranscriptTexts(database, message.id);
-  if (transcriptTexts.length) lines.push("", "media_transcripts:", ...transcriptTexts.map((text) => `- ${text}`));
+  if (links.length) {
+    lines.push("", "links:", ...links.map((link) => `- ${link.title ? `${link.title}: ` : ""}${link.normalized_url || link.url}`));
+  }
+  if (mediaAttachments.length) {
+    lines.push("", "media_attachments:", ...mediaAttachments.map((asset) => `- ${mediaAttachmentText(asset)}`));
+  }
   lines.push(
     "",
     "Decision policy:",
+    "- If todo_required is true, the dashboard follow-up todo has already been created automatically; do not call todo_create.",
+    "- Media attachments and links always require a todo, even when the image has no text caption yet.",
+    "- For media attachments, use media_analyze and combine the result with message history, knowledge, and todos.",
     "- Create a todo for concrete staff work, deadlines, evidence review, missing documents, legal/accounting questions, or client follow-up.",
     "- Do not create todos for greetings, acknowledgements, jokes, duplicates, or messages with no actionable content.",
   );
+  if (todoRequired) {
+    lines.push("", `todo_required: true`, `todo_required_reason: ${todoRequiredReason(links, mediaAttachments)}`);
+  }
   return lines.join("\n");
 }
 
-async function messageLinkTexts(database: DbLike, messageId: string): Promise<string[]> {
-  const rows = await database.select().from(messageLinks).where(eq(messageLinks.messageId, messageId)).orderBy(asc(messageLinks.createdAt));
-  return rows.map((link) => `${link.title || ""} ${link.normalizedUrl || link.url}`.trim()).filter(Boolean);
+function buildInboundUserText(
+  userText: string,
+  links: RuntimeLink[],
+  mediaAttachments: RuntimeMediaAttachment[],
+): string {
+  const lines = [userText || "(no text)"];
+  if (links.length) {
+    lines.push("", "links:", ...links.map((link) => `- ${link.title ? `${link.title}: ` : ""}${link.normalized_url || link.url}`));
+  }
+  if (mediaAttachments.length) {
+    lines.push("", "media_attachments:", ...mediaAttachments.map((asset) => `- ${mediaAttachmentText(asset)}`));
+  }
+  return lines.join("\n");
 }
 
-async function mediaTranscriptTexts(database: DbLike, messageId: string): Promise<string[]> {
+async function messageLinkContexts(database: DbLike, messageId: string): Promise<RuntimeLink[]> {
+  const rows = await database.select().from(messageLinks).where(eq(messageLinks.messageId, messageId)).orderBy(asc(messageLinks.createdAt));
+  return rows.map((link) => ({
+    url: link.url,
+    normalized_url: link.normalizedUrl ?? null,
+    title: link.title ?? null,
+  }));
+}
+
+async function mediaAttachmentContexts(database: DbLike, messageId: string): Promise<RuntimeMediaAttachment[]> {
   const rows = await database
     .select({ asset: mediaAssets, transcript: transcripts })
     .from(mediaAssets)
     .leftJoin(transcripts, eq(transcripts.mediaAssetId, mediaAssets.id))
     .where(eq(mediaAssets.messageId, messageId))
     .orderBy(asc(mediaAssets.createdAt));
-  return rows
-    .map((row) => {
-      const text = row.transcript?.textContent?.trim() ?? "";
-      if (!text || text.startsWith("Transcript pending")) return "";
-      return `${row.asset.fileName || row.asset.mimeType}: ${text}`;
-    })
-    .filter(Boolean);
+  return rows.map((row) => {
+    const metadata = objectRecord(row.asset.metadataJson);
+    return {
+      media_asset_id: row.asset.id,
+      mime_type: row.asset.mimeType,
+      file_name: row.asset.fileName ?? null,
+      status: row.asset.status,
+      transcript: row.transcript?.textContent?.trim() || null,
+      object_url: optionalString(metadata.object_url) ?? optionalString(metadata.download_url),
+      preview_url: safePreviewUrl(metadata.preview_url),
+    };
+  });
+}
+
+function mediaAttachmentText(asset: RuntimeMediaAttachment): string {
+  const parts = [
+    asset.file_name || asset.mime_type,
+    `status=${asset.status}`,
+    asset.object_url ? `url=${asset.object_url}` : "",
+    asset.transcript ? `transcript=${asset.transcript}` : "",
+  ];
+  return parts.filter(Boolean).join(" | ");
+}
+
+function todoRequiredReason(links: RuntimeLink[], mediaAttachments: RuntimeMediaAttachment[]): string {
+  if (links.length && mediaAttachments.length) return "message contains links and media attachments";
+  if (mediaAttachments.length) return "message contains media attachments";
+  return "message contains links";
+}
+
+function safePreviewUrl(value: unknown): string | null {
+  return optionalString(value);
 }
 
 function extractAllowedTools(toolsConfig: unknown): string[] {
@@ -633,8 +939,19 @@ function extractAllowedTools(toolsConfig: unknown): string[] {
 
 function extractPassiveAnalysisTools(toolsConfig: unknown): string[] {
   const configured = extractAllowedTools(toolsConfig);
-  const defaults = ["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"];
+  const defaults = ["media_analyze", "knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"];
   return configured.length ? configured.filter((tool) => passiveAnalysisTools.has(tool)) : defaults;
+}
+
+function withoutAllowedTool(tools: string[], tool: string): string[] {
+  return tools.filter((item) => item !== tool);
+}
+
+function withRuntimeMediaTool(tools: string[], mediaAttachments: RuntimeMediaAttachment[]): string[] {
+  if (!mediaAttachments.length || tools.includes("media_analyze")) {
+    return tools;
+  }
+  return ["media_analyze", ...tools];
 }
 
 function extractModelCandidates(modelConfig: unknown): string[] {
@@ -697,38 +1014,12 @@ function buildUserPrompt(userText: string, retrievalHits: RetrievalHit[]): strin
   return `Nutzeranfrage:\n${userText}\n\n${lines.join("\n")}`;
 }
 
-function buildFallbackReply(userText: string, _retrievalHits: RetrievalHit[]): string {
-  if (isSensitiveSupportRequest(userText)) {
-    return "Es tut mir leid, dass dir das passiert ist. Wenn du gerade in Gefahr bist, kontaktiere bitte sofort den Notruf oder eine vertraute Person vor Ort. Deine Nachricht wurde aufgenommen.";
-  }
-  return "Danke, ich habe deine Nachricht erhalten. Ich konnte gerade keine vollständige Agent-Antwort erstellen, aber die Nachricht ist im System erfasst.";
-}
-
-function isSensitiveSupportRequest(userText: string): boolean {
-  const normalized = userText.trim().toLowerCase();
-  if (!normalized) return false;
-  return [
-    "vergewalt",
-    "missbrauch",
-    "sexuell",
-    "sexual",
-    "gewalt",
-    "notfall",
-    "gefahr",
-  ].some((needle) => normalized.includes(needle));
-}
-
-function extractAttemptModels(payload: Record<string, unknown>): string[] {
+function extractAttemptModels(payload: { attempts?: Array<{ model: string }>; model_used?: string | null }): string[] {
   const attempts = payload.attempts;
-  if (!Array.isArray(attempts)) {
-    return typeof payload.model_used === "string" && payload.model_used ? [payload.model_used] : [];
-  }
+  if (!Array.isArray(attempts)) return payload.model_used ? [payload.model_used] : [];
   const models: string[] = [];
   for (const attempt of attempts) {
-    if (attempt && typeof attempt === "object" && !Array.isArray(attempt)) {
-      const model = (attempt as Record<string, unknown>).model;
-      if (typeof model === "string" && model && !models.includes(model)) models.push(model);
-    }
+    if (attempt.model && !models.includes(attempt.model)) models.push(attempt.model);
   }
   return models;
 }
@@ -757,6 +1048,10 @@ function coerceInt(value: unknown): number {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function coerceTodoPriority(value: unknown): "low" | "normal" | "high" | "urgent" {

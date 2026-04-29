@@ -6,9 +6,9 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 
 import { resetSettingsForTests } from "../src/config.js";
-import { mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
+import { mediaAssets, messages, messageVersions, todos, transcripts } from "../src/db/schema.js";
 import { processMediaAssetJob } from "../src/jobs/media-processing.js";
-import { buildServer } from "../src/server.js";
+import { parseRuntimeChatTask, type EnqueueRuntimeChatTaskOptions } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -22,11 +22,22 @@ test("contract: media processing inline text writes ready transcript and followu
     mimeType: "text/plain; charset=utf-8",
     metadataJson: { inline_data_base64: Buffer.from("hello transcript", "utf8").toString("base64") },
   });
+  const runtimeChatTasks: string[] = [];
+  const runtimeChatQueue: NonNullable<EnqueueRuntimeChatTaskOptions["redis"]> = {
+    async rpush(_key, value) {
+      runtimeChatTasks.push(value);
+      return runtimeChatTasks.length;
+    },
+    async set() {
+      return "OK";
+    },
+  };
 
   const result = await processMediaAssetJob(
     harness.db,
     { mediaAssetId: seeded.mediaAssetId, traceId: "trace-media" },
     {
+      runtimeChatQueue,
       enqueueJob: async (name, data, jobId) => {
         harness.jobs.push({ name, data, jobId });
         return jobId ?? name;
@@ -46,7 +57,12 @@ test("contract: media processing inline text writes ready transcript and followu
   const transcript = await findTranscript(harness, seeded.mediaAssetId);
   assert.equal(transcript.status, "ready");
   assert.equal(transcript.textContent, "hello transcript");
-  assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "passive_message_analysis"]);
+  const [todo] = await harness.db.select().from(todos).where(eq(todos.messageId, seeded.messageId));
+  assert.ok(todo);
+  assert.equal(todo.title, "Review media attachment");
+  assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "runtime_chat_queue"]);
+  assert.equal(harness.jobs[1]?.data.queued_task, undefined);
+  assert.equal(parseRuntimeChatTask(runtimeChatTasks[0]).name, "passive_message_analysis");
 });
 
 test("contract: media processing missing download marks failed", { skip: skipReason }, async (t) => {
@@ -91,29 +107,13 @@ test("contract: internal media reconcile snapshots and retries failed assets", {
     status: "failed",
   });
 
-  const app = await buildServer({
-    db: harness.db,
-    enqueueJob: async (name, data, jobId) => {
-      harness.jobs.push({ name, data, jobId });
-      return jobId ?? name;
-    },
-  });
-  t.after(() => app.close());
-
-  const response = await app.inject({
-    method: "POST",
-    url: "/internal/media/reconcile",
-    headers: { "x-internal-token": "media-token" },
-    payload: {
+  const caller = await harness.internalCaller("media-token");
+  const body = await caller.internal.mediaReconcile({
       dry_run: false,
       enqueue_pending: true,
       retry_failed: true,
       cleanup_bogus: true,
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  const body = response.json() as {
+    }) as {
     before: { pending: number; failed: number; bogus_failed: number };
     after: { pending: number; failed: number; bogus_failed: number };
     actions: { cleaned_bogus: number; enqueued_pending: number; retried_failed: number };

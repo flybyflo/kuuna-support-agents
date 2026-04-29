@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import {
   embeddings,
   knowledgeCommonDocs,
+  knowledgeCustomerDocs,
   knowledgeGroupDocs,
   knowledgeVersions,
   retrievalChunks,
@@ -130,6 +131,48 @@ test("contract: group knowledge indexing sets provider group and replaces stale 
   assert.ok(chunk);
   assert.equal(chunk.providerGroupId, "group-knowledge@g.us");
   assert.equal((chunk.metadataJson as Record<string, unknown>).knowledge_scope, "group");
+});
+
+test("contract: customer knowledge indexing stays isolated to the customer group key", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const [doc] = await harness.db
+    .insert(knowledgeCustomerDocs)
+    .values({
+      providerGroupId: "customer-a@g.us",
+      customerKey: "customer-a@g.us",
+      docKey: "customer",
+      title: "Customer",
+    })
+    .returning();
+  assert.ok(doc);
+  const [version] = await harness.db
+    .insert(knowledgeVersions)
+    .values({
+      scope: "customer",
+      docRefId: doc.id,
+      versionNo: 1,
+      status: "published",
+      contentMarkdown: "Customer A private support policy.",
+    })
+    .returning();
+  assert.ok(version);
+
+  const result = await processKnowledgeIndexingJob(harness.db, {
+    knowledgeVersionId: version.id,
+  });
+
+  assert.deepEqual(result, { indexed: true, chunkCount: 1 });
+  const [chunk] = await harness.db
+    .select()
+    .from(retrievalChunks)
+    .where(eq(retrievalChunks.sourceId, version.id))
+    .limit(1);
+  assert.ok(chunk);
+  assert.equal(chunk.scope, "customer");
+  assert.equal(chunk.providerGroupId, "customer-a@g.us");
+  assert.equal((chunk.metadataJson as Record<string, unknown>).knowledge_scope, "customer");
 });
 
 test("contract: missing knowledge version is ignored without mutation", { skip: skipReason }, async (t) => {

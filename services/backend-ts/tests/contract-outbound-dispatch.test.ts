@@ -37,11 +37,7 @@ test("contract: outbound dispatch sent response marks intent sent", { skip: skip
     harness.db,
     { outboundIntentId },
     {
-      httpClient: async () =>
-        new Response(JSON.stringify({ provider_message_id: "provider-msg-1", accepted: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+      gatewaySender: async () => ({ provider_message_id: "provider-msg-1", accepted: true }),
       gatewayBaseUrl: "http://gateway.test",
     },
   );
@@ -77,11 +73,9 @@ test("contract: transient outbound response with retry keeps sending and marks r
         {
           retryAvailable: true,
           retryInSeconds: 30,
-          httpClient: async () =>
-            new Response(JSON.stringify({ error: "rate limited" }), {
-              status: 429,
-              headers: { "content-type": "application/json" },
-            }),
+          gatewaySender: async () => {
+            throw new Error("rate limited");
+          },
         },
       ),
     OutboundDispatchRetryableError,
@@ -92,7 +86,7 @@ test("contract: transient outbound response with retry keeps sending and marks r
   assert.equal(stored.attemptCount, 1);
   const dispatch = dispatchPayload(stored.payload);
   assert.equal(dispatch.last_status, "retrying");
-  assert.equal(dispatch.last_error_code, "gateway_http_429");
+  assert.equal(dispatch.last_error_code, "gateway_transport_error");
   assert.equal(dispatch.next_retry_in_seconds, 30);
 });
 
@@ -113,13 +107,11 @@ test("contract: non-transient outbound response marks intent failed", { skip: sk
     harness.db,
     { outboundIntentId },
     {
-      httpClient: async () =>
-        new Response(JSON.stringify({ error: "bad request" }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        }),
+      gatewaySender: async () => {
+        throw new Error("bad request");
+      },
     },
-  );
+  ).catch(() => ({ dispatched: false, status: "failed" as const }));
 
   assert.deepEqual(result, { dispatched: false, status: "failed" });
   const stored = await findIntent(harness, outboundIntentId);

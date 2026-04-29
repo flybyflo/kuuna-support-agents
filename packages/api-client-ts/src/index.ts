@@ -13,7 +13,12 @@ export type WorkflowStatus =
   | "succeeded"
   | "cancelled";
 
-export { createKuunaTrpcClient, type KuunaTrpcClient, type KuunaTrpcClientOptions } from "./trpc.js";
+export {
+  createKuunaTrpcClient,
+  type KuunaEventSource,
+  type KuunaTrpcClient,
+  type KuunaTrpcClientOptions,
+} from "./trpc.js";
 
 export type TemplateBuildStatus =
   | "queued"
@@ -136,8 +141,9 @@ export type RuntimeRun = {
 export type KnowledgeDoc = {
   id: string;
   docKey: string;
-  scope: "common" | "group";
+  scope: "common" | "group" | "customer";
   providerGroupId?: string;
+  customerKey?: string;
   title: string;
   status: WorkflowStatus;
   updatedAt: string;
@@ -147,7 +153,7 @@ export type KnowledgeDoc = {
 
 export type KnowledgeDocVersion = {
   id: string;
-  scope: "common" | "group";
+  scope: "common" | "group" | "customer";
   docRefId: string;
   versionNo: number;
   status: WorkflowStatus;
@@ -420,26 +426,7 @@ export type BackendMessageDecisionListParams = BackendListParams & {
   messageId?: string;
 };
 
-type FetchInit = {
-  method?: string;
-  headers?: Record<string, string>;
-  cache?: string;
-};
-
-type FetchResponse = {
-  ok: boolean;
-  status: number;
-  text: () => Promise<string>;
-  json: () => Promise<unknown>;
-};
-
-export type FetchLike = (url: string, init?: FetchInit) => Promise<FetchResponse>;
-
-export type KuunaApiClientOptions = {
-  baseUrl: string;
-  fetchImpl?: FetchLike;
-  groupTitleForProviderGroupId?: (providerGroupId: string) => string;
-};
+type UnknownRecord = Record<string, unknown>;
 
 export class KuunaApiClientError extends Error {
   constructor(
@@ -449,16 +436,6 @@ export class KuunaApiClientError extends Error {
     super(message);
     this.name = "KuunaApiClientError";
   }
-}
-
-type UnknownRecord = Record<string, unknown>;
-
-function defaultFetch(): FetchLike {
-  const maybeFetch = (globalThis as typeof globalThis & { fetch?: FetchLike }).fetch;
-  if (!maybeFetch) {
-    throw new KuunaApiClientError("No fetch implementation is available");
-  }
-  return maybeFetch;
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -734,164 +711,4 @@ function toBackendToolInvocationRead(value: unknown, path: string): BackendToolI
     details: value.details,
     created_at: readString(value, "created_at", path),
   };
-}
-
-function queryString(params: Record<string, string | undefined>): string {
-  const text = Object.entries(params)
-    .filter((entry): entry is [string, string] => Boolean(entry[1]))
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-    .join("&");
-  return text ? `?${text}` : "";
-}
-
-export class KuunaApiClient {
-  private readonly baseUrl: string;
-  private readonly fetchImpl: FetchLike;
-  private readonly groupTitleForProviderGroupId: (providerGroupId: string) => string;
-
-  constructor(options: KuunaApiClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.fetchImpl = options.fetchImpl ?? defaultFetch();
-    this.groupTitleForProviderGroupId =
-      options.groupTitleForProviderGroupId ?? titleFromProviderGroupId;
-  }
-
-  async listTodos(params: BackendListParams = {}): Promise<TodoItem[]> {
-    const items = assertArray(
-      await this.getJson("/todos", {
-        provider_group_id: params.providerGroupId,
-      }),
-      "/todos",
-    ).map((item, index) => toBackendTodoRead(item, `/todos[${index}]`));
-
-    return items.map((item) => ({
-      id: item.id,
-      messageId: item.message_id ?? undefined,
-      agentRunId: item.agent_run_id ?? undefined,
-      providerGroupId: item.provider_group_id,
-      groupTitle: this.groupTitleForProviderGroupId(item.provider_group_id),
-      title: item.title,
-      description: item.description ?? undefined,
-      status: toTodoStatus(item.status),
-      priority: toTodoPriority(item.priority),
-      dueAt: item.due_at ?? undefined,
-      completedAt: item.completed_at ?? undefined,
-      exportedAt: item.exported_at ?? undefined,
-      exportAttemptCount: item.export_attempt_count,
-      externalRef: item.external_ref ?? undefined,
-      lastExportError: item.last_export_error ?? undefined,
-      attachments: item.attachments.map(mapMediaAsset),
-      createdAt: item.created_at,
-      updatedAt: item.updated_at,
-    }));
-  }
-
-  async listAgentRuns(params: BackendListParams = {}): Promise<AgentRunRecord[]> {
-    const items = assertArray(
-      await this.getJson("/agent-runs", {
-        provider_group_id: params.providerGroupId,
-      }),
-      "/agent-runs",
-    ).map((item, index) => toBackendAgentRunRead(item, `/agent-runs[${index}]`));
-
-    return items.map((item) => ({
-      id: item.id,
-      messageId: item.message_id ?? undefined,
-      providerGroupId: item.provider_group_id,
-      groupTitle: this.groupTitleForProviderGroupId(item.provider_group_id),
-      traceId: item.trace_id ?? undefined,
-      status: toAgentRunStatus(item.status),
-      modelPath: compactStringList(item.model_path),
-      modelUsed: item.model_used ?? undefined,
-      reasoningEffort: item.reasoning_effort,
-      allowedTools: compactStringList(item.allowed_tools),
-      retrievalRefs: compactStringList(item.retrieval_refs),
-      responseText: item.response_text ?? undefined,
-      responsePreview: item.response_text?.slice(0, 220),
-      error: item.error ?? undefined,
-      startedAt: item.started_at,
-      completedAt: item.completed_at ?? undefined,
-    }));
-  }
-
-  async listMessageDecisions(
-    params: BackendMessageDecisionListParams = {},
-  ): Promise<MessageDecisionRecord[]> {
-    const items = assertArray(
-      await this.getJson("/message-decisions", {
-        provider_group_id: params.providerGroupId,
-        message_id: params.messageId,
-      }),
-      "/message-decisions",
-    ).map((item, index) => toBackendMessageDecisionRead(item, `/message-decisions[${index}]`));
-
-    return items.map((item) => ({
-      id: item.id,
-      messageId: item.message_id,
-      providerGroupId: item.provider_group_id,
-      groupTitle: this.groupTitleForProviderGroupId(item.provider_group_id),
-      decisionType: item.decision_type,
-      reason: item.reason ?? undefined,
-      shouldExecute: item.should_execute,
-      payloadSummary: summarizeJson(item.payload),
-      createdAt: item.created_at,
-    }));
-  }
-
-  async listToolInvocations(
-    params: BackendToolInvocationListParams = {},
-  ): Promise<ToolInvocationRecord[]> {
-    const items = assertArray(
-      await this.getJson("/tool-invocations", {
-        provider_group_id: params.providerGroupId,
-        agent_run_id: params.agentRunId,
-      }),
-      "/tool-invocations",
-    ).map((item, index) => toBackendToolInvocationRead(item, `/tool-invocations[${index}]`));
-
-    return items.map((item) => ({
-      id: item.id,
-      agentRunId: item.agent_run_id ?? undefined,
-      messageId: item.message_id ?? undefined,
-      providerGroupId: item.provider_group_id,
-      groupTitle: this.groupTitleForProviderGroupId(item.provider_group_id),
-      toolName: item.tool_name,
-      ok: item.ok,
-      stdout: item.stdout || undefined,
-      stdoutPreview: summarizeJson(item.stdout, 160) || undefined,
-      stderr: item.stderr || undefined,
-      stderrPreview: summarizeJson(item.stderr, 160) || undefined,
-      timedOut: item.timed_out,
-      durationMs: item.duration_ms,
-      detailsSummary: summarizeJson(item.details),
-      createdAt: item.created_at,
-    }));
-  }
-
-  private async getJson(path: string, params: Record<string, string | undefined>): Promise<unknown> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}${queryString(params)}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new KuunaApiClientError(
-        `${path} failed with HTTP ${response.status}: ${body}`,
-        response.status,
-      );
-    }
-
-    try {
-      return await response.json();
-    } catch (error) {
-      throw new KuunaApiClientError(
-        `${path} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-}
-
-export function createKuunaApiClient(options: KuunaApiClientOptions): KuunaApiClient {
-  return new KuunaApiClient(options);
 }

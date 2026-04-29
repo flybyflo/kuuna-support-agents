@@ -2,15 +2,21 @@ FROM node:22-bookworm
 
 WORKDIR /workspace
 
-COPY package.json package-lock.json* turbo.json ./
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml turbo.json ./
 COPY apps/dashboard/package.json apps/dashboard/package.json
 COPY packages/agent-contracts/package.json packages/agent-contracts/package.json
 COPY packages/api-client-ts/package.json packages/api-client-ts/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/pi-runtime/package.json packages/pi-runtime/package.json
+COPY services/backend-ts/package.json services/backend-ts/package.json
+COPY services/gateway/package.json services/gateway/package.json
 COPY services/runtime-agent-ts/package.json services/runtime-agent-ts/package.json
-RUN npm install
+RUN pnpm install
 
 WORKDIR /workspace/apps/dashboard
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev", "--workspace", "@kuuna/dashboard", "--", "--hostname", "0.0.0.0", "--port", "3000"]
+CMD ["pnpm", "--filter", "@kuuna/dashboard", "dev", "--", "--hostname", "::", "--port", "3000"]

@@ -7,7 +7,14 @@ import type { Database, DbLike } from "../db/client.js";
 import { mediaAssets, messages, messageVersions, transcripts } from "../db/schema.js";
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
-import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
+import { publishRuntimeEvent } from "../runtime/events.js";
+import { ensureAutomaticFollowupTodo } from "./followup-todos.js";
+import {
+  enqueueKuunaJob,
+  enqueueRuntimeChatTask,
+  type EnqueueKuunaJob,
+  type RuntimeChatTaskQueueClient,
+} from "./queues.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -32,6 +39,7 @@ export async function processMediaAssetJob(
     httpClient?: HttpClient;
     uploadBytes?: UploadBytes;
     enqueueJob?: EnqueueKuunaJob;
+    runtimeChatQueue?: RuntimeChatTaskQueueClient;
   } = {},
 ): Promise<MediaProcessingResult> {
   const settings = getSettings();
@@ -68,6 +76,22 @@ export async function processMediaAssetJob(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await markMediaFailed(database, asset, message);
+    const providerGroupId = await providerGroupIdForMessage(database, asset.messageId);
+    if (providerGroupId) {
+      await ensureAutomaticFollowupTodo(database, {
+        providerGroupId,
+        messageId: asset.messageId,
+        traceId: input.traceId ?? null,
+      });
+    }
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId,
+      traceId: input.traceId ?? null,
+      entityId: asset.id,
+      entityType: "media_asset",
+      payload: { status: "failed", message_id: asset.messageId, error: message },
+    });
     logger.error("media_asset_processing_failed", {
       trace_id: input.traceId,
       media_asset_id: input.mediaAssetId,
@@ -146,7 +170,12 @@ async function processPendingAsset(
   database: DbLike,
   asset: MediaAssetRow,
   traceId: string | null,
-  options: { httpClient?: HttpClient; uploadBytes?: UploadBytes; enqueueJob?: EnqueueKuunaJob },
+  options: {
+    httpClient?: HttpClient;
+    uploadBytes?: UploadBytes;
+    enqueueJob?: EnqueueKuunaJob;
+    runtimeChatQueue?: RuntimeChatTaskQueueClient;
+  },
 ): Promise<"ready" | "failed"> {
   const metadata = objectRecord(asset.metadataJson);
   const kind = kindFromMimeType(asset.mimeType);
@@ -188,18 +217,17 @@ async function processPendingAsset(
   }
 
   if (!bytes && !downloadUrl) {
-    if (kind === "image" && typeof metadata.preview_url === "string") {
-      metadata.processing_mode = "thumbnail-only";
-      await markMediaReady(database, asset, {
-        metadata,
-        mimeType,
-        transcript: successTranscript({ kind, mimeType, mediaPayload }),
-      });
-      await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
-      return "ready";
-    }
     metadata.error = "download_url_missing";
     await markMediaFailed(database, asset, "download_url_missing", metadata);
+    await publishRuntimeEvent({
+      type: "media.updated",
+      providerGroupId,
+      traceId,
+      entityId: asset.id,
+      entityType: "media_asset",
+      payload: { status: "failed", message_id: asset.messageId, kind, error: "download_url_missing" },
+    });
+    await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
     return "failed";
   }
 
@@ -231,11 +259,8 @@ async function processPendingAsset(
   metadata.object_url = objectUrl;
   metadata.source_download_url = downloadUrl;
   if (kind === "image") {
-    const existingPreview = typeof metadata.preview_url === "string" ? metadata.preview_url : null;
     if (usedInlineData && inlineData) {
-      metadata.preview_url = `data:${mimeType};base64,${inlineData}`;
-    } else if (existingPreview?.startsWith("data:image/")) {
-      metadata.preview_url = existingPreview;
+      metadata.preview_url = objectUrl ?? `data:${mimeType};base64,${inlineData}`;
     } else {
       metadata.preview_url = objectUrl ?? downloadUrl;
     }
@@ -248,7 +273,16 @@ async function processPendingAsset(
     s3Key: objectKey,
     transcript: successTranscript({ kind, mimeType, mediaPayload, content: bytes }),
   });
-  await enqueueMediaFollowups(options.enqueueJob, asset, providerGroupId, traceId, "media_processed");
+  await publishRuntimeEvent({
+    type: "media.updated",
+    providerGroupId,
+    traceId,
+    entityId: asset.id,
+    entityType: "media_asset",
+    payload: { status: "ready", message_id: asset.messageId, kind },
+  });
+  await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
+  await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
   logger.info("media_asset_processed", {
     trace_id: traceId,
     media_asset_id: asset.id,
@@ -315,8 +349,18 @@ async function upsertTranscript(
   await database.insert(transcripts).values({ mediaAssetId, ...values });
 }
 
+async function providerGroupIdForMessage(database: DbLike, messageId: string): Promise<string | null> {
+  const [message] = await database
+    .select({ providerGroupId: messages.providerGroupId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .limit(1);
+  return message?.providerGroupId ?? null;
+}
+
 async function enqueueMediaFollowups(
   enqueueJob: EnqueueKuunaJob | undefined,
+  runtimeChatQueue: RuntimeChatTaskQueueClient | undefined,
   asset: MediaAssetRow,
   providerGroupId: string,
   traceId: string | null,
@@ -328,10 +372,15 @@ async function enqueueMediaFollowups(
     { source_type: "media_asset", source_id: asset.id, trace_id: traceId },
     `retrieval_indexing_media_asset_${jobToken(asset.id)}_${jobToken(traceId)}`,
   );
-  await enqueue(
-    "passive_message_analysis",
-    { message_id: asset.messageId, provider_group_id: providerGroupId, reason, trace_id: traceId },
-    `passive_analysis_${jobToken(asset.messageId)}_${jobToken(reason)}_${jobToken(traceId)}`,
+  await enqueueRuntimeChatTask(
+    {
+      name: "passive_message_analysis",
+      messageId: asset.messageId,
+      providerGroupId,
+      reason,
+      traceId,
+    },
+    { enqueueJob: enqueue, redis: runtimeChatQueue },
   );
 }
 

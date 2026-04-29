@@ -2,9 +2,12 @@ import { z } from "zod";
 
 const envSchema = z.object({
   APP_ENV: z.string().default("dev"),
-  HOST: z.string().default("0.0.0.0"),
+  HOST: z.string().default("::"),
   PORT: z.coerce.number().int().positive().default(8010),
-  DATABASE_URL: z.string().default("postgresql://postgres:postgres@localhost:5432/kuuna"),
+  DATABASE_URL: z
+    .string()
+    .min(1)
+    .default("postgres://postgres:postgres@127.0.0.1:5432/kuuna"),
   REDIS_URL: z.string().default("redis://localhost:6379/0"),
   SENTRY_DSN: z.string().optional(),
   INTERNAL_OPS_TOKEN: z.string().optional(),
@@ -42,9 +45,7 @@ const envSchema = z.object({
   DOCKER_CLI_PATH: z.string().default("docker"),
   TEMPLATE_BUILD_CONTEXT_PATH: z.string().default("."),
   TEMPLATE_BUILD_DOCKERFILE_PATH: z.string().default("services/runtime-agent-ts/Dockerfile"),
-  RUNTIME_AGENT_BASE_URL: z.string().default("http://runtime-agent:8100"),
   RUNTIME_AGENT_TIMEOUT_SECONDS: z.coerce.number().positive().default(45),
-  RUNTIME_PROVISIONING_ENABLED: z.coerce.boolean().default(false),
   RUNTIME_DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   RUNTIME_DOCKER_NETWORK: z.string().optional(),
   RUNTIME_AGENT_IMAGE: z.string().default("kuuna-runtime-agent-ts:latest"),

@@ -1,0 +1,47 @@
+{
+  "name": "@kuuna/pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "development": "./src/config.ts",
+      "default": "./dist/config.js"
+    },
+    "./model": {
+      "types": "./dist/model.d.ts",
+      "development": "./src/model.ts",
+      "default": "./dist/model.js"
+    },
+    "./tools": {
+      "types": "./dist/tools.d.ts",
+      "development": "./src/tools.ts",
+      "default": "./dist/tools.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json --customConditions development",
+    "test": "node --conditions=development --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@kuuna/agent-contracts": "workspace:*",
+    "@mariozechner/pi-agent-core": "0.70.6",
+    "@mariozechner/pi-ai": "0.70.6",
+    "@mariozechner/pi-coding-agent": "0.70.6",
+    "typebox": "^1.0.55"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.0"
+  }
+}

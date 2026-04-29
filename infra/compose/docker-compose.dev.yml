@@ -4,25 +4,20 @@ services:
   node-deps:
     image: node:22-bookworm
     working_dir: /workspace
+    environment:
+      CI: "true"
     command: >
       sh -c '
-        npm install --include=optional &&
-        case "$$(uname -m)" in
-          aarch64|arm64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-arm64-gnu @tailwindcss/oxide-linux-arm64-gnu ;;
-          x86_64|amd64) npm install --no-save --workspace @kuuna/dashboard lightningcss-linux-x64-gnu @tailwindcss/oxide-linux-x64-gnu ;;
-          *) echo "unsupported node dependency architecture: $$(uname -m)" >&2; exit 1 ;;
-        esac
+        corepack enable &&
+        pnpm install
       '
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
       - dashboard_node_modules:/workspace/apps/dashboard/node_modules
       - dashboard_next:/workspace/apps/dashboard/.next
-      - dashboard_next:/workspace/apps/dashboard/.next
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
       - gateway_node_modules:/workspace/services/gateway/node_modules
-      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
-      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
 
   dashboard:
     build:
@@ -30,13 +25,13 @@ services:
       dockerfile: apps/dashboard/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/dashboard -- --hostname 0.0.0.0 --port 3000'
+      sh -c 'corepack enable && pnpm --dir apps/dashboard exec next dev --hostname "$${DASHBOARD_BIND_HOST:-::}" --port 3000'
     env_file:
       - path: ../env/dashboard.env.example
       - path: ../env/dashboard.env.local
         required: false
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -53,18 +48,17 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/backend-ts'
+      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
-      HOST: "0.0.0.0"
+      HOST: "::"
       PORT: "8000"
       WATCHFILES_FORCE_POLLING: "true"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -80,8 +74,6 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
-      runtime-agent:
         condition: service_started
     healthcheck:
       test:
@@ -98,52 +90,23 @@ services:
 
   migrate:
     build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c "uv sync && uv run alembic upgrade head"
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile.dev
+    working_dir: /workspace
+    command: sh -c "corepack enable && pnpm --filter @kuuna/backend-ts db:migrate"
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
-    environment:
-      UV_LINK_MODE: copy
     volumes:
-      - ../../backend:/app
-      - backend_venv:/app/.venv
+      - ../..:/workspace
+      - workspace_node_modules:/workspace/node_modules
+      - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
     depends_on:
+      node-deps:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
-
-  backend-python:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c "uv sync && uv run uvicorn kuuna_backend.main:app --host 0.0.0.0 --port 8000 --reload"
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-    ports:
-      - "8001:8000"
-    volumes:
-      - ../../backend:/app
-      - backend_venv:/app/.venv
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_started
-      runtime-agent:
-        condition: service_started
 
   worker:
     build:
@@ -151,13 +114,12 @@ services:
       dockerfile: services/backend-ts/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev:worker --workspace @kuuna/backend-ts'
+      sh -c 'corepack enable && pnpm --filter @kuuna/backend-ts dev:worker'
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
         required: false
     environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/kuuna"
       WATCHFILES_FORCE_POLLING: "true"
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
       TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
@@ -175,86 +137,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      runtime-agent:
-        condition: service_started
-
-  worker-python:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    # Migrations are owned by the `backend` service to avoid concurrent DDL / enum races.
-    command: sh -c "uv sync && uv run watchfiles --filter python 'uv run rq worker default' src"
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-      TEMPLATE_BUILD_CONTEXT_PATH: /workspace
-      TEMPLATE_BUILD_DOCKERFILE_PATH: services/runtime-agent-ts/Dockerfile
-    volumes:
-      - ../..:/workspace
-      - ../../backend:/app
-      - worker_venv:/app/.venv
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      runtime-agent:
-        condition: service_started
-
-  todo-exporter:
-    profiles: ["legacy-python-backend"]
-    build:
-      context: ../../backend
-      dockerfile: Dockerfile.dev
-    working_dir: /app
-    command: sh -c 'uv sync && while true; do uv run python -m kuuna_backend.jobs.todo_export; sleep 600; done'
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-    volumes:
-      - ../../backend:/app
-      - todo_exporter_venv:/app/.venv
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  runtime-agent:
-    image: kuuna-runtime-agent-ts:dev
-    build:
-      context: ../..
-      dockerfile: services/runtime-agent-ts/Dockerfile.dev
-    working_dir: /workspace/services/runtime-agent-ts
-    command: sh -c "npm run dev"
-    env_file:
-      - path: ../env/backend.env.example
-      - path: ../env/backend.env.local
-        required: false
-    environment:
-      WATCHFILES_FORCE_POLLING: "true"
-      UV_LINK_MODE: copy
-      RUNTIME_AGENT_DEFAULT_MODEL: "gpt-5.5"
-      RUNTIME_AGENT_REASONING_EFFORT: "medium"
-    ports:
-      - "8100:8100"
-    volumes:
-      - ../..:/workspace
-      - workspace_node_modules:/workspace/node_modules
-      - runtime_agent_node_modules:/workspace/services/runtime-agent-ts/node_modules
-      - runtime_agent_contracts_node_modules:/workspace/packages/agent-contracts/node_modules
-    depends_on:
-      node-deps:
-        condition: service_completed_successfully
 
   gateway:
     build:
@@ -262,7 +144,7 @@ services:
       dockerfile: services/gateway/Dockerfile.dev
     working_dir: /workspace
     command: >
-      sh -c 'npm run dev --workspace @kuuna/gateway'
+      sh -c 'corepack enable && pnpm --filter @kuuna/gateway dev'
     env_file:
       - path: ../env/gateway.env.example
       - path: ../env/gateway.env.local
@@ -270,7 +152,7 @@ services:
     environment:
       WATCHFILES_FORCE_POLLING: "true"
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
@@ -289,7 +171,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -301,7 +183,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -315,8 +197,8 @@ services:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniopassword
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
 
@@ -325,12 +207,13 @@ volumes:
   dashboard_next:
   workspace_node_modules:
   backend_ts_node_modules:
-  backend_venv:
-  worker_venv:
-  todo_exporter_venv:
-  runtime_agent_node_modules:
-  runtime_agent_contracts_node_modules:
   gateway_node_modules:
   gateway_session:
   postgres_data:
   minio_data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"

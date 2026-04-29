@@ -575,7 +575,7 @@ export const toolInvocations: ToolInvocationRecord[] = [
 
 export const runtimeDebugStatus: RuntimeDebugStatus = {
   runtimeHealth: "ok",
-  runtimeUrl: "http://runtime-agent:8100",
+  runtimeUrl: "http://kuuna-runtime-grp-family-office:8100",
   openaiConfigured: true,
   openaiBaseUrl: "https://api.openai.com/v1",
   openaiTimeoutSeconds: "30",

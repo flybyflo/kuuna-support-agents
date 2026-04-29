@@ -15,6 +15,7 @@ import {
   transcripts,
 } from "../../db/schema.js";
 import { createPresignedGetUrl } from "../../integrations/s3.js";
+import { publishRuntimeEvent } from "../../runtime/events.js";
 import { createTRPCRouter, protectedProcedure } from "../init.js";
 
 const providerGroupInput = z
@@ -221,6 +222,17 @@ export const agentStateRouter = createTRPCRouter({
           provider_group_id: updated.providerGroupId,
           before: { status: todo.status, completed_at: todo.completedAt?.toISOString() ?? null },
           after: { status: updated.status, completed_at: updated.completedAt?.toISOString() ?? null },
+        },
+      });
+      await publishRuntimeEvent({
+        type: "todo.updated",
+        providerGroupId: updated.providerGroupId,
+        entityId: updated.id,
+        entityType: "todo",
+        payload: {
+          status: updated.status,
+          completed_at: updated.completedAt?.toISOString() ?? null,
+          updated_by: ctx.auth.userId,
         },
       });
 

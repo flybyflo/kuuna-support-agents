@@ -1,12 +1,13 @@
 import Fastify from "fastify";
 import * as Sentry from "@sentry/node";
+import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 
 import { BackendIngestClient } from "./backend.js";
 import { BaileysGateway } from "./baileys-gateway.js";
 import { getSettings } from "./config.js";
-import { registerHttpApi } from "./http-api.js";
 import { GatewayConnectionStatus, GatewayQrStatus } from "./status.js";
 import type { GatewayClient } from "./types.js";
+import { createGatewayRouter } from "./trpc.js";
 
 export async function buildServer(input: { client?: GatewayClient } = {}) {
   const settings = getSettings();
@@ -33,17 +34,37 @@ export async function buildServer(input: { client?: GatewayClient } = {}) {
   });
 
   const client = input.client ?? createDefaultGatewayClient();
-  registerHttpApi(app, {
+  const gatewayRouter = createGatewayRouter({
     client,
     opsToken: settings.GATEWAY_OPS_TOKEN ?? null,
     serviceToken: settings.GATEWAY_SERVICE_TOKEN ?? null,
   });
-
+  await app.register(fastifyTRPCPlugin, {
+    prefix: "/trpc",
+    trpcOptions: {
+      router: gatewayRouter,
+      createContext: ({ req }: { req: { headers: Record<string, string | string[] | undefined> } }) => ({
+        headers: headersFromRecord(req.headers),
+      }),
+    },
+  });
   app.addHook("onClose", async () => {
     await client.stop();
   });
 
   return app;
+}
+
+function headersFromRecord(headers: Record<string, string | string[] | undefined>): Headers {
+  const output = new Headers();
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      output.set(key, value.join(","));
+    } else if (value !== undefined) {
+      output.set(key, value);
+    }
+  }
+  return output;
 }
 
 function createDefaultGatewayClient(): GatewayClient {
@@ -52,7 +73,6 @@ function createDefaultGatewayClient(): GatewayClient {
   const qrStatus = new GatewayQrStatus();
   return new BaileysGateway({
     authDir: settings.BAILEYS_AUTH_DIR,
-    legacyNeonizeDatabasePath: settings.NEONIZE_DATABASE_PATH,
     sessionName: settings.GATEWAY_SESSION_NAME,
     printQrToConsole: settings.GATEWAY_PRINT_QR,
     logLevel: settings.LOG_LEVEL.toLowerCase(),

@@ -13,7 +13,7 @@ export default async function ToolInvocationsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <AutoRefresh intervalMs={6000} />
+      <AutoRefresh intervalMs={6000} eventTypes={["tool_invocation.created"]} />
       <PageHeader
         title="Tool Logs"
         description="Runtime tool calls captured from agent executions."

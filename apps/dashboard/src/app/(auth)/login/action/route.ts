@@ -1,5 +1,5 @@
 import { setSessionCookie } from "@/lib/auth/session";
-import { bootstrapRequiredAdmin, loginWithBackend } from "@/lib/backend/client";
+import { bootstrapRequiredAdmin, DashboardAuthError, loginWithBackend } from "@/lib/backend/client";
 
 /**
  * After a form POST, redirect must be **303 See Other** so the browser follows with **GET** (PRG).
@@ -47,6 +47,7 @@ export async function POST(request: Request): Promise<Response> {
     return redirect303("/overview", request);
   } catch (error) {
     console.error("[dashboard-auth] login failed", error);
-    return redirect303("/login?error=invalid", request);
+    const code = error instanceof DashboardAuthError ? error.code : "invalid";
+    return redirect303(`/login?error=${encodeURIComponent(code)}`, request);
   }
 }

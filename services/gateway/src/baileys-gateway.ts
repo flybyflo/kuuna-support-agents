@@ -1,23 +1,22 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import pino, { type Logger } from "pino";
 import qrcode from "qrcode-terminal";
 
 import { BackendIngestClient } from "./backend.js";
 import { mapBaileysMessage, isSelfMessage } from "./mapping.js";
 import { GatewayConnectionStatus, GatewayQrStatus } from "./status.js";
-import type { ConnectionSnapshot, GatewayClient, GatewayGroup, QrSnapshot } from "./types.js";
+import type { ConnectionSnapshot, GatewayClient, GatewayGroup, GatewayInboundEvent, QrSnapshot } from "./types.js";
 
 type AnyRecord = Record<string, unknown>;
 type BaileysModule = typeof import("@whiskeysockets/baileys");
 type WASocket = import("@whiskeysockets/baileys").WASocket;
+type WAMessage = import("@whiskeysockets/baileys").WAMessage;
 
 export class BaileysGateway implements GatewayClient {
   private socket: WASocket | null = null;
   private module: BaileysModule | null = null;
   private saveCreds: (() => Promise<void>) | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly gatewayOutboundMessageIds = new Set<string>();
   private stopping = false;
   private starting: Promise<void> | null = null;
   private readonly logger: Logger;
@@ -25,7 +24,6 @@ export class BaileysGateway implements GatewayClient {
   constructor(
     private readonly input: {
       authDir: string;
-      legacyNeonizeDatabasePath?: string | null;
       sessionName: string;
       backendClient: BackendIngestClient;
       connectionStatus: GatewayConnectionStatus;
@@ -63,7 +61,7 @@ export class BaileysGateway implements GatewayClient {
   async listGroups(): Promise<GatewayGroup[]> {
     const socket = this.requireSocket();
     const groups = await socket.groupFetchAllParticipating();
-    return Object.values(groups)
+    return (Object.values(groups) as Array<{ id: string; subject?: string; participants?: unknown[] }>)
       .map((group) => ({
         jid: group.id,
         name: group.subject?.trim() || group.id,
@@ -89,7 +87,11 @@ export class BaileysGateway implements GatewayClient {
   }): Promise<string | null> {
     const socket = this.requireSocket();
     const response = await socket.sendMessage(input.providerGroupId, { text: input.text });
-    return response?.key?.id ?? null;
+    const providerMessageId = response?.key?.id ?? null;
+    if (providerMessageId) {
+      this.rememberGatewayOutboundMessage(providerMessageId);
+    }
+    return providerMessageId;
   }
 
   connectionSnapshot(): ConnectionSnapshot {
@@ -103,7 +105,6 @@ export class BaileysGateway implements GatewayClient {
   private async openSocket(): Promise<void> {
     this.stopping = false;
     this.input.connectionStatus.markDisconnected("connecting");
-    this.warnIfLegacySessionNeedsPairing();
     const baileys = await this.loadBaileys();
     const { state, saveCreds } = await baileys.useMultiFileAuthState(this.input.authDir);
     this.saveCreds = saveCreds;
@@ -150,13 +151,13 @@ export class BaileysGateway implements GatewayClient {
   }
 
   private registerHandlers(socket: WASocket, baileys: BaileysModule): void {
-    socket.ev.on("connection.update", (update) => {
+    socket.ev.on("connection.update", (update: AnyRecord) => {
       const qr = typeof update.qr === "string" ? update.qr : null;
       if (qr) {
         this.input.qrStatus.setQr(qr);
         this.input.connectionStatus.markDisconnected(
           "qr",
-          "pairing required - scan the QR code printed in gateway logs or read /ops/qr",
+          "pairing required - scan the QR code printed in gateway logs or query gateway ops QR over tRPC",
         );
         this.printQr(qr);
       }
@@ -191,8 +192,14 @@ export class BaileysGateway implements GatewayClient {
       });
     });
 
-    socket.ev.on("messages.upsert", (event) => {
-      void this.handleMessages(event.messages as unknown as AnyRecord[]).catch((error) => {
+    socket.ev.on("messages.upsert", (event: { messages?: unknown; type?: unknown }) => {
+      const messages = Array.isArray(event.messages) ? (event.messages as WAMessage[]) : [];
+      this.logger.info({
+        event: "gateway_messages_upsert_received",
+        upsert_type: typeof event.type === "string" ? event.type : null,
+        message_count: messages.length,
+      });
+      void this.handleMessages(messages).catch((error) => {
         this.logger.error({ event: "gateway_messages_upsert_failed", error: errorMessage(error) });
       });
     });
@@ -210,50 +217,111 @@ export class BaileysGateway implements GatewayClient {
     }, 3000);
   }
 
-  private async handleMessages(messages: AnyRecord[]): Promise<void> {
+  private async handleMessages(messages: WAMessage[]): Promise<void> {
     for (const message of messages) {
-      if (!message.message || isSelfMessage(message)) continue;
-      const payload = mapBaileysMessage(message);
-      const response = await this.input.backendClient.sendInboundPayload(payload);
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
+      const messageRecord = message as unknown as AnyRecord;
+      const summary = messageSummary(messageRecord);
+      if (!message.message) {
+        this.logger.info({
+          event: "gateway_inbound_skipped",
+          reason: "missing_message_content",
+          ...summary,
+        });
+        continue;
+      }
+      if (isSelfMessage(messageRecord) && summary.provider_message_id && this.gatewayOutboundMessageIds.has(summary.provider_message_id)) {
+        this.logger.info({
+          event: "gateway_inbound_skipped",
+          reason: "known_gateway_outbound_echo",
+          ...summary,
+        });
+        continue;
+      }
+      const payload = mapBaileysMessage(messageRecord);
+      await this.attachOriginalMediaBytes(payload, message);
+      if (!payload.provider_group_id) {
+        this.logger.warn({
+          event: "gateway_inbound_skipped",
+          reason: "missing_provider_group_id",
+          provider_message_id: payload.provider_message_id,
+          message_keys: summary.message_keys,
+        });
+        continue;
+      }
+      try {
+        const response = await this.input.backendClient.sendInboundPayload(payload);
+        this.logger.info({
+          event: "gateway_inbound_forwarded",
+          trace_id: response.trace_id,
+          provider_group_id: payload.provider_group_id,
+          provider_message_id: payload.provider_message_id,
+          from_me: summary.from_me,
+          text_present: Boolean((payload.message.text ?? "").trim()),
+          media_count: payload.message.media.length,
+          deduped: response.deduped,
+          execution_enqueued: response.execution_enqueued,
+        });
+      } catch (error) {
         this.logger.error({
           event: "gateway_inbound_forward_failed",
           trace_id: payload.trace_id,
           provider_group_id: payload.provider_group_id,
           provider_message_id: payload.provider_message_id,
-          status_code: response.status,
-          response: text.slice(0, 500),
+          error: errorMessage(error),
         });
-        continue;
       }
-      this.logger.info({
-        event: "gateway_inbound_forwarded",
-        trace_id: payload.trace_id,
-        provider_group_id: payload.provider_group_id,
-        provider_message_id: payload.provider_message_id,
-        status_code: response.status,
-      });
     }
   }
 
-  private warnIfLegacySessionNeedsPairing(): void {
-    const legacyPath = this.input.legacyNeonizeDatabasePath;
-    if (!legacyPath || !existsSync(legacyPath) || this.hasBaileysCredentials()) return;
-    this.input.connectionStatus.markDisconnected(
-      "legacy_session_detected",
-      "old Neonize session found but Baileys requires a fresh WhatsApp pairing",
-    );
-    this.logger.warn({
-      event: "gateway_legacy_neonize_session_detected",
-      legacy_database_path: legacyPath,
-      auth_dir: this.input.authDir,
-      message: "Old Neonize sessions cannot be reused by Baileys. Scan the next QR code to pair this gateway again.",
+  private async attachOriginalMediaBytes(payload: GatewayInboundEvent, message: WAMessage): Promise<void> {
+    if (payload.message.media.length === 0) return;
+    const baileys = await this.loadBaileys();
+    const socket = this.requireSocket();
+
+    let mediaBytes: Buffer;
+    try {
+      mediaBytes = await baileys.downloadMediaMessage(
+        message,
+        "buffer",
+        {},
+        {
+          logger: this.logger,
+          reuploadRequest: socket.updateMediaMessage.bind(socket),
+        },
+      );
+    } catch (error) {
+      this.logger.warn({
+        event: "gateway_media_download_failed",
+        trace_id: payload.trace_id,
+        provider_group_id: payload.provider_group_id,
+        provider_message_id: payload.provider_message_id,
+        error: errorMessage(error),
+      });
+      return;
+    }
+
+    const encoded = mediaBytes.toString("base64");
+    for (const media of payload.message.media) {
+      media.inline_data_base64 = encoded;
+      media.byte_size = mediaBytes.byteLength;
+    }
+    this.logger.info({
+      event: "gateway_media_downloaded",
+      trace_id: payload.trace_id,
+      provider_group_id: payload.provider_group_id,
+      provider_message_id: payload.provider_message_id,
+      media_count: payload.message.media.length,
+      byte_size: mediaBytes.byteLength,
     });
   }
 
-  private hasBaileysCredentials(): boolean {
-    return existsSync(join(this.input.authDir, "creds.json"));
+  private rememberGatewayOutboundMessage(providerMessageId: string): void {
+    this.gatewayOutboundMessageIds.add(providerMessageId);
+    if (this.gatewayOutboundMessageIds.size <= 5000) return;
+    const oldest = this.gatewayOutboundMessageIds.values().next().value;
+    if (typeof oldest === "string") {
+      this.gatewayOutboundMessageIds.delete(oldest);
+    }
   }
 
   private printQr(qr: string): void {
@@ -262,10 +330,7 @@ export class BaileysGateway implements GatewayClient {
     this.logger.info({
       event: "gateway_pairing_qr_available",
       auth_dir: this.input.authDir,
-      legacy_database_dir: this.input.legacyNeonizeDatabasePath
-        ? dirname(this.input.legacyNeonizeDatabasePath)
-        : null,
-      message: "Scan this QR code in WhatsApp Linked Devices. The previous Neonize session cannot be reused.",
+      message: "Scan this QR code in WhatsApp Linked Devices.",
     });
     render(qr);
   }
@@ -298,4 +363,26 @@ function errorMessage(error: unknown): string {
 
 function objectRecord(value: unknown): AnyRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as AnyRecord) : {};
+}
+
+function messageSummary(message: AnyRecord): {
+  provider_group_id: string | null;
+  provider_message_id: string | null;
+  from_me: boolean;
+  message_keys: string[];
+} {
+  const key = objectRecord(message.key);
+  const content = objectRecord(message.message);
+  return {
+    provider_group_id: stringValue(key.remoteJid),
+    provider_message_id: stringValue(key.id),
+    from_me: key.fromMe === true,
+    message_keys: Object.keys(content).sort(),
+  };
+}
+
+function stringValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
 }

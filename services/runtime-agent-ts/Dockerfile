@@ -3,16 +3,19 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /workspace
 
-COPY package.json package-lock.json ./
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/dashboard/package.json ./apps/dashboard/package.json
 COPY packages ./packages
 COPY services/runtime-agent-ts ./services/runtime-agent-ts
 
 WORKDIR /workspace
-RUN npm ci --workspace @kuuna/runtime-agent-ts --workspace @kuuna/agent-contracts
+RUN pnpm install --frozen-lockfile --filter @kuuna/runtime-agent-ts... --prod=false
+RUN pnpm --filter @kuuna/runtime-agent-ts... build
 
 ENV NODE_ENV=production
 EXPOSE 8100
 
 WORKDIR /workspace/services/runtime-agent-ts
-CMD ["npm", "run", "serve"]
+CMD ["pnpm", "start"]

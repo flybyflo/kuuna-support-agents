@@ -48,14 +48,16 @@ export default async function InboxCreatePage({
   const session = await requireAuthorized("bindings", "write");
   const params = await searchParams;
 
-  const [bindings, templates, knownGroups, gatewayGroups, gatewayConnection] =
+  const [bindings, templates, knownGroups, gatewayConnection] =
     await Promise.all([
       listBindings(),
       listTemplates(),
       listKnownProviderGroups(),
-      listWhatsAppGatewayGroups(),
       getWhatsAppGatewayConnectionStatus(),
     ]);
+  const gatewayGroups = gatewayConnection?.connected
+    ? await listWhatsAppGatewayGroups()
+    : [];
 
   const templateOptions = (
     await Promise.all(
@@ -134,7 +136,10 @@ export default async function InboxCreatePage({
   return (
     <div className="h-full overflow-y-auto">
       <div className="flex flex-col gap-6 p-6">
-        <AutoRefresh intervalMs={15000} />
+        <AutoRefresh
+          intervalMs={15000}
+          eventTypes={["binding.updated", "runtime_container.updated"]}
+        />
 
         <PageHeader
           title="Bind WhatsApp group"
@@ -232,7 +237,12 @@ export default async function InboxCreatePage({
                 </FormRow>
 
                 <FormActions>
-                  <Button type="submit">Create WhatsApp group</Button>
+                  <Button
+                    type="submit"
+                    disabled={!gatewayConnection?.connected}
+                  >
+                    Create WhatsApp group
+                  </Button>
                 </FormActions>
               </form>
             </CardContent>

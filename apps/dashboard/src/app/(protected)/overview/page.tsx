@@ -95,7 +95,18 @@ export default async function OverviewPage() {
 
   return (
     <div className="flex flex-col gap-10">
-      <AutoRefresh intervalMs={10000} />
+      <AutoRefresh
+        intervalMs={10000}
+        eventTypes={[
+          "message.created",
+          "media.updated",
+          "todo.updated",
+          "agent_run.updated",
+          "binding.updated",
+          "template_build.updated",
+          "runtime_container.updated",
+        ]}
+      />
       <PageHeader
         title="Operations Overview"
         description="Status across templates, bindings, ingestion, and audit trails."

@@ -6,6 +6,7 @@ import {
   ActivitySquare,
   Bot,
   BookOpen,
+  CheckSquare,
   Cog,
   GaugeCircle,
   GitBranch,
@@ -39,6 +40,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/overview", label: "Overview", icon: GaugeCircle },
       { href: "/inbox", label: "Inbox", icon: Inbox },
+      { href: "/todos", label: "Todos", icon: CheckSquare },
     ],
   },
   {

@@ -9,6 +9,7 @@ import {
   agentRuns,
   groupBindings,
   groupTemplates,
+  mediaAssets,
   messageDecisions,
   messages,
   messageVersions,
@@ -16,8 +17,11 @@ import {
   templateVersions,
   todos,
   toolInvocations,
+  transcripts,
 } from "../src/db/schema.js";
+import { resetSettingsForTests } from "../src/config.js";
 import { processInboundExecutionJob, processPassiveMessageAnalysisJob } from "../src/jobs/runtime-execution.js";
+import { RuntimeProvisioningError } from "../src/runtime/provisioning.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -28,6 +32,14 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   const harness = await createContractHarness();
   t.after(() => harness.close());
   const seeded = await seedRuntimeScenario(harness, { messageText: "Please follow up on missing invoice screenshots" });
+  const [asset] = await harness.db.insert(mediaAssets).values({
+    messageId: seeded.messageId,
+    providerMediaId: "media-passive",
+    mimeType: "image/jpeg",
+    status: "ready",
+    metadataJson: { preview_url: "data:image/jpeg;base64,aGVsbG8=" },
+  }).returning();
+  assert.ok(asset);
 
   const result = await processPassiveMessageAnalysisJob(
     harness.db,
@@ -38,12 +50,16 @@ test("contract: passive message analysis persists agent run, tool invocation, to
       traceId: "trace-passive",
     },
     {
-      httpClient: async () =>
-        new Response(JSON.stringify({
+      enqueueJob: async (name, data, jobId) => {
+        harness.jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      },
+      runtimeAgentCaller: async () => ({
           success: true,
           prompt: "prompt",
           system_prompt: "system",
           user_prompt: "user",
+          reasoning_effort: "medium",
           model_used: "gpt-5.5",
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "{\"decision\":\"todo\"}",
@@ -58,8 +74,18 @@ test("contract: passive message analysis persists agent run, tool invocation, to
               details: { title: "Collect invoice screenshots", priority: "high", description: "Ask client for screenshots." },
             },
           ],
+          media_insights: [
+            {
+              media_asset_id: asset.id,
+              mime_type: "image/jpeg",
+              kind: "image",
+              status: "ready",
+              summary: "Invoice screenshot for staff review.",
+              transcript: "Invoice screenshot for staff review.",
+            },
+          ],
           error: null,
-        }), { status: 200, headers: { "content-type": "application/json" } }),
+        }),
     },
   );
 
@@ -79,6 +105,18 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   assert.equal(invocation.toolName, "todo_create");
   assert.equal(invocation.ok, true);
 
+  const [transcript] = await harness.db.select().from(transcripts).where(eq(transcripts.mediaAssetId, asset.id)).limit(1);
+  assert.ok(transcript);
+  assert.equal(transcript.textContent, "Invoice screenshot for staff review.");
+  assert.equal(
+    harness.jobs.some(
+      (job) =>
+        job.name === "retrieval_indexing" &&
+        job.jobId?.endsWith("_runtime_insight"),
+    ),
+    true,
+  );
+
   const [decision] = await harness.db.select().from(messageDecisions).where(eq(messageDecisions.messageId, seeded.messageId)).limit(1);
   assert.ok(decision);
   assert.equal(decision.decisionType, "passive_analysis");
@@ -89,6 +127,14 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
   const harness = await createContractHarness();
   t.after(() => harness.close());
   const seeded = await seedRuntimeScenario(harness, { messageText: "@agent help with my tax form" });
+  const [asset] = await harness.db.insert(mediaAssets).values({
+    messageId: seeded.messageId,
+    providerMediaId: "media-inbound",
+    mimeType: "image/jpeg",
+    status: "ready",
+    metadataJson: { preview_url: "data:image/jpeg;base64,aGVsbG8=" },
+  }).returning();
+  assert.ok(asset);
 
   const result = await processInboundExecutionJob(
     harness.db,
@@ -103,18 +149,24 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
         harness.jobs.push({ name, data, jobId });
         return jobId ?? name;
       },
-      httpClient: async () =>
-        new Response(JSON.stringify({
+      runtimeAgentCaller: async (_runtimeBaseUrl, request) => {
+        assert.equal(request.allowed_tools.includes("media_analyze"), true);
+        assert.equal(request.context.media_attachments?.[0]?.media_asset_id, asset.id);
+        assert.equal(request.context.media_attachments?.[0]?.preview_url, "data:image/jpeg;base64,aGVsbG8=");
+        return {
           success: true,
           prompt: "prompt",
           system_prompt: "system",
           user_prompt: "user",
+          reasoning_effort: "medium",
           model_used: "gpt-5.5",
           attempts: [{ model: "gpt-5.5", success: true }],
           response_text: "Please upload the tax form and I will review it.",
           tool_results: [],
+          media_insights: [],
           error: null,
-        }), { status: 200, headers: { "content-type": "application/json" } }),
+        };
+      },
     },
   );
 
@@ -161,6 +213,95 @@ test("contract: inbound execution invalid or unbound message is skipped without 
   assert.equal((await harness.db.select().from(outboundIntents)).length, 0);
 });
 
+test("contract: inbound execution provisions strict per-chat runtime", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const seeded = await seedRuntimeScenario(harness, { messageText: "@agent use my isolated runtime" });
+  const provisioned: string[] = [];
+
+  const result = await processInboundExecutionJob(
+    harness.db,
+    {
+      messageId: seeded.messageId,
+      providerGroupId: seeded.providerGroupId,
+      reason: "mention",
+      traceId: "trace-provisioned",
+    },
+    {
+      enqueueJob: async (name, data, jobId) => {
+        harness.jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      },
+      runtimeProvisioner: async (_database, input) => {
+        provisioned.push(`${input.providerGroupId}:${input.messageId}`);
+        return {
+          containerId: "container-chat",
+          containerName: "kuuna-runtime-chat",
+          runtimeBaseUrl: "http://kuuna-runtime-chat:8100",
+          dockerNetwork: "kuuna-dev_default",
+        };
+      },
+      runtimeAgentCaller: async (runtimeBaseUrl, request) => {
+        assert.equal(runtimeBaseUrl, "http://kuuna-runtime-chat:8100");
+        assert.equal(request.context.provider_group_id, seeded.providerGroupId);
+        assert.equal(request.context.binding_id, seeded.bindingId);
+        assert.equal(request.context.agent_instance_id, seeded.agentInstanceId);
+        return {
+          success: true,
+          prompt: "prompt",
+          system_prompt: "system",
+          user_prompt: "user",
+          reasoning_effort: "medium",
+          model_used: "gpt-5.5",
+          attempts: [{ model: "gpt-5.5", success: true }],
+          response_text: "I am isolated.",
+          tool_results: [],
+          media_insights: [],
+          error: null,
+        };
+      },
+    },
+  );
+
+  assert.deepEqual(result, { processed: true, status: "enqueued" });
+  assert.deepEqual(provisioned, [`${seeded.providerGroupId}:${seeded.messageId}`]);
+});
+
+test("contract: provisioning failure fails run without fallback", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const seeded = await seedRuntimeScenario(harness, { messageText: "@agent do not use fallback" });
+  let runtimeCalled = false;
+
+  const result = await processInboundExecutionJob(
+    harness.db,
+    {
+      messageId: seeded.messageId,
+      providerGroupId: seeded.providerGroupId,
+      reason: "mention",
+      traceId: "trace-provisioning-failed",
+    },
+    {
+      runtimeProvisioner: async () => {
+        throw new RuntimeProvisioningError("runtime_container_identity_mismatch", "wrong chat container");
+      },
+      runtimeAgentCaller: async () => {
+        runtimeCalled = true;
+        throw new Error("should not call runtime agent");
+      },
+    },
+  );
+
+  assert.deepEqual(result, { processed: false, status: "skipped" });
+  assert.equal(runtimeCalled, false);
+  const [run] = await harness.db.select().from(agentRuns).where(eq(agentRuns.traceId, "trace-provisioning-failed")).limit(1);
+  assert.ok(run);
+  assert.equal(run.status, "failed");
+  assert.match(run.error ?? "", /wrong chat container/);
+  const intents = await harness.db.select().from(outboundIntents).where(eq(outboundIntents.providerGroupId, seeded.providerGroupId));
+  assert.equal(intents.length, 0);
+});
+
 async function seedRuntimeScenario(
   harness: Awaited<ReturnType<typeof createContractHarness>>,
   input: { messageText: string },
@@ -190,12 +331,13 @@ async function seedRuntimeScenario(
     .values({ providerGroupId, templateVersionId: version.id, status: "active" })
     .returning();
   assert.ok(binding);
-  await harness.db.insert(agentInstances).values({
+  const [agentInstance] = await harness.db.insert(agentInstances).values({
     groupBindingId: binding.id,
     runtimeMode: "on_demand",
     status: "healthy",
     runtimeBaseUrl: "http://runtime.test",
-  });
+  }).returning();
+  assert.ok(agentInstance);
   const [message] = await harness.db
     .insert(messages)
     .values({
@@ -215,5 +357,5 @@ async function seedRuntimeScenario(
     rawEvent: {},
     occurredAt: new Date(),
   });
-  return { providerGroupId, providerMessageId, messageId: message.id };
+  return { providerGroupId, providerMessageId, messageId: message.id, bindingId: binding.id, agentInstanceId: agentInstance.id };
 }

@@ -3,7 +3,7 @@ import path from "node:path";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  allowedDevOrigins: ["127.0.0.1", "localhost", "0.0.0.0"],
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   outputFileTracingRoot: path.join(process.cwd(), "../.."),
   transpilePackages: ["@kuuna/api-client-ts"],
   async redirects() {
@@ -32,30 +32,7 @@ const nextConfig: NextConfig = {
         destination: "/inbox",
         permanent: false,
       },
-      {
-        source: "/todos",
-        destination: "/inbox?filter=open-todos",
-        permanent: false,
-      },
     ];
-  },
-  webpack: (config, { webpack }) => {
-    // Sentry bundles Prisma instrumentation as an optional integration; this dashboard
-    // uses `pg` directly and does not rely on Prisma. Ignoring it prevents noisy
-    // "Critical dependency" warnings during Next.js compilation.
-    config.plugins.push(
-      new webpack.IgnorePlugin({
-        resourceRegExp: /^@prisma\/instrumentation$/,
-      }),
-    );
-
-    config.ignoreWarnings = [
-      ...(config.ignoreWarnings ?? []),
-      {
-        module: /@prisma\/instrumentation/,
-      },
-    ];
-    return config;
   },
 };
 

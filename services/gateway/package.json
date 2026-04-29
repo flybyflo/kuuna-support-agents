@@ -6,15 +6,18 @@
   "main": "./src/server.ts",
   "types": "./src/server.ts",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "serve": "tsx src/server.ts",
-    "start": "node dist/server.js",
+    "dev": "tsx watch --conditions=development src/server.ts",
+    "serve": "tsx --conditions=development src/server.ts",
+    "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.json --customConditions development",
+    "test": "node --conditions=development --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "@sentry/node": "^10.49.0",
+    "@kuuna/contracts": "workspace:*",
+    "@sentry/node": "^10.50.0",
+    "@trpc/client": "11.17.0",
+    "@trpc/server": "11.17.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "fastify": "^5.6.2",
     "pino": "^9.6.0",
@@ -26,5 +29,12 @@
     "@types/qrcode-terminal": "^0.12.2",
     "tsx": "^4.20.6",
     "typescript": "^5.8.0"
+  },
+  "exports": {
+    "./trpc": {
+      "types": "./dist/src/trpc.d.ts",
+      "development": "./src/trpc.ts",
+      "default": "./dist/src/trpc.js"
+    }
   }
 }

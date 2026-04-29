@@ -64,7 +64,10 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
 
   return (
     <div className="flex flex-col gap-8">
-      <AutoRefresh intervalMs={refreshIntervalMs} />
+      <AutoRefresh
+        intervalMs={refreshIntervalMs}
+        eventTypes={["agent_run.updated", "tool_invocation.created", "todo.updated"]}
+      />
       <PageHeader
         title="Agent run"
         description={`Execution log for ${run.groupTitle}.`}

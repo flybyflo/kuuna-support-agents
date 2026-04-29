@@ -41,7 +41,7 @@ import type {
   TraceDetail,
   WorkflowStatus,
 } from "@/lib/api-client/types";
-import { callInternalBackend, createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
+import { createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
 import { titleFromGroupId } from "@/lib/utils/format";
 
 const ENABLE_MOCK_FALLBACK = process.env.DASHBOARD_ENABLE_MOCK_FALLBACK === "1";
@@ -104,7 +104,11 @@ function isDynamicServerUsage(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
-  return "digest" in error && (error as { digest?: unknown }).digest === "DYNAMIC_SERVER_USAGE";
+  if (!("digest" in error)) {
+    return false;
+  }
+  const digest = (error as { digest?: unknown }).digest;
+  return digest === "DYNAMIC_SERVER_USAGE" || (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT;"));
 }
 
 function mapTemplate(row: {
@@ -222,6 +226,7 @@ function mapKnowledgeDoc(row: {
   doc_key: string;
   scope: string;
   provider_group_id?: string | null;
+  customer_key?: string | null;
   title: string;
   status?: string;
   updated_at?: string;
@@ -231,8 +236,14 @@ function mapKnowledgeDoc(row: {
   return {
     id: row.id,
     docKey: row.doc_key,
-    scope: row.scope === "group" ? "group" : "common",
+    scope:
+      row.scope === "customer"
+        ? "customer"
+        : row.scope === "group"
+          ? "group"
+          : "common",
     providerGroupId: row.provider_group_id ?? undefined,
+    customerKey: row.customer_key ?? undefined,
     title: row.title,
     status: workflowStatus(row.status ?? "ready"),
     updatedAt: row.updated_at ?? new Date(0).toISOString(),
@@ -326,7 +337,7 @@ function mapRuntimeRun(row: {
   finished_at?: string | null;
   duration_ms?: number | null;
   error?: string | null;
-  execution: unknown;
+  execution?: unknown;
 }): RuntimeRun {
   return {
     id: row.id,
@@ -402,21 +413,15 @@ export async function listRuntimeRuns(params: {
   bindingId?: string;
   limit?: number;
 }): Promise<RuntimeRun[]> {
-  const qs = new URLSearchParams();
-  if (params.providerGroupId) qs.set("provider_group_id", params.providerGroupId);
-  if (params.messageId) qs.set("message_id", params.messageId);
-  if (params.templateVersionId) qs.set("template_version_id", params.templateVersionId);
-  if (params.bindingId) qs.set("binding_id", params.bindingId);
-  if (params.limit) qs.set("limit", String(params.limit));
-  const payload = await callInternalBackend<{ items: Array<Parameters<typeof mapRuntimeRun>[0]> }>(
-    `/internal/runtime-runs${qs.size ? `?${qs.toString()}` : ""}`,
-  );
-  return payload.items.map(mapRuntimeRun);
+  const client = await createSessionBackendTrpcClient();
+  const rows = await client.internal.runtimeRuns.query(params);
+  return rows.map(mapRuntimeRun);
 }
 
 export async function getRuntimeRun(runId: string): Promise<RuntimeRun | undefined> {
   try {
-    return mapRuntimeRun(await callInternalBackend(`/internal/runtime-runs/${encodeURIComponent(runId)}`));
+    const client = await createSessionBackendTrpcClient();
+    return mapRuntimeRun(await client.internal.runtimeRunById.query({ runId }));
   } catch {
     return undefined;
   }
@@ -694,7 +699,7 @@ export async function listPromptAssets(instanceId?: string): Promise<PromptAsset
 }
 
 export async function listKnowledgeDocs(
-  scope?: "common" | "group",
+  scope?: "common" | "group" | "customer",
   providerGroupId?: string,
 ): Promise<KnowledgeDoc[]> {
   return withOptionalMock(
@@ -707,11 +712,17 @@ export async function listKnowledgeDocs(
       if (scope === "group") {
         return (await client.knowledge.ingestedGroupDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
       }
-      const [commonDocs, groupDocs] = await Promise.all([
+      if (scope === "customer" && providerGroupId) {
+        return (await client.knowledge.customerDocs.query({ providerGroupId })).map(mapKnowledgeDoc);
+      }
+      const [commonDocs, groupDocs, customerDocs] = await Promise.all([
         client.knowledge.ingestedCommonDocs.query(),
         client.knowledge.ingestedGroupDocs.query({ providerGroupId }),
+        providerGroupId
+          ? client.knowledge.customerDocs.query({ providerGroupId })
+          : Promise.resolve([]),
       ]);
-      return [...commonDocs, ...groupDocs].map(mapKnowledgeDoc);
+      return [...commonDocs, ...groupDocs, ...customerDocs].map(mapKnowledgeDoc);
     },
     () => [],
   );

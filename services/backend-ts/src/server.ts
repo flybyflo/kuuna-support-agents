@@ -5,10 +5,8 @@ import { ZodError } from "zod";
 
 import { getSettings } from "./config.js";
 import { closeDb, type Database } from "./db/client.js";
-import { closeQueues, type EnqueueKuunaJob } from "./jobs/queues.js";
+import { closeQueues, enqueueKuunaJob, type EnqueueKuunaJob } from "./jobs/queues.js";
 import { logger } from "./logging.js";
-import { registerGatewayRoutes } from "./rest/gateway.js";
-import { registerInternalRoutes } from "./rest/internal.js";
 import { initSentry } from "./sentry.js";
 import { createTRPCContext } from "./trpc/init.js";
 import { appRouter } from "./trpc/routers/_app.js";
@@ -73,12 +71,10 @@ export async function buildServer(options: BuildServerOptions = {}) {
             req.socket.remoteAddress ||
             "unknown",
           db: options.db,
+          enqueueJob: options.enqueueJob ?? enqueueKuunaJob,
         }),
     },
   });
-
-  registerGatewayRoutes(app, { database: options.db, enqueueJob: options.enqueueJob });
-  registerInternalRoutes(app, { database: options.db, enqueueJob: options.enqueueJob });
 
   return app;
 }

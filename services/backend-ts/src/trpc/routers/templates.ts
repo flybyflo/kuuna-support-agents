@@ -2,6 +2,11 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 import { groupBindings, groupTemplates, templateBuilds, templateVersions } from "../../db/schema.js";
+import {
+  formatTemplateBuild,
+  queueTemplateBuild,
+  TemplateBuildValidationError,
+} from "../../jobs/template-build.js";
 import { createTRPCRouter, protectedProcedure, roleProcedure } from "../init.js";
 import { z } from "zod";
 
@@ -21,6 +26,14 @@ const createVersionInput = z.object({
 const versionTargetInput = z.object({
   templateId: z.string().uuid(),
   versionId: z.string().uuid(),
+});
+
+const queueBuildInput = z.object({
+  templateId: z.string().uuid(),
+  versionId: z.string().uuid(),
+  actorUserId: z.string().uuid(),
+  baseImage: z.string().trim().min(1),
+  allowedTools: z.array(z.string()).nullable().optional(),
 });
 
 type TemplateVersionRow = typeof templateVersions.$inferSelect;
@@ -267,5 +280,24 @@ export const templatesRouter = createTRPCRouter({
           created_at: build.createdAt.toISOString(),
           updated_at: build.updatedAt.toISOString(),
         }));
+    }),
+
+  queueBuild: roleProcedure("owner", "admin")
+    .input(queueBuildInput)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return formatTemplateBuild(await queueTemplateBuild(ctx.rootDb, {
+          actorUserId: input.actorUserId,
+          templateId: input.templateId,
+          versionId: input.versionId,
+          baseImage: input.baseImage,
+          allowedTools: input.allowedTools ?? null,
+        }, { enqueueJob: ctx.enqueueJob }));
+      } catch (error) {
+        if (error instanceof TemplateBuildValidationError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+        }
+        throw error;
+      }
     }),
 });

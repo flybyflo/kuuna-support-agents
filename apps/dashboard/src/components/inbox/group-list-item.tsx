@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils/cn";
 import { formatDateTime } from "@/lib/utils/format";
+import { initialsFromTitle } from "@/lib/utils/initials";
 import type { InboxGroupEntry } from "@/lib/inbox/filters";
 
 type GroupListItemProps = {
@@ -11,28 +12,9 @@ type GroupListItemProps = {
   active: boolean;
 };
 
-function initialsFromTitle(title: string): string {
-  const trimmed = title.trim();
-  if (!trimmed) return "??";
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
-
 function formatRelativeShort(value: string): string {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return formatDateTime(value);
-
-  const diffMs = Date.now() - timestamp;
-  const diffMin = Math.round(diffMs / 60000);
-  if (diffMin < 1) return "now";
-  if (diffMin < 60) return `${diffMin}m`;
-  const diffH = Math.round(diffMin / 60);
-  if (diffH < 24) return `${diffH}h`;
-  const diffD = Math.round(diffH / 24);
-  if (diffD < 7) return `${diffD}d`;
-  const diffW = Math.round(diffD / 7);
-  if (diffW < 5) return `${diffW}w`;
   return formatDateTime(value).split(",")[0];
 }
 

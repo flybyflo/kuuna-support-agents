@@ -39,7 +39,7 @@ export default async function RuntimeRunsPage({ searchParams }: { searchParams: 
 
   return (
     <div className="flex flex-col gap-8">
-      <AutoRefresh intervalMs={8000} />
+      <AutoRefresh intervalMs={8000} eventTypes={["agent_run.updated"]} />
       <PageHeader
         title="Runtime runs"
         description="Per-message container executions with image selection, duration, and failure details."
@@ -111,4 +111,3 @@ export default async function RuntimeRunsPage({ searchParams }: { searchParams: 
     </div>
   );
 }
-

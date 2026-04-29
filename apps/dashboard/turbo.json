@@ -1,0 +1,14 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "outputs": ["$TURBO_EXTENDS$", ".next/**", "!.next/cache/**"]
+    },
+    "typecheck": {
+      "outputs": [".next/types/**"]
+    },
+    "test": {
+      "outputs": [".next/types/**"]
+    }
+  }
+}

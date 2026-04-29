@@ -9,6 +9,7 @@ import { resetSettingsForTests } from "../src/config.js";
 import type { Database } from "../src/db/client.js";
 import { appRouter } from "../src/trpc/routers/_app.js";
 import { createCallerFactory, createTRPCContext } from "../src/trpc/init.js";
+import { closeQueues } from "../src/jobs/queues.js";
 import * as schema from "../src/db/schema.js";
 
 export const contractDatabaseUrl = process.env.BACKEND_TS_CONTRACT_DATABASE_URL;
@@ -29,7 +30,9 @@ export type ContractHarness = {
   sql: Sql;
   schemaName: string;
   jobs: EnqueuedJob[];
+  runtimeChatTasks: string[];
   caller: (token?: string) => Promise<AppCaller>;
+  internalCaller: (internalToken: string) => Promise<AppCaller>;
   seedUser: (input: {
     email: string;
     password: string;
@@ -56,18 +59,43 @@ export async function createContractHarness(): Promise<ContractHarness> {
 
   const db = drizzle(sql, { schema }) as Database;
   const jobs: EnqueuedJob[] = [];
+  const runtimeChatTasks: string[] = [];
+  const activeRuntimeChatDrains = new Set<string>();
+  const runtimeChatQueue = {
+    async rpush(_key: string, value: string) {
+      runtimeChatTasks.push(value);
+      return runtimeChatTasks.length;
+    },
+    async set(key: string) {
+      if (activeRuntimeChatDrains.has(key)) return null;
+      activeRuntimeChatDrains.add(key);
+      return "OK" as const;
+    },
+  };
 
   return {
     db,
     sql,
     schemaName,
     jobs,
+    runtimeChatTasks,
     caller: async (token?: string) => {
       const headers = new Headers();
       if (token) {
         headers.set("authorization", `Bearer ${token}`);
       }
-      const context = await createTRPCContext({ headers, clientIp: "contract-test", db });
+      const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
+        jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      }, runtimeChatQueue });
+      return createCaller(context);
+    },
+    internalCaller: async (internalToken: string) => {
+      const headers = new Headers({ "x-internal-token": internalToken });
+      const context = await createTRPCContext({ headers, clientIp: "contract-test", db, enqueueJob: async (name, data, jobId) => {
+        jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      }, runtimeChatQueue });
       return createCaller(context);
     },
     seedUser: async (input) => {
@@ -97,6 +125,7 @@ export async function createContractHarness(): Promise<ContractHarness> {
       return user;
     },
     close: async () => {
+      await closeQueues();
       await sql.unsafe(`drop schema if exists ${schemaName} cascade`);
       await sql.end({ timeout: 5 });
     },
@@ -212,6 +241,10 @@ async function createContractTables(sql: Sql): Promise<void> {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+
+    create unique index uq_group_bindings_active_provider_group
+      on group_bindings (provider_group_id)
+      where status = 'active';
 
     create table agent_instances (
       id uuid primary key default gen_random_uuid(),
@@ -375,6 +408,17 @@ async function createContractTables(sql: Sql): Promise<void> {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       unique (provider_group_id, doc_key)
+    );
+
+    create table knowledge_customer_docs (
+      id uuid primary key default gen_random_uuid(),
+      provider_group_id text not null,
+      customer_key text not null,
+      doc_key text not null,
+      title text not null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (customer_key, doc_key)
     );
 
     create table knowledge_versions (

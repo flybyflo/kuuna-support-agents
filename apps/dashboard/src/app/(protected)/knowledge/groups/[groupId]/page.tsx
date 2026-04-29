@@ -26,7 +26,7 @@ export default async function GroupKnowledgeDetailPage({
 
   const [bindings, docs] = await Promise.all([
     listBindings(),
-    listKnowledgeDocs("group", providerGroupId),
+    listKnowledgeDocs(undefined, providerGroupId),
   ]);
 
   const binding = bindings.find(
@@ -37,7 +37,7 @@ export default async function GroupKnowledgeDetailPage({
     <div className="flex flex-col gap-8">
       <PageHeader
         title={binding?.groupTitle ?? titleFromGroupId(providerGroupId)}
-        description={`Knowledge derived from ingested chat/media for ${providerGroupId}`}
+        description={`Group and customer-scoped knowledge for ${providerGroupId}`}
       />
 
       <Notice title="Readiness" tone="info">
@@ -60,7 +60,7 @@ export default async function GroupKnowledgeDetailPage({
         <CardContent className="p-0 pt-0">
           <SimpleTable
             data={docs}
-            emptyMessage="No group knowledge docs yet."
+            emptyMessage="No group or customer knowledge docs yet."
             columns={[
               {
                 header: "Document",
@@ -70,7 +70,7 @@ export default async function GroupKnowledgeDetailPage({
                       {doc.title}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {doc.chunkCount} chunks from ingested data
+                      {doc.scope} · {doc.chunkCount} chunks from ingested data
                     </span>
                   </div>
                 ),

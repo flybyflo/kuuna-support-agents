@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import { BackendIngestClient } from "../src/backend.js";
@@ -15,6 +12,7 @@ class FakeSocket {
   ev = new EventEmitter();
   sent: Array<{ jid: string; content: unknown }> = [];
   ended = false;
+  mediaBytes = Buffer.from("original-media-bytes");
 
   async groupFetchAllParticipating() {
     return {
@@ -35,6 +33,10 @@ class FakeSocket {
     return { key: { id: "provider-msg-123" } };
   }
 
+  async updateMediaMessage(message: unknown) {
+    return message;
+  }
+
   end() {
     this.ended = true;
   }
@@ -51,6 +53,7 @@ function fakeBaileys(socket: FakeSocket) {
     }),
     fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0], isLatest: true }),
     makeWASocket: () => socket,
+    downloadMediaMessage: async () => socket.mediaBytes,
   };
 }
 
@@ -59,9 +62,14 @@ function makeGateway(socket: FakeSocket, calls: unknown[], overrides: Partial<Co
   const qrStatus = new GatewayQrStatus();
   const backendClient = new BackendIngestClient({
     backendBaseUrl: "http://backend.test",
-    httpClient: async (_url, init) => {
-      calls.push(JSON.parse(String(init?.body ?? "{}")));
-      return new Response("{}", { status: 202 });
+    transport: async (payload) => {
+      calls.push(payload);
+      return {
+        accepted: true,
+        trace_id: payload.trace_id,
+        deduped: false,
+        execution_enqueued: false,
+      };
     },
   });
 
@@ -98,16 +106,20 @@ test("tracks QR and connection status", async () => {
   assert.equal(gateway.qrSnapshot().qr, null);
 });
 
-test("forwards inbound messages and skips self messages", async () => {
+test("forwards inbound messages and skips gateway outbound echoes", async () => {
   const socket = new FakeSocket();
   const calls: unknown[] = [];
   const gateway = makeGateway(socket, calls);
 
   await gateway.start();
+  await gateway.sendText({
+    providerGroupId: "1203630-group@g.us",
+    text: "gateway outbound",
+  });
   socket.ev.emit("messages.upsert", {
     messages: [
       {
-        key: { id: "self", remoteJid: "1203630-group@g.us", fromMe: true },
+        key: { id: "provider-msg-123", remoteJid: "1203630-group@g.us", fromMe: true },
         message: { conversation: "ignore me" },
       },
       {
@@ -127,6 +139,37 @@ test("forwards inbound messages and skips self messages", async () => {
 
   assert.equal(calls.length, 1);
   assert.equal((calls[0] as Record<string, unknown>).provider_message_id, "msg-1");
+});
+
+test("forwards self messages not sent by this gateway", async () => {
+  const socket = new FakeSocket();
+  const calls: unknown[] = [];
+  const gateway = makeGateway(socket, calls);
+
+  await gateway.start();
+  socket.ev.emit("messages.upsert", {
+    messages: [
+      {
+        key: { id: "human-phone-msg", remoteJid: "1203630-group@g.us", fromMe: true },
+        message: {
+          imageMessage: {
+            url: "https://example.com/image.enc",
+            mimetype: "image/jpeg",
+            mediaKey: Buffer.from("media-key-1").toString("base64"),
+          },
+        },
+      },
+    ],
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(calls.length, 1);
+  assert.equal((calls[0] as Record<string, unknown>).provider_message_id, "human-phone-msg");
+  const media = (calls[0] as { message: { media: Array<Record<string, unknown>> } }).message.media;
+  assert.equal(media.length, 1);
+  assert.equal(media[0]?.inline_data_base64, socket.mediaBytes.toString("base64"));
+  assert.equal(media[0]?.byte_size, socket.mediaBytes.byteLength);
 });
 
 test("group and outbound methods delegate to socket", async () => {
@@ -160,21 +203,4 @@ test("logged out close does not reconnect", async () => {
   });
 
   assert.equal(gateway.connectionSnapshot().last_event, "logged_out");
-});
-
-test("detects legacy Neonize sessions when Baileys credentials are missing", async () => {
-  const socket = new FakeSocket();
-  const calls: unknown[] = [];
-  const tempDir = mkdtempSync(join(tmpdir(), "kuuna-gateway-"));
-  const legacyPath = join(tempDir, "neonize.db");
-  writeFileSync(legacyPath, "legacy");
-  const gateway = makeGateway(socket, calls, {
-    authDir: join(tempDir, "baileys-auth"),
-    legacyNeonizeDatabasePath: legacyPath,
-  });
-
-  await gateway.start();
-
-  assert.equal(gateway.connectionSnapshot().last_event, "legacy_session_detected");
-  assert.equal(gateway.connectionSnapshot().last_error?.includes("fresh WhatsApp pairing"), true);
 });

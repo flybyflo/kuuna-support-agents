@@ -3,18 +3,11 @@ import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status/status-badge";
 import { GroupWorkspaceTabs } from "@/components/inbox/group-workspace-tabs";
 import type { InboxGroupEntry } from "@/lib/inbox/filters";
+import { initialsFromTitle } from "@/lib/utils/initials";
 
 type GroupHeaderProps = {
   entry: InboxGroupEntry;
 };
-
-function initialsFromTitle(title: string): string {
-  const trimmed = title.trim();
-  if (!trimmed) return "??";
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
 
 function normalizePhone(phone: string): string {
   const trimmed = phone.trim();

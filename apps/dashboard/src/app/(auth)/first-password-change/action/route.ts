@@ -1,5 +1,5 @@
 import { getSession, setSessionCookie } from "@/lib/auth/session";
-import { createBackendTrpcClient } from "@/lib/backend/client";
+import { createBackendTrpcClient, dashboardAuthErrorFromUnknown } from "@/lib/backend/client";
 
 function redirect303(path: string, request: Request) {
   const location = new URL(path, request.url);
@@ -11,6 +11,15 @@ function redirect303(path: string, request: Request) {
   });
 }
 
+function passwordChangeErrorRedirect(code: string, request: Request, reason?: string): Response {
+  const params = new URLSearchParams({ error: code });
+  const trimmedReason = reason?.replace(/^password policy violation:\s*/i, "").trim();
+  if (trimmedReason) {
+    params.set("reason", trimmedReason.slice(0, 240));
+  }
+  return redirect303(`/first-password-change?${params.toString()}`, request);
+}
+
 export async function POST(request: Request): Promise<Response> {
   const formData = await request.formData();
   const currentPassword = String(formData.get("currentPassword") ?? "");
@@ -18,15 +27,15 @@ export async function POST(request: Request): Promise<Response> {
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
 
   if (!currentPassword) {
-    return redirect303("/first-password-change?error=current-password", request);
+    return passwordChangeErrorRedirect("current-password", request);
   }
 
   if (nextPassword.length < 12) {
-    return redirect303("/first-password-change?error=weak-password", request);
+    return passwordChangeErrorRedirect("weak-password", request);
   }
 
   if (nextPassword !== confirmPassword) {
-    return redirect303("/first-password-change?error=mismatch", request);
+    return passwordChangeErrorRedirect("mismatch", request);
   }
 
   const session = await getSession();
@@ -49,6 +58,8 @@ export async function POST(request: Request): Promise<Response> {
     return redirect303("/overview?passwordChanged=1", request);
   } catch (error) {
     console.error("[dashboard-auth] password change failed", error);
-    return redirect303("/first-password-change?error=db", request);
+    const authError = dashboardAuthErrorFromUnknown(error);
+    const code = authError?.code ?? "db";
+    return passwordChangeErrorRedirect(code, request, authError?.message);
   }
 }

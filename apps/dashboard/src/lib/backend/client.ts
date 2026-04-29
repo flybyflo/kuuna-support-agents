@@ -20,9 +20,35 @@ export function getInternalOpsToken(): string | undefined {
   return process.env.DASHBOARD_INTERNAL_OPS_TOKEN ?? process.env.INTERNAL_OPS_TOKEN;
 }
 
-export function createBackendTrpcClient(token?: string) {
+export function createBackendTrpcClient(token?: string, headers?: Record<string, string>) {
   const baseUrl = BACKEND_URL_CANDIDATES[0] ?? "http://backend:8000";
-  return createKuunaTrpcClient({ baseUrl, token });
+  return createKuunaTrpcClient({ baseUrl, token, headers });
+}
+
+export type DashboardAuthErrorCode =
+  | "invalid"
+  | "inactive"
+  | "locked"
+  | "current-password"
+  | "weak-password"
+  | "backend";
+
+export class DashboardAuthError extends Error {
+  constructor(
+    readonly code: DashboardAuthErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "DashboardAuthError";
+  }
+}
+
+export function createInternalBackendTrpcClient() {
+  const internalToken = getInternalOpsToken();
+  if (!internalToken) {
+    throw new Error("missing internal ops token");
+  }
+  return createBackendTrpcClient(undefined, { "X-Internal-Token": internalToken });
 }
 
 export async function createSessionBackendTrpcClient() {
@@ -35,51 +61,9 @@ export async function getOptionalSessionBackendTrpcClient() {
   return session ? createBackendTrpcClient(session.backendAccessToken) : null;
 }
 
-export async function callInternalBackend<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const internalToken = getInternalOpsToken();
-  if (!internalToken) {
-    throw new Error("missing internal ops token");
-  }
-
-  const errors: string[] = [];
-  for (const backendBaseUrl of BACKEND_URL_CANDIDATES) {
-    const normalizedBaseUrl = backendBaseUrl.replace(/\/$/, "");
-    try {
-      const headers = new Headers(init.headers);
-      headers.set("X-Internal-Token", internalToken);
-      const response = await fetch(`${normalizedBaseUrl}${path}`, {
-        ...init,
-        headers,
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        const body = await response.text();
-        errors.push(`${normalizedBaseUrl} -> ${response.status}: ${body}`);
-        continue;
-      }
-
-      return (await response.json()) as T;
-    } catch (error) {
-      errors.push(`${normalizedBaseUrl} -> ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  throw new Error(errors.join(" | ") || "no-backend-url");
-}
-
 export async function bootstrapRequiredAdmin(): Promise<void> {
   try {
-    await callInternalBackend<{ ok: boolean }>("/internal/admin/bootstrap", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
+    await createInternalBackendTrpcClient().internal.adminBootstrap.mutate();
   } catch (error) {
     console.warn("[dashboard-auth] admin bootstrap failed", error);
   }
@@ -104,11 +88,42 @@ export async function loginWithBackend(email: string, password: string) {
         ...expiry,
       };
     } catch (error) {
+      const authError = dashboardAuthErrorFromUnknown(error);
+      if (authError && authError.code !== "backend") {
+        throw authError;
+      }
       errors.push(`${normalizedBaseUrl} -> ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  throw new Error(errors.join(" | ") || "no-backend-url");
+  throw new DashboardAuthError("backend", errors.join(" | ") || "no-backend-url");
+}
+
+export function dashboardAuthErrorFromUnknown(error: unknown): DashboardAuthError | null {
+  const message = errorMessage(error).toLowerCase();
+  if (message.includes("invalid current password")) {
+    return new DashboardAuthError("current-password", "invalid current password");
+  }
+  if (message.includes("password policy violation")) {
+    return new DashboardAuthError("weak-password", errorMessage(error));
+  }
+  if (message.includes("invalid credentials")) {
+    return new DashboardAuthError("invalid", "invalid credentials");
+  }
+  if (message.includes("inactive user")) {
+    return new DashboardAuthError("inactive", "inactive user");
+  }
+  if (message.includes("user locked")) {
+    return new DashboardAuthError("locked", "user locked");
+  }
+  return null;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 function displayNameFromEmail(email: string): string {

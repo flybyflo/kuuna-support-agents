@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { DbLike } from "../db/client.js";
 import {
   embeddings,
+  knowledgeCustomerDocs,
   knowledgeGroupDocs,
   knowledgeVersions,
   retrievalChunks,
@@ -48,7 +49,12 @@ export async function processKnowledgeIndexingJob(
     .delete(retrievalChunks)
     .where(and(eq(retrievalChunks.sourceType, "knowledge_version"), eq(retrievalChunks.sourceId, version.id)));
 
-  const providerGroupId = version.scope === "group" ? await providerGroupIdForVersion(database, version.docRefId) : null;
+  const providerGroupId =
+    version.scope === "group"
+      ? await providerGroupIdForGroupVersion(database, version.docRefId)
+      : version.scope === "customer"
+        ? await providerGroupIdForCustomerVersion(database, version.docRefId)
+        : null;
   let chunkCount = 0;
 
   for (const [index, chunkContent] of chunks.entries()) {
@@ -100,11 +106,20 @@ export async function processKnowledgeIndexingJob(
   return { indexed: chunkCount > 0, chunkCount };
 }
 
-async function providerGroupIdForVersion(database: DbLike, docRefId: string): Promise<string | null> {
+async function providerGroupIdForGroupVersion(database: DbLike, docRefId: string): Promise<string | null> {
   const [doc] = await database
     .select({ providerGroupId: knowledgeGroupDocs.providerGroupId })
     .from(knowledgeGroupDocs)
     .where(eq(knowledgeGroupDocs.id, docRefId))
+    .limit(1);
+  return doc?.providerGroupId ?? null;
+}
+
+async function providerGroupIdForCustomerVersion(database: DbLike, docRefId: string): Promise<string | null> {
+  const [doc] = await database
+    .select({ providerGroupId: knowledgeCustomerDocs.providerGroupId })
+    .from(knowledgeCustomerDocs)
+    .where(eq(knowledgeCustomerDocs.id, docRefId))
     .limit(1);
   return doc?.providerGroupId ?? null;
 }

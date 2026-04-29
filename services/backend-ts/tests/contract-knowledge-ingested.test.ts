@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
+import { knowledgeCustomerDocs, mediaAssets, messages, messageVersions, transcripts } from "../src/db/schema.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
@@ -135,6 +135,40 @@ test("contract: ingested docs status follows pending media and transcript chunks
   assert.equal(common[0]?.scope, "common");
   assert.equal(common[0]?.chunk_count, 2);
   assert.equal(common[0]?.status, "processing");
+});
+
+test("contract: customer docs list all docs for provider group", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const caller = await authedCaller(harness);
+
+  await harness.db.insert(knowledgeCustomerDocs).values([
+    {
+      providerGroupId: "customer-group@g.us",
+      customerKey: "customer-a",
+      docKey: "customer-a-policy",
+      title: "Customer A Policy",
+    },
+    {
+      providerGroupId: "customer-group@g.us",
+      customerKey: "customer-b",
+      docKey: "customer-b-policy",
+      title: "Customer B Policy",
+    },
+    {
+      providerGroupId: "other-group@g.us",
+      customerKey: "customer-a",
+      docKey: "other-policy",
+      title: "Other Policy",
+    },
+  ]);
+
+  const rows = await caller.knowledge.customerDocs({ providerGroupId: "customer-group@g.us" });
+
+  assert.deepEqual(
+    rows.map((row) => row.doc_key).sort(),
+    ["customer-a-policy", "customer-b-policy"],
+  );
 });
 
 async function authedCaller(harness: Awaited<ReturnType<typeof createContractHarness>>) {

@@ -10,6 +10,7 @@ const defaultTools = [
   ["echo", "Echo", "Returns the provided input text unchanged. Useful for connectivity checks.", "read", "utility"],
   ["uppercase", "Uppercase", "Transforms text to uppercase for deterministic formatting tests.", "read", "utility"],
   ["context_lookup", "Context Lookup", "Reads a specific key from runtime context assembled for the current message.", "read", "context"],
+  ["media_analyze", "Analyze Media", "Reads image and audio insights generated inside the isolated chat runtime.", "read", "media"],
   ["knowledge_search", "Knowledge Search", "Searches published group/common knowledge and returns ranked passages.", "read", "knowledge"],
   ["message_history", "Message History", "Reads recent group conversation history for retrieval-augmented responses.", "read", "context"],
   ["todo_create", "Create Todo", "Creates a staff todo in the dashboard for this group.", "write", "workflow"],

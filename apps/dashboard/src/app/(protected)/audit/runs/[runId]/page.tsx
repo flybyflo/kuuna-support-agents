@@ -34,7 +34,10 @@ export default async function RuntimeRunDetailPage({ params }: { params: Params 
 
   return (
     <div className="flex flex-col gap-8">
-      <AutoRefresh intervalMs={refreshIntervalMs} />
+      <AutoRefresh
+        intervalMs={refreshIntervalMs}
+        eventTypes={["agent_run.updated", "tool_invocation.created"]}
+      />
       <PageHeader
         title="Runtime run"
         description="Detailed execution record for one container run."
@@ -101,4 +104,3 @@ export default async function RuntimeRunDetailPage({ params }: { params: Params 
     </div>
   );
 }
-

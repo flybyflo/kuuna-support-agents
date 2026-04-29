@@ -49,8 +49,8 @@ if [[ -z "$TABLE_COUNT" || "$TABLE_COUNT" -lt 1 ]]; then
   exit 1
 fi
 
-if ! compose exec -T postgres psql -U postgres -d "$RESTORE_DB" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='alembic_version';" | grep -q '^1$'; then
-  echo "restore sanity check failed: alembic_version missing" >&2
+if ! compose exec -T postgres psql -U postgres -d "$RESTORE_DB" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='__kuuna_drizzle_migrations';" | grep -q '^1$'; then
+  echo "restore sanity check failed: migration table missing" >&2
   exit 1
 fi
 

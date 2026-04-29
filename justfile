@@ -5,7 +5,11 @@ compose_file := "infra/compose/docker-compose.dev.yml"
 default:
     @just --list
 
+runtime-image:
+    docker build -f services/runtime-agent-ts/Dockerfile -t kuuna-runtime-agent-ts:dev .
+
 up:
+    just runtime-image
     docker compose -f {{compose_file}} up --build
 
 down:
@@ -50,23 +54,3 @@ smoke-dr-restore:
 smoke-all:
     just smoke-docker
     just smoke-dr-restore
-
-# Client-facing daily report (git-backed time estimate; optional gh metadata)
-daily-report date="" tz="+01:00" gap="120" hours="0":
-    # Usage:
-    #   just daily-report                       # today (in tz), gap=120m
-    #   just daily-report date=2026-04-23       # explicit day
-    #   just daily-report date=2026-04-23 gap=90 tz=+01:00
-    if [ -n "{{date}}" ]; then \
-      if [ "{{hours}}" != "0" ] && [ -n "{{hours}}" ]; then \
-        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --date "{{date}}" --tz-offset "{{tz}}" --gap-minutes "{{gap}}" --engineering-hours "{{hours}}"; \
-      else \
-        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --date "{{date}}" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
-      fi; \
-    else \
-      if [ "{{hours}}" != "0" ] && [ -n "{{hours}}" ]; then \
-        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --tz-offset "{{tz}}" --gap-minutes "{{gap}}" --engineering-hours "{{hours}}"; \
-      else \
-        python3 scripts/kuuna_daily_report.py --repo "$(pwd)" --tz-offset "{{tz}}" --gap-minutes "{{gap}}"; \
-      fi; \
-    fi

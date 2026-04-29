@@ -7,45 +7,29 @@ import { eq } from "drizzle-orm";
 import { resetSettingsForTests } from "../src/config.js";
 import { auditEvents, groupTemplates, templateBuilds, templateVersions } from "../src/db/schema.js";
 import { processTemplateBuildJob } from "../src/jobs/template-build.js";
-import { buildServer } from "../src/server.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
 const skipReason = contractDatabaseUrl
   ? false
   : "set BACKEND_TS_CONTRACT_DATABASE_URL to run backend-ts contract tests";
 
-test("contract: internal template build endpoint queues published version", { skip: skipReason }, async (t) => {
+test("contract: template build tRPC queues published version", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
-  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
-  resetSettingsForTests();
-  t.after(() => {
-    delete process.env.INTERNAL_OPS_TOKEN;
-    resetSettingsForTests();
-  });
-  const app = await buildServer({ db: harness.db, enqueueJob: async (name, data, jobId) => {
-    harness.jobs.push({ name, data, jobId });
-    return jobId ?? name;
-  } });
-  t.after(() => app.close());
-
-  const actor = await harness.seedUser({ email: "builder@example.com", password: "LongPassword123!" });
+  const actor = await harness.seedUser({ email: "builder@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
   const seeded = await seedTemplate(harness, { status: "published" });
 
-  const response = await app.inject({
-    method: "POST",
-    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
-    headers: { "x-internal-token": "template-build-token" },
-    payload: {
-      actor_user_id: actor.id,
-      base_image: "ghcr.io/kuuna/runtime-base:1",
-      allowed_tools: [" Search ", "SEND_WHATSAPP"],
-    },
+  const body = await caller.templates.queueBuild({
+    templateId: seeded.templateId,
+    versionId: seeded.versionId,
+    actorUserId: actor.id,
+    baseImage: "ghcr.io/kuuna/runtime-base:1",
+    allowedTools: [" Search ", "SEND_WHATSAPP"],
   });
 
-  assert.equal(response.statusCode, 201);
-  const body = response.json() as Record<string, unknown>;
   assert.equal(body.template_id, seeded.templateId);
   assert.equal(body.template_version_id, seeded.versionId);
   assert.equal(body.status, "queued");
@@ -67,52 +51,43 @@ test("contract: internal template build endpoint queues published version", { sk
   assert.equal(event.entityId, body.id);
 });
 
-test("contract: internal template build endpoint rejects unpublished or missing versions", { skip: skipReason }, async (t) => {
+test("contract: template build tRPC rejects unpublished or missing versions", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
-  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
-  resetSettingsForTests();
-  t.after(() => {
-    delete process.env.INTERNAL_OPS_TOKEN;
-    resetSettingsForTests();
-  });
-  const app = await buildServer({ db: harness.db });
-  t.after(() => app.close());
-
-  const actor = await harness.seedUser({ email: "builder2@example.com", password: "LongPassword123!" });
+  const actor = await harness.seedUser({ email: "builder2@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder2@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
   const seeded = await seedTemplate(harness, { status: "draft" });
 
-  const unpublished = await app.inject({
-    method: "POST",
-    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
-    headers: { "x-internal-token": "template-build-token" },
-    payload: { actor_user_id: actor.id, base_image: "node:22-alpine" },
-  });
-  assert.equal(unpublished.statusCode, 400);
-  assert.match(unpublished.body, /only published template versions can be built/);
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: seeded.versionId,
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+    }),
+    /only published template versions can be built/,
+  );
 
-  const missing = await app.inject({
-    method: "GET",
-    url: `/internal/templates/${seeded.templateId}/versions/${randomUUID()}/builds`,
-    headers: { "x-internal-token": "template-build-token" },
-  });
-  assert.equal(missing.statusCode, 404);
-  assert.match(missing.body, /template version not found/);
+  await assert.rejects(
+    async () => caller.templates.queueBuild({
+      templateId: seeded.templateId,
+      versionId: randomUUID(),
+      actorUserId: actor.id,
+      baseImage: "node:22-alpine",
+    }),
+    /template version not found/,
+  );
 });
 
-test("contract: internal template build list and detail mirror response shape", { skip: skipReason }, async (t) => {
+test("contract: template build tRPC list mirrors response shape", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
-  process.env.INTERNAL_OPS_TOKEN = "template-build-token";
-  resetSettingsForTests();
-  t.after(() => {
-    delete process.env.INTERNAL_OPS_TOKEN;
-    resetSettingsForTests();
-  });
-  const app = await buildServer({ db: harness.db });
-  t.after(() => app.close());
+  await harness.seedUser({ email: "builder3@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder3@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
 
   const seeded = await seedTemplate(harness, { status: "published" });
   const [build] = await harness.db
@@ -129,25 +104,11 @@ test("contract: internal template build list and detail mirror response shape", 
     .returning();
   assert.ok(build);
 
-  const list = await app.inject({
-    method: "GET",
-    url: `/internal/templates/${seeded.templateId}/versions/${seeded.versionId}/builds`,
-    headers: { "x-internal-token": "template-build-token" },
-  });
-  assert.equal(list.statusCode, 200);
-  const listBody = list.json() as { items: Array<Record<string, unknown>> };
-  assert.equal(listBody.items.length, 1);
-  assert.equal(listBody.items[0]?.id, build.id);
-  assert.equal(listBody.items[0]?.image_ref, "kuuna/template-support@sha256:abc");
-  assert.equal(typeof listBody.items[0]?.created_at, "string");
-
-  const detail = await app.inject({
-    method: "GET",
-    url: `/internal/template-builds/${build.id}`,
-    headers: { "x-internal-token": "template-build-token" },
-  });
-  assert.equal(detail.statusCode, 200);
-  assert.equal((detail.json() as Record<string, unknown>).id, build.id);
+  const list = await caller.templates.builds({ templateId: seeded.templateId, versionId: seeded.versionId });
+  assert.equal(list.length, 1);
+  assert.equal(list[0]?.id, build.id);
+  assert.equal(list[0]?.image_ref, "kuuna/template-support@sha256:abc");
+  assert.equal(typeof list[0]?.created_at, "string");
 });
 
 test("contract: template build job invalid or unknown id mutates nothing", { skip: skipReason }, async (t) => {
