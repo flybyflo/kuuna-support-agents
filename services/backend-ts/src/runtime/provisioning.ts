@@ -431,10 +431,7 @@ function assertManagedContainerIdentity(container: DockerContainerInspect, ident
     );
   }
   if (
-    labels[providerGroupLabel] !== identity.providerGroupId ||
-    labels[bindingLabel] !== identity.bindingId ||
-    labels[agentInstanceLabel] !== identity.agentInstanceId ||
-    labels[secretsRefLabel] !== identity.secretsRef
+    labels[providerGroupLabel] !== identity.providerGroupId
   ) {
     throw new RuntimeProvisioningError(
       "runtime_container_identity_mismatch",

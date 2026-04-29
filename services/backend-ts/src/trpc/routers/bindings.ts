@@ -197,7 +197,12 @@ export const bindingsRouter = createTRPCRouter({
       }
       await ctx.db
         .update(agentInstances)
-        .set({ status: "stopped", updatedAt: new Date() })
+        .set({
+          status: "stopped",
+          runtimeContainerName: null,
+          runtimeBaseUrl: null,
+          updatedAt: new Date(),
+        })
         .where(eq(agentInstances.groupBindingId, binding.id));
       return {
         id: binding.id,

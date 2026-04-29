@@ -120,6 +120,14 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
   const harness = await createContractHarness();
   t.after(() => harness.close());
   const seeded = await seedRuntimeScenario(harness, { messageText: "@agent help with my tax form" });
+  const [asset] = await harness.db.insert(mediaAssets).values({
+    messageId: seeded.messageId,
+    providerMediaId: "media-inbound",
+    mimeType: "image/jpeg",
+    status: "ready",
+    metadataJson: { preview_url: "data:image/jpeg;base64,aGVsbG8=" },
+  }).returning();
+  assert.ok(asset);
 
   const result = await processInboundExecutionJob(
     harness.db,
@@ -134,7 +142,10 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
         harness.jobs.push({ name, data, jobId });
         return jobId ?? name;
       },
-      runtimeAgentCaller: async () => ({
+      runtimeAgentCaller: async (_runtimeBaseUrl, request) => {
+        assert.equal(request.context.media_attachments?.[0]?.media_asset_id, asset.id);
+        assert.equal(request.context.media_attachments?.[0]?.preview_url, "data:image/jpeg;base64,aGVsbG8=");
+        return {
           success: true,
           prompt: "prompt",
           system_prompt: "system",
@@ -146,7 +157,8 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
           tool_results: [],
           media_insights: [],
           error: null,
-        }),
+        };
+      },
     },
   );
 

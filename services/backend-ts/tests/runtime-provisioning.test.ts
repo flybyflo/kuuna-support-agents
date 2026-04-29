@@ -263,6 +263,29 @@ test("provisionRuntimeContainer recreates stale managed containers", async () =>
   });
 });
 
+test("provisionRuntimeContainer recreates same-chat containers with stale binding identity", async () => {
+  await withHealthyRuntime(async () => {
+    const runtimeIdentity = identity("group-a@g.us");
+    const oldIdentity: RuntimeIdentity = {
+      ...runtimeIdentity,
+      bindingId: randomUUID(),
+      agentInstanceId: randomUUID(),
+      secretsRef: "runtime/old-group-a",
+    };
+    const docker = new FakeDockerClient();
+    docker.container = matchingContainer(oldIdentity, true);
+
+    await provisionRuntimeContainer(docker, {
+      identity: runtimeIdentity,
+      image: "kuuna-runtime-agent-ts:dev",
+      settings: baseSettings,
+    });
+
+    assert.deepEqual(docker.removedContainers, ["container-existing"]);
+    assert.equal(docker.createdPayloads.length, 1);
+  });
+});
+
 test("buildRuntimeEnv refuses extra env overrides for reserved runtime identity", () => {
   const settings: Settings = {
     ...baseSettings,

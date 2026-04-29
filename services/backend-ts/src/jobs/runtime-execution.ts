@@ -81,17 +81,22 @@ export async function processInboundExecutionJob(
 
   const latest = await latestMessageVersion(database, resolved.message);
   const userText = extractUserText(latest);
+  const links = await messageLinkContexts(database, resolved.message.id);
+  const mediaAttachments = await mediaAttachmentContexts(database, resolved.message.id);
+  const queryText = latest
+    ? buildPassiveAnalysisQueryText(database, resolved.message, latest, links, mediaAttachments)
+    : userText;
   const allowedTools = extractAllowedTools(resolved.templateVersion.toolsConfig);
   const modelPath = extractModelCandidates(resolved.templateVersion.modelConfig);
   const reasoningEffort = extractReasoningEffort(resolved.templateVersion.modelConfig);
-  const retrievalHits = userText ? await retrieveRuntimeContext(database, input.providerGroupId, userText, 8) : [];
+  const retrievalHits = queryText ? await retrieveRuntimeContext(database, input.providerGroupId, queryText, 8) : [];
   const retrievalRefs = buildRetrievalRefs(retrievalHits);
 
   let reply = inboundConfirmationText;
   let replyModelPath = modelPath.slice(0, 1);
   let agentRunId: string | null = null;
 
-  if (userText) {
+  if (userText || links.length > 0 || mediaAttachments.length > 0) {
     const runtimeResult = await runViaRuntimeAgent(
       database,
       {
@@ -99,7 +104,7 @@ export async function processInboundExecutionJob(
         providerGroupId: input.providerGroupId,
         traceId: input.traceId ?? null,
         systemPrompt: buildSystemPrompt(resolved.templateVersion.systemPrompt, allowedTools),
-        userPrompt: buildUserPrompt(userText, retrievalHits),
+        userPrompt: buildUserPrompt(buildInboundUserText(userText, links, mediaAttachments), retrievalHits),
         modelPath,
         reasoningEffort,
         allowedTools,
@@ -107,6 +112,10 @@ export async function processInboundExecutionJob(
         retrievalHits,
         bindingId: resolved.binding.id,
         agentInstanceId: resolved.agentInstance.id,
+        extraContext: {
+          links,
+          media_attachments: mediaAttachments,
+        },
       },
       options,
     );
@@ -833,6 +842,21 @@ function buildPassiveAnalysisUserPrompt(
   return lines.join("\n");
 }
 
+function buildInboundUserText(
+  userText: string,
+  links: RuntimeLink[],
+  mediaAttachments: RuntimeMediaAttachment[],
+): string {
+  const lines = [userText || "(no text)"];
+  if (links.length) {
+    lines.push("", "links:", ...links.map((link) => `- ${link.title ? `${link.title}: ` : ""}${link.normalized_url || link.url}`));
+  }
+  if (mediaAttachments.length) {
+    lines.push("", "media_attachments:", ...mediaAttachments.map((asset) => `- ${mediaAttachmentText(asset)}`));
+  }
+  return lines.join("\n");
+}
+
 async function messageLinkContexts(database: DbLike, messageId: string): Promise<RuntimeLink[]> {
   const rows = await database.select().from(messageLinks).where(eq(messageLinks.messageId, messageId)).orderBy(asc(messageLinks.createdAt));
   return rows.map((link) => ({
@@ -880,10 +904,7 @@ function todoRequiredReason(links: RuntimeLink[], mediaAttachments: RuntimeMedia
 }
 
 function safePreviewUrl(value: unknown): string | null {
-  const preview = optionalString(value);
-  if (!preview) return null;
-  if (preview.startsWith("data:")) return null;
-  return preview;
+  return optionalString(value);
 }
 
 function extractAllowedTools(toolsConfig: unknown): string[] {
