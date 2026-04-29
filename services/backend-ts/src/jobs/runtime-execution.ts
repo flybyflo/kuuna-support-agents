@@ -42,7 +42,7 @@ import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inboundConfirmationText = "Danke, wir haben deine Nachricht erhalten.";
 const defaultSystemPrompt = "Du bist ein hilfreicher Support-Agent für eine WhatsApp-Gruppe. Antworte präzise, freundlich und mit klaren nächsten Schritten.";
-const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Media attachments and links always require staff follow-up: inspect the provided media/link context and call todo_create. For plain text without media or links, decide whether staff follow-up is needed. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
+const passiveAnalysisSystemPrompt = "You are an intake triage agent for a WhatsApp support group. Do not write a reply to the WhatsApp user. Media attachments and links always require staff follow-up, and the backend creates that deterministic todo before analysis; inspect the provided media/link context and enrich the decision summary. For plain text without media or links, decide whether staff follow-up is needed and call todo_create when needed. Use todo_list to avoid duplicates. Return a compact JSON decision summary.";
 const defaultModel = "gpt-5.5";
 const defaultReasoningEffort = "medium";
 const passiveAnalysisTools = new Set(["knowledge_search", "message_history", "todo_create", "todo_update", "todo_list"]);

@@ -188,7 +188,7 @@ export const knowledgeRouter = createTRPCRouter({
       const rows = await ctx.db
         .select()
         .from(knowledgeCustomerDocs)
-        .where(eq(knowledgeCustomerDocs.customerKey, input.providerGroupId))
+        .where(eq(knowledgeCustomerDocs.providerGroupId, input.providerGroupId))
         .orderBy(desc(knowledgeCustomerDocs.updatedAt));
       return rows.map((doc) => ({
         id: doc.id,
