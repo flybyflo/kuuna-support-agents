@@ -19,7 +19,7 @@ export function RealtimeProvider({ baseUrl, token, children }: RealtimeProviderP
     });
     const subscription = client.runtimeEvents.onEvent.subscribe(undefined, {
       onData(event) {
-        window.dispatchEvent(new CustomEvent("kuuna:runtime-event", { detail: event }));
+        window.dispatchEvent(new CustomEvent("kuuna:runtime-event", { detail: unwrapTrackedEvent(event) }));
       },
       onError(error) {
         console.warn("[kuuna-realtime] subscription failed", error);
@@ -31,4 +31,17 @@ export function RealtimeProvider({ baseUrl, token, children }: RealtimeProviderP
   }, [baseUrl, token]);
 
   return children;
+}
+
+function unwrapTrackedEvent(event: unknown): unknown {
+  if (
+    event &&
+    typeof event === "object" &&
+    "data" in event &&
+    typeof event.data === "object" &&
+    event.data !== null
+  ) {
+    return event.data;
+  }
+  return event;
 }
