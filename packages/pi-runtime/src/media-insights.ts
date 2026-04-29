@@ -54,7 +54,7 @@ async function analyzeAttachment(
   fetchClient: FetchLike,
 ): Promise<RuntimeMediaInsight> {
   const kind = mediaKind(attachment.mime_type);
-  if (kind !== "image" && kind !== "audio") {
+  if (kind === "file") {
     return {
       media_asset_id: attachment.media_asset_id,
       mime_type: attachment.mime_type,
@@ -83,9 +83,9 @@ async function analyzeAttachment(
     if (!sourceUrl) {
       throw new Error("media_url_missing");
     }
-    const media = await loadMedia(sourceUrl, attachment.mime_type, fetchClient);
     if (kind === "image") {
-      const summary = await analyzeImage(media.dataUrl, apiKey, fetchClient);
+      const media = await loadMedia(sourceUrl, attachment.mime_type, fetchClient);
+      const summary = await analyzeImage(media.dataUrl, apiKey, fetchClient, imageInsightPrompt());
       return {
         media_asset_id: attachment.media_asset_id,
         mime_type: attachment.mime_type,
@@ -96,13 +96,20 @@ async function analyzeAttachment(
       };
     }
 
-    const transcript = await transcribeAudio(
-      media.bytes,
-      media.contentType,
-      attachment.file_name ?? "audio",
-      apiKey,
-      fetchClient,
-    );
+    if (kind === "video") {
+      const videoInsight = await analyzeVideoAttachment(attachment, apiKey, fetchClient);
+      return {
+        media_asset_id: attachment.media_asset_id,
+        mime_type: attachment.mime_type,
+        kind,
+        status: "ready",
+        summary: videoInsight,
+        transcript: videoInsight,
+      };
+    }
+
+    const media = await loadMedia(sourceUrl, attachment.mime_type, fetchClient);
+    const transcript = await transcribeAudio(media.bytes, media.contentType, attachment.file_name ?? "audio", apiKey, fetchClient);
     return {
       media_asset_id: attachment.media_asset_id,
       mime_type: attachment.mime_type,
@@ -183,6 +190,7 @@ async function analyzeImage(
   imageDataUrl: string,
   apiKey: string,
   fetchClient: FetchLike,
+  instruction: string,
 ): Promise<string> {
   const response = await fetchClient(`${openAiBaseUrl()}/chat/completions`, {
     method: "POST",
@@ -198,7 +206,7 @@ async function analyzeImage(
           content: [
             {
               type: "text",
-              text: "Analyze this WhatsApp image for a support staff todo. Summarize visible text, entities, dates, amounts, and the concrete follow-up needed. Be concise.",
+              text: instruction,
             },
             {
               type: "image_url",
@@ -220,6 +228,34 @@ async function analyzeImage(
     return content.trim();
   }
   throw new Error("openai_vision_empty_response");
+}
+
+async function analyzeVideoAttachment(
+  attachment: RuntimeMediaAttachment,
+  apiKey: string,
+  fetchClient: FetchLike,
+): Promise<string> {
+  if (attachment.preview_url) {
+    const preview = await loadMedia(attachment.preview_url, "image/jpeg", fetchClient);
+    if (preview.contentType.toLowerCase().startsWith("image/")) {
+      return analyzeImage(preview.dataUrl, apiKey, fetchClient, videoPreviewInsightPrompt());
+    }
+  }
+
+  const sourceUrl = attachment.object_url ?? attachment.preview_url;
+  if (!sourceUrl) {
+    throw new Error("media_url_missing");
+  }
+  const media = await loadMedia(sourceUrl, attachment.mime_type, fetchClient);
+  return transcribeAudio(media.bytes, media.contentType, attachment.file_name ?? "video", apiKey, fetchClient);
+}
+
+function imageInsightPrompt(): string {
+  return "Analyze this WhatsApp image for a support staff todo. Summarize visible text, entities, dates, amounts, and the concrete follow-up needed. Be concise.";
+}
+
+function videoPreviewInsightPrompt(): string {
+  return "Analyze this WhatsApp video preview frame for a support staff todo. Summarize visible text, entities, dates, amounts, and the concrete follow-up needed. Be concise and say that this is based on the preview frame.";
 }
 
 async function transcribeAudio(
