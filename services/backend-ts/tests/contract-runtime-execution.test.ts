@@ -108,7 +108,14 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   const [transcript] = await harness.db.select().from(transcripts).where(eq(transcripts.mediaAssetId, asset.id)).limit(1);
   assert.ok(transcript);
   assert.equal(transcript.textContent, "Invoice screenshot for staff review.");
-  assert.equal(harness.jobs.some((job) => job.name === "retrieval_indexing"), true);
+  assert.equal(
+    harness.jobs.some(
+      (job) =>
+        job.name === "retrieval_indexing" &&
+        job.jobId?.endsWith("_runtime_insight"),
+    ),
+    true,
+  );
 
   const [decision] = await harness.db.select().from(messageDecisions).where(eq(messageDecisions.messageId, seeded.messageId)).limit(1);
   assert.ok(decision);

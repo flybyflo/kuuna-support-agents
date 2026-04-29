@@ -547,7 +547,7 @@ async function persistRuntimeMediaInsights(
     await (input.enqueueJob ?? enqueueKuunaJob)(
       "retrieval_indexing",
       { source_type: "media_asset", source_id: insight.media_asset_id, trace_id: input.traceId },
-      `retrieval_indexing_media_asset_${jobToken(insight.media_asset_id)}_${jobToken(input.traceId ?? insight.media_asset_id)}`,
+      `retrieval_indexing_media_asset_${jobToken(insight.media_asset_id)}_${jobToken(input.traceId ?? insight.media_asset_id)}_runtime_insight`,
     );
   }
 }
