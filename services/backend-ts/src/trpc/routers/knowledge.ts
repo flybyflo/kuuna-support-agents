@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   clientProfiles,
+  groupBindings,
   groupClientProfiles,
   knowledgeCommonDocs,
   knowledgeCustomerDocs,
@@ -15,10 +16,12 @@ import {
   mediaAssets,
   messages,
   messageVersions,
+  templateVersions,
   transcripts,
 } from "../../db/schema.js";
 import type { DbLike } from "../../db/client.js";
 import { enqueueKuunaJob } from "../../jobs/queues.js";
+import { extractKnowledgeFilter, type KnowledgeFilter } from "../../jobs/retrieval.js";
 import { createTRPCRouter, protectedProcedure, roleProcedure } from "../init.js";
 
 const commonDocInput = z.object({
@@ -56,6 +59,22 @@ type GroupIngestStats = {
   updatedAt: Date | null;
   hasPendingMedia: boolean;
   hasFailedMedia: boolean;
+};
+
+type PrivateKnowledgeDocKeyRow = {
+  doc_key: string;
+  title: string;
+  scopes: Array<"group" | "customer" | "personal">;
+  group_count: number;
+  customer_count: number;
+  personal_count: number;
+  updated_at: string;
+};
+
+const noAgentKnowledgeFilter: KnowledgeFilter = {
+  commonDocKeys: "none",
+  groupDocKeys: "none",
+  includeGroupKnowledge: false,
 };
 
 export const knowledgeRouter = createTRPCRouter({
@@ -110,6 +129,16 @@ export const knowledgeRouter = createTRPCRouter({
       limit: z.number().int().min(1).max(200).default(100),
     }))
     .query(async ({ ctx, input }) => {
+      const [binding] = await ctx.db
+        .select({ templateVersion: templateVersions })
+        .from(groupBindings)
+        .innerJoin(templateVersions, eq(templateVersions.id, groupBindings.templateVersionId))
+        .where(and(eq(groupBindings.providerGroupId, input.providerGroupId), eq(groupBindings.status, "active")))
+        .limit(1);
+      const agentKnowledgeFilter =
+        binding && templateAllowsTool(binding.templateVersion.toolsConfig, "knowledge_search")
+          ? extractKnowledgeFilter(binding.templateVersion.toolsConfig)
+          : noAgentKnowledgeFilter;
       const [primary] = await ctx.db
         .select({
           clientProfileId: groupClientProfiles.clientProfileId,
@@ -123,10 +152,10 @@ export const knowledgeRouter = createTRPCRouter({
       const sourceRole = input.sourceRole === "unknown" ? null : input.sourceRole;
 
       const [commonDocs, groupDocs, personalDocs, statementRows, claimRows] = await Promise.all([
-        input.scope && input.scope !== "common"
+        (input.scope && input.scope !== "common") || agentKnowledgeFilter.commonDocKeys === "none"
           ? Promise.resolve([])
           : ctx.db.select().from(knowledgeCommonDocs).orderBy(desc(knowledgeCommonDocs.updatedAt)).limit(50),
-        input.scope && input.scope !== "group"
+        (input.scope && input.scope !== "group") || !agentKnowledgeFilter.includeGroupKnowledge || agentKnowledgeFilter.groupDocKeys === "none"
           ? Promise.resolve([])
           : ctx.db
               .select()
@@ -134,7 +163,7 @@ export const knowledgeRouter = createTRPCRouter({
               .where(eq(knowledgeGroupDocs.providerGroupId, input.providerGroupId))
               .orderBy(desc(knowledgeGroupDocs.updatedAt))
               .limit(50),
-        !primary?.clientProfileId || (input.scope && input.scope !== "personal")
+        !primary?.clientProfileId || (input.scope && input.scope !== "personal") || !agentKnowledgeFilter.includeGroupKnowledge || agentKnowledgeFilter.groupDocKeys === "none"
           ? Promise.resolve([])
           : ctx.db
               .select()
@@ -166,7 +195,9 @@ export const knowledgeRouter = createTRPCRouter({
       ]);
 
       const documents = input.sourceRole ? [] : [
-        ...commonDocs.map((doc) => ({
+        ...commonDocs
+          .filter((doc) => knowledgeDocKeyAllowed(agentKnowledgeFilter.commonDocKeys, doc.docKey))
+          .map((doc) => ({
           id: doc.id,
           kind: "document" as const,
           scope: "common" as const,
@@ -180,7 +211,9 @@ export const knowledgeRouter = createTRPCRouter({
           occurred_at: doc.updatedAt.toISOString(),
           updated_at: doc.updatedAt.toISOString(),
         })),
-        ...groupDocs.map((doc) => ({
+        ...groupDocs
+          .filter((doc) => knowledgeDocKeyAllowed(agentKnowledgeFilter.groupDocKeys, doc.docKey))
+          .map((doc) => ({
           id: doc.id,
           kind: "document" as const,
           scope: "group" as const,
@@ -194,7 +227,9 @@ export const knowledgeRouter = createTRPCRouter({
           occurred_at: doc.updatedAt.toISOString(),
           updated_at: doc.updatedAt.toISOString(),
         })),
-        ...personalDocs.map((doc) => ({
+        ...personalDocs
+          .filter((doc) => knowledgeDocKeyAllowed(agentKnowledgeFilter.groupDocKeys, doc.docKey))
+          .map((doc) => ({
           id: doc.id,
           kind: "document" as const,
           scope: "personal" as const,
@@ -238,6 +273,7 @@ export const knowledgeRouter = createTRPCRouter({
         updated_at: claim.updatedAt.toISOString(),
       }));
       const items = [...documents, ...statements, ...claims]
+        .filter((item) => explorerItemAllowedByAgentKnowledge(item, agentKnowledgeFilter))
         .filter((item) => !query || `${item.title} ${item.text} ${item.speaker_display_name ?? ""}`.toLowerCase().includes(query))
         .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
         .slice(0, input.limit);
@@ -396,6 +432,90 @@ export const knowledgeRouter = createTRPCRouter({
       })
       .returning();
     return doc;
+  }),
+
+  privateDocKeys: protectedProcedure.query(async ({ ctx }) => {
+    const [groupDocs, customerDocs, personalDocs] = await Promise.all([
+      ctx.db.select().from(knowledgeGroupDocs),
+      ctx.db.select().from(knowledgeCustomerDocs),
+      ctx.db.select().from(knowledgePersonalDocs),
+    ]);
+    const byDocKey = new Map<string, {
+      docKey: string;
+      title: string;
+      scopes: Set<"group" | "customer" | "personal">;
+      groupCount: number;
+      customerCount: number;
+      personalCount: number;
+      updatedAt: Date;
+    }>();
+
+    function addDoc(input: {
+      docKey: string;
+      title: string;
+      scope: "group" | "customer" | "personal";
+      updatedAt: Date;
+    }) {
+      const existing = byDocKey.get(input.docKey);
+      if (!existing) {
+        byDocKey.set(input.docKey, {
+          docKey: input.docKey,
+          title: input.title,
+          scopes: new Set([input.scope]),
+          groupCount: input.scope === "group" ? 1 : 0,
+          customerCount: input.scope === "customer" ? 1 : 0,
+          personalCount: input.scope === "personal" ? 1 : 0,
+          updatedAt: input.updatedAt,
+        });
+        return;
+      }
+
+      existing.scopes.add(input.scope);
+      if (input.scope === "group") existing.groupCount += 1;
+      if (input.scope === "customer") existing.customerCount += 1;
+      if (input.scope === "personal") existing.personalCount += 1;
+      if (input.updatedAt > existing.updatedAt) {
+        existing.updatedAt = input.updatedAt;
+        existing.title = input.title;
+      }
+    }
+
+    for (const doc of groupDocs) {
+      addDoc({
+        docKey: doc.docKey,
+        title: doc.title,
+        scope: "group",
+        updatedAt: doc.updatedAt,
+      });
+    }
+    for (const doc of customerDocs) {
+      addDoc({
+        docKey: doc.docKey,
+        title: doc.title,
+        scope: "customer",
+        updatedAt: doc.updatedAt,
+      });
+    }
+    for (const doc of personalDocs) {
+      addDoc({
+        docKey: doc.docKey,
+        title: doc.title,
+        scope: "personal",
+        updatedAt: doc.updatedAt,
+      });
+    }
+
+    return Array.from(byDocKey.values())
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .map((entry): PrivateKnowledgeDocKeyRow => ({
+        doc_key: entry.docKey,
+        title: entry.title,
+        scopes: Array.from(entry.scopes),
+        group_count: entry.groupCount,
+        customer_count: entry.customerCount,
+        personal_count: entry.personalCount,
+        updated_at: entry.updatedAt.toISOString(),
+      }));
   }),
 
   versions: protectedProcedure
@@ -681,6 +801,69 @@ function humanClaimKind(value: string): string {
   if (value === "incident_or_evidence_statement") return "Incident or evidence claim";
   if (value === "case_statement") return "Case claim";
   return "Claim";
+}
+
+function templateAllowsTool(toolsConfig: unknown, toolKey: string): boolean {
+  return extractAllowedTools(toolsConfig).includes(toolKey);
+}
+
+function extractAllowedTools(toolsConfig: unknown): string[] {
+  const config = objectRecord(toolsConfig);
+  const candidates: string[] = [];
+  for (const key of ["allowed_tools", "allowedTools"]) {
+    const value = config[key];
+    if (Array.isArray(value)) {
+      candidates.push(...value.filter((item): item is string => typeof item === "string"));
+    }
+  }
+  const tools = config.tools;
+  if (Array.isArray(tools)) {
+    for (const item of tools) {
+      if (typeof item === "string") {
+        candidates.push(item);
+      } else if (item && typeof item === "object" && !Array.isArray(item)) {
+        const record = item as Record<string, unknown>;
+        if (typeof record.name === "string" && record.name && record.enabled !== false) {
+          candidates.push(record.name);
+        }
+      }
+    }
+  }
+  return uniqueLowerStrings(candidates);
+}
+
+function explorerItemAllowedByAgentKnowledge(
+  item: { kind: "document" | "statement" | "claim"; scope: "common" | "group" | "personal"; text: string },
+  filter: KnowledgeFilter,
+): boolean {
+  if (item.kind === "document") {
+    if (item.scope === "common") {
+      return knowledgeDocKeyAllowed(filter.commonDocKeys, item.text);
+    }
+    return filter.includeGroupKnowledge && knowledgeDocKeyAllowed(filter.groupDocKeys, item.text);
+  }
+  return item.scope !== "common" && filter.includeGroupKnowledge && filter.groupDocKeys !== "none";
+}
+
+function knowledgeDocKeyAllowed(allowed: KnowledgeFilter["commonDocKeys"], docKey: string | null): boolean {
+  if (allowed === "*") return true;
+  if (allowed === "none") return false;
+  return Boolean(docKey && allowed.includes(docKey.trim().toLowerCase()));
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function uniqueLowerStrings(values: string[]): string[] {
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim().toLowerCase();
+    if (normalized && !output.includes(normalized)) {
+      output.push(normalized);
+    }
+  }
+  return output;
 }
 
 function maxDate(current: Date | null, candidate: Date | null): Date | null {

@@ -9,15 +9,15 @@ import { createTRPCRouter, protectedProcedure, roleProcedure } from "../init.js"
 const defaultTools = [
   ["echo", "Echo", "Returns the provided input text unchanged. Useful for connectivity checks.", "read", "utility"],
   ["uppercase", "Uppercase", "Transforms text to uppercase for deterministic formatting tests.", "read", "utility"],
-  ["context_lookup", "Context Lookup", "Reads a specific key from runtime context assembled for the current message.", "read", "context"],
   ["media_analyze", "Analyze Media", "Reads image and audio insights generated inside the isolated chat runtime.", "read", "media"],
   ["knowledge_search", "Knowledge Search", "Searches published group/common knowledge and returns ranked passages.", "read", "knowledge"],
   ["message_history", "Message History", "Reads recent group conversation history for retrieval-augmented responses.", "read", "context"],
   ["todo_create", "Create Todo", "Creates a staff todo in the dashboard for this group.", "write", "workflow"],
   ["todo_update", "Update Todo", "Updates a staff todo in the dashboard for this group.", "write", "workflow"],
   ["todo_list", "List Todos", "Reads open staff todos for this group.", "read", "workflow"],
-  ["send_whatsapp", "Send WhatsApp", "Sends outbound WhatsApp messages via the gateway.", "write", "communication"],
 ] as const;
+
+const disabledToolKeys = new Set(["context_lookup", "send_whatsapp"]);
 
 const toolInput = z.object({
   toolKey: z.string().trim().min(1).max(128),
@@ -52,21 +52,26 @@ export const toolsRouter = createTRPCRouter({
   list: protectedProcedure.query(async ({ ctx }) => {
     await ensureDefaultTools(ctx.db);
     const rows = await ctx.db.select().from(toolCatalogEntries).orderBy(desc(toolCatalogEntries.updatedAt));
-    return rows.map((tool) => ({
-      id: tool.id,
-      tool_key: tool.toolKey,
-      display_name: tool.displayName,
-      description: tool.description,
-      risk_class: tool.riskClass,
-      category: tool.category,
-      is_enabled: tool.isEnabled,
-      created_at: tool.createdAt.toISOString(),
-      updated_at: tool.updatedAt.toISOString(),
-    }));
+    return rows
+      .filter((tool) => !disabledToolKeys.has(tool.toolKey))
+      .map((tool) => ({
+        id: tool.id,
+        tool_key: tool.toolKey,
+        display_name: tool.displayName,
+        description: tool.description,
+        risk_class: tool.riskClass,
+        category: tool.category,
+        is_enabled: tool.isEnabled,
+        created_at: tool.createdAt.toISOString(),
+        updated_at: tool.updatedAt.toISOString(),
+      }));
   }),
 
   upsert: roleProcedure("owner", "admin").input(toolInput).mutation(async ({ ctx, input }) => {
     const normalizedKey = input.toolKey.toLowerCase();
+    if (disabledToolKeys.has(normalizedKey)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "tool is disabled" });
+    }
     const [existing] = await ctx.db
       .select()
       .from(toolCatalogEntries)

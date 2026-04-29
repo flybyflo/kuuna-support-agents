@@ -94,6 +94,10 @@ test("contract: passive message analysis persists agent run, tool invocation, to
   assert.ok(run);
   assert.equal(run.status, "succeeded");
   assert.equal(run.modelUsed, "gpt-5.5");
+  assert.match(run.systemPrompt ?? "", /intake triage agent/);
+  assert.match(run.userPrompt ?? "", /Message reason: media_ready/);
+  const passiveContext = run.inputContext as Record<string, unknown>;
+  assert.equal(passiveContext.provider_group_id, seeded.providerGroupId);
 
   const [todo] = await harness.db.select().from(todos).where(eq(todos.agentRunId, run.id)).limit(1);
   assert.ok(todo);
@@ -174,6 +178,15 @@ test("contract: inbound execution creates outbound intent and dispatch job", { s
   );
 
   assert.deepEqual(result, { processed: true, status: "enqueued" });
+  const [run] = await harness.db.select().from(agentRuns).where(eq(agentRuns.traceId, "trace-inbound")).limit(1);
+  assert.ok(run);
+  assert.match(run.systemPrompt ?? "", /template-gesteuerter WhatsApp-Agent/);
+  assert.match(run.userPrompt ?? "", /help with my tax form/);
+  const runContext = run.inputContext as Record<string, unknown>;
+  assert.equal(runContext.provider_group_id, seeded.providerGroupId);
+  assert.equal(Array.isArray(runContext.recent_messages), true);
+  assert.equal(Array.isArray(runContext.todos), true);
+
   const [intent] = await harness.db.select().from(outboundIntents).where(eq(outboundIntents.providerGroupId, seeded.providerGroupId)).limit(1);
   assert.ok(intent);
   assert.equal(intent.status, "pending");

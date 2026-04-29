@@ -51,6 +51,8 @@ const envSchema = z.object({
   RUNTIME_DOCKER_NETWORK: z.string().optional(),
   RUNTIME_AGENT_IMAGE: z.string().default("kuuna-runtime-agent-ts:latest"),
   RUNTIME_AGENT_CONTAINER_PORT: z.coerce.number().int().positive().default(8100),
+  RUNTIME_TOOL_BACKEND_BASE_URL: z.string().default("http://backend:8000"),
+  RUNTIME_TOOL_TOKEN: z.string().optional(),
   RUNTIME_CONTAINER_DATA_DIR: z.string().default("/runtime-data"),
   RUNTIME_CONTAINER_DATA_VOLUME_PREFIX: z.string().default("kuuna-runtime-data"),
   RUNTIME_CONTAINER_EXTRA_ENV_JSON: z.string().optional(),

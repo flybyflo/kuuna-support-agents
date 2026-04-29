@@ -53,6 +53,7 @@ const baseSettings: Settings = {
   RUNTIME_DOCKER_NETWORK: "kuuna-dev_default",
   RUNTIME_AGENT_IMAGE: "kuuna-runtime-agent-ts:dev",
   RUNTIME_AGENT_CONTAINER_PORT: 8100,
+  RUNTIME_TOOL_BACKEND_BASE_URL: "http://backend:8000",
   RUNTIME_CONTAINER_DATA_DIR: "/runtime-data",
   RUNTIME_CONTAINER_DATA_VOLUME_PREFIX: "kuuna-runtime-data",
 };

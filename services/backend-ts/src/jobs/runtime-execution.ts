@@ -523,6 +523,8 @@ async function runViaRuntimeAgent(
       reasoningEffort: input.reasoningEffort,
       allowedTools: input.allowedTools,
       retrievalRefs: input.retrievalRefs,
+      systemPrompt: input.systemPrompt,
+      userPrompt: input.userPrompt,
     })
     .returning();
   if (!agentRun) {
@@ -545,6 +547,7 @@ async function runViaRuntimeAgent(
       traceId: input.traceId,
     })).runtimeBaseUrl.replace(/\/$/, "");
     const context: RuntimeAgentContext = {
+      trace_id: input.traceId,
       provider_group_id: input.providerGroupId,
       binding_id: input.bindingId,
       agent_instance_id: input.agentInstanceId,
@@ -554,6 +557,10 @@ async function runViaRuntimeAgent(
       todos: await todosContext(database, input.providerGroupId, 20),
       ...(input.extraContext ?? {}),
     };
+    await database
+      .update(agentRuns)
+      .set({ inputContext: context })
+      .where(eq(agentRuns.id, agentRun.id));
     const runtimeRequest: RuntimeAgentRequest = runtimeAgentRequestSchema.parse({
       trace_id: input.traceId,
       system_prompt: input.systemPrompt,
@@ -922,13 +929,15 @@ async function recentMessagesContext(database: DbLike, providerGroupId: string, 
     .where(and(eq(messages.providerGroupId, providerGroupId), eq(messageVersions.isDeleted, false)))
     .orderBy(desc(messageVersions.occurredAt), desc(messages.id))
     .limit(limit);
-  return rows.map((row) => ({
+  return Promise.all(rows.map(async (row) => ({
     message_id: row.message.id,
     provider_message_id: row.message.providerMessageId,
     sender_provider_user_id: row.message.senderProviderUserId,
     text: row.version.textContent || "",
     occurred_at: row.version.occurredAt.toISOString(),
-  }));
+    links: await messageLinkContexts(database, row.message.id),
+    media_attachments: await mediaAttachmentContexts(database, row.message.id),
+  })));
 }
 
 async function todosContext(database: DbLike, providerGroupId: string, limit: number) {
@@ -1113,7 +1122,9 @@ function extractAllowedTools(toolsConfig: unknown): string[] {
   const normalized: string[] = [];
   for (const candidate of candidates) {
     const value = candidate.trim().toLowerCase();
-    if (value && !normalized.includes(value)) normalized.push(value);
+    if (value && value !== "context_lookup" && value !== "send_whatsapp" && !normalized.includes(value)) {
+      normalized.push(value);
+    }
   }
   return normalized;
 }

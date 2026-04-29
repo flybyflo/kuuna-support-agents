@@ -46,6 +46,8 @@ import type {
   WhatsAppGroupMember,
   WhatsAppGroupMembersResult,
   WorkflowStatus,
+  PrivateKnowledgeDocKey,
+  PrivateKnowledgeScope,
 } from "@/lib/api-client/types";
 import { createSessionBackendTrpcClient, getInternalOpsToken } from "@/lib/backend/client";
 import { titleFromGroupId } from "@/lib/utils/format";
@@ -147,8 +149,25 @@ function mapTemplateVersion(row: {
   const model = asRecord(row.model_settings);
   const tools = asRecord(row.tools_config);
   const knowledge = asRecord(tools.knowledge);
+  const runtimeImage = asRecord(tools.runtime_image ?? tools.runtimeImage);
   const egress = asRecord(row.egress_policy);
   const modelChain = stringList(model.failover_chain);
+  const runtimeImageConfig = {
+    baseImage:
+      typeof runtimeImage.base_image === "string"
+        ? runtimeImage.base_image
+        : typeof runtimeImage.baseImage === "string"
+          ? runtimeImage.baseImage
+          : undefined,
+    dockerfileSnippet:
+      typeof runtimeImage.dockerfile_snippet === "string"
+        ? runtimeImage.dockerfile_snippet
+        : typeof runtimeImage.dockerfileSnippet === "string"
+          ? runtimeImage.dockerfileSnippet
+          : undefined,
+    piBashEnabled: runtimeImage.pi_bash_enabled === true || runtimeImage.piBashEnabled === true,
+    piBashAllowlist: stringList(runtimeImage.pi_bash_allowlist ?? runtimeImage.piBashAllowlist),
+  };
   return {
     id: row.id,
     templateId: row.template_id,
@@ -169,6 +188,7 @@ function mapTemplateVersion(row: {
     toolProfile: stringList(tools.allowed_tools).join(", ") || "default",
     knowledgeProfile: JSON.stringify(knowledge),
     egressPolicy: typeof egress.mode === "string" ? egress.mode : JSON.stringify(egress),
+    runtimeImageConfig,
     updatedAt: row.updated_at,
     updatedBy: "backend",
   };
@@ -392,24 +412,50 @@ function mapKnowledgeDocVersion(row: {
   };
 }
 
+function mapPrivateKnowledgeDocKey(row: {
+  doc_key: string;
+  title: string;
+  scopes: string[];
+  group_count: number;
+  customer_count: number;
+  personal_count: number;
+  updated_at: string;
+}): PrivateKnowledgeDocKey {
+  return {
+    docKey: row.doc_key,
+    title: row.title,
+    scopes: row.scopes.filter((scope): scope is PrivateKnowledgeScope =>
+      scope === "group" || scope === "customer" || scope === "personal",
+    ),
+    groupCount: row.group_count,
+    customerCount: row.customer_count,
+    personalCount: row.personal_count,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mediaKind(mimeType: string): MediaAsset["kind"] {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/") || normalized.endsWith("/audio")) return "audio";
+  if (normalized.startsWith("video/") || normalized.endsWith("/video")) return "video";
   return "file";
 }
 
 function fileExtensionFromMimeType(mimeType: string): string {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/gif") return "gif";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "text/plain") return "txt";
-  if (mimeType === "audio/mpeg") return "mp3";
-  if (mimeType === "audio/ogg") return "ogg";
-  if (mimeType === "audio/mp4") return "m4a";
-  if (mimeType === "video/mp4") return "mp4";
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized === "image/jpeg") return "jpg";
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized === "text/plain") return "txt";
+  if (normalized === "audio/mpeg" || normalized === "application/audio") return "mp3";
+  if (normalized === "audio/ogg") return "ogg";
+  if (normalized === "audio/mp4") return "m4a";
+  if (normalized === "audio/wav" || normalized === "audio/wave") return "wav";
+  if (normalized.startsWith("audio/")) return "mp3";
+  if (normalized === "video/mp4") return "mp4";
   return "bin";
 }
 
@@ -656,6 +702,9 @@ export async function listAgentRuns(providerGroupId?: string): Promise<AgentRunR
         reasoningEffort: row.reasoning_effort,
         allowedTools: stringList(row.allowed_tools),
         retrievalRefs: stringList(row.retrieval_refs),
+        systemPrompt: row.system_prompt ?? undefined,
+        userPrompt: row.user_prompt ?? undefined,
+        inputContext: asRecord(row.input_context),
         responseText: row.response_text ?? undefined,
         responsePreview: row.response_text?.slice(0, 220),
         error: row.error ?? undefined,
@@ -902,6 +951,17 @@ export async function listKnowledgeVersions(docRefId: string): Promise<Knowledge
     async () => {
       const client = await createSessionBackendTrpcClient();
       return (await client.knowledge.versions.query({ docRefId })).map(mapKnowledgeDocVersion);
+    },
+    () => [],
+  );
+}
+
+export async function listPrivateKnowledgeDocKeys(): Promise<PrivateKnowledgeDocKey[]> {
+  return withOptionalMock(
+    "listPrivateKnowledgeDocKeys",
+    async () => {
+      const client = await createSessionBackendTrpcClient();
+      return (await client.knowledge.privateDocKeys.query()).map(mapPrivateKnowledgeDocKey);
     },
     () => [],
   );

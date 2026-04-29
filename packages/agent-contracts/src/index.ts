@@ -116,6 +116,40 @@ export const runtimeAgentResultSchema = z.object({
   error: z.string().nullable().optional(),
 });
 
+export const runtimeToolSearchRequestSchema = z.object({
+  trace_id: z.string().nullable().optional(),
+  tool_name: z.enum(["chat_history_search", "knowledge_search"]),
+  query: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(20).default(8),
+  context: z.object({
+    provider_group_id: z.string().min(1),
+    binding_id: z.string().min(1),
+    agent_instance_id: z.string().min(1),
+    sender_provider_user_id: z.string().nullable().optional(),
+  }).catchall(z.unknown()),
+});
+
+export const runtimeToolSearchHitSchema = z.object({
+  chunk_id: z.string(),
+  source_type: z.string(),
+  source_scope: z.string(),
+  source_id: z.string(),
+  score: z.number(),
+  content: z.string(),
+  occurred_at: z.string(),
+  provider_message_id: z.string().nullable().optional(),
+  message_id: z.string().nullable().optional(),
+  chunk_no: z.number().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const runtimeToolSearchResponseSchema = z.object({
+  tool_name: z.enum(["chat_history_search", "knowledge_search"]),
+  query: z.string(),
+  hits: z.array(runtimeToolSearchHitSchema),
+  access: z.record(z.unknown()),
+});
+
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 export type ToolInvocation = z.infer<typeof toolInvocationSchema>;
 export type RuntimeMediaAttachment = z.infer<typeof runtimeMediaAttachmentSchema>;
@@ -127,3 +161,5 @@ export type RuntimeAgentRequest = z.infer<typeof runtimeAgentRequestSchema>;
 export type ModelAttempt = z.infer<typeof modelAttemptSchema>;
 export type ToolExecutionResult = z.infer<typeof toolExecutionResultSchema>;
 export type RuntimeAgentResult = z.infer<typeof runtimeAgentResultSchema>;
+export type RuntimeToolSearchRequest = z.infer<typeof runtimeToolSearchRequestSchema>;
+export type RuntimeToolSearchResponse = z.infer<typeof runtimeToolSearchResponseSchema>;

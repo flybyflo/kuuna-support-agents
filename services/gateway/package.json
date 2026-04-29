@@ -32,8 +32,8 @@
   },
   "exports": {
     "./trpc": {
-      "types": "./dist/src/trpc.d.ts",
       "development": "./src/trpc.ts",
+      "types": "./dist/src/trpc.d.ts",
       "default": "./dist/src/trpc.js"
     }
   }

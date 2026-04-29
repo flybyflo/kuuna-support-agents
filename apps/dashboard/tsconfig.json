@@ -25,6 +25,9 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@kuuna/api-client-ts": [
+        "../../packages/api-client-ts/src/index.ts"
+      ],
       "@/*": [
         "./src/*"
       ]

@@ -42,10 +42,10 @@ export async function analyzeRuntimeMedia(
 }
 
 function mediaKind(mimeType: string): RuntimeMediaInsight["kind"] {
-  const normalized = mimeType.toLowerCase();
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   if (normalized.startsWith("image/")) return "image";
-  if (normalized.startsWith("audio/")) return "audio";
-  if (normalized.startsWith("video/")) return "video";
+  if (normalized.startsWith("audio/") || normalized.endsWith("/audio")) return "audio";
+  if (normalized.startsWith("video/") || normalized.endsWith("/video")) return "video";
   return "file";
 }
 
@@ -293,9 +293,11 @@ function filenameWithExtension(filename: string, contentType: string): string {
   if (/\.[a-z0-9]{2,5}$/i.test(filename)) {
     return filename;
   }
-  if (contentType === "audio/mpeg") return `${filename}.mp3`;
-  if (contentType === "audio/ogg") return `${filename}.ogg`;
-  if (contentType === "audio/mp4") return `${filename}.m4a`;
-  if (contentType === "audio/wav" || contentType === "audio/wave") return `${filename}.wav`;
+  const normalized = contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized === "audio/mpeg" || normalized === "application/audio") return `${filename}.mp3`;
+  if (normalized === "audio/ogg") return `${filename}.ogg`;
+  if (normalized === "audio/mp4") return `${filename}.m4a`;
+  if (normalized === "audio/wav" || normalized === "audio/wave") return `${filename}.wav`;
+  if (normalized.startsWith("audio/")) return `${filename}.mp3`;
   return `${filename}.bin`;
 }

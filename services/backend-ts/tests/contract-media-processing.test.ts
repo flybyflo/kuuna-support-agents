@@ -6,7 +6,16 @@ import test from "node:test";
 import { eq } from "drizzle-orm";
 
 import { resetSettingsForTests } from "../src/config.js";
-import { mediaAssets, messages, messageVersions, todos, transcripts } from "../src/db/schema.js";
+import {
+  groupBindings,
+  groupTemplates,
+  mediaAssets,
+  messages,
+  messageVersions,
+  templateVersions,
+  todos,
+  transcripts,
+} from "../src/db/schema.js";
 import { processMediaAssetJob } from "../src/jobs/media-processing.js";
 import { parseRuntimeChatTask, type EnqueueRuntimeChatTaskOptions } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
@@ -22,6 +31,7 @@ test("contract: media processing inline text writes ready transcript and followu
     mimeType: "text/plain; charset=utf-8",
     metadataJson: { inline_data_base64: Buffer.from("hello transcript", "utf8").toString("base64") },
   });
+  await seedActiveBinding(harness, seeded.providerGroupId);
   const runtimeChatTasks: string[] = [];
   const runtimeChatQueue: NonNullable<EnqueueRuntimeChatTaskOptions["redis"]> = {
     async rpush(_key, value) {
@@ -63,6 +73,44 @@ test("contract: media processing inline text writes ready transcript and followu
   assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing", "runtime_chat_queue"]);
   assert.equal(harness.jobs[1]?.data.queued_task, undefined);
   assert.equal(parseRuntimeChatTask(runtimeChatTasks[0]).name, "passive_message_analysis");
+});
+
+test("contract: media processing skips todos and passive runtime for unbound chats", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+  const seeded = await seedMessageWithMedia(harness, {
+    mimeType: "text/plain; charset=utf-8",
+    metadataJson: { inline_data_base64: Buffer.from("unbound transcript", "utf8").toString("base64") },
+  });
+  const runtimeChatTasks: string[] = [];
+  const runtimeChatQueue: NonNullable<EnqueueRuntimeChatTaskOptions["redis"]> = {
+    async rpush(_key, value) {
+      runtimeChatTasks.push(value);
+      return runtimeChatTasks.length;
+    },
+    async set() {
+      return "OK";
+    },
+  };
+
+  const result = await processMediaAssetJob(
+    harness.db,
+    { mediaAssetId: seeded.mediaAssetId, traceId: "trace-unbound-media" },
+    {
+      runtimeChatQueue,
+      enqueueJob: async (name, data, jobId) => {
+        harness.jobs.push({ name, data, jobId });
+        return jobId ?? name;
+      },
+      uploadBytes: async ({ objectKey }) => `https://cdn.test/${objectKey}`,
+    },
+  );
+
+  assert.deepEqual(result, { processed: true, status: "ready" });
+  const todoRows = await harness.db.select().from(todos).where(eq(todos.messageId, seeded.messageId));
+  assert.equal(todoRows.length, 0);
+  assert.deepEqual(harness.jobs.map((job) => job.name), ["retrieval_indexing"]);
+  assert.equal(runtimeChatTasks.length, 0);
 });
 
 test("contract: media processing missing download marks failed", { skip: skipReason }, async (t) => {
@@ -166,7 +214,7 @@ async function seedMessageWithMedia(
     })
     .returning();
   assert.ok(asset);
-  return { messageId: message.id, mediaAssetId: asset.id };
+  return { providerGroupId: message.providerGroupId, messageId: message.id, mediaAssetId: asset.id };
 }
 
 async function findMediaAsset(harness: Awaited<ReturnType<typeof createContractHarness>>, mediaAssetId: string) {
@@ -183,4 +231,29 @@ async function findTranscript(harness: Awaited<ReturnType<typeof createContractH
     .limit(1);
   assert.ok(transcript);
   return transcript;
+}
+
+async function seedActiveBinding(
+  harness: Awaited<ReturnType<typeof createContractHarness>>,
+  providerGroupId: string,
+): Promise<void> {
+  const [template] = await harness.db
+    .insert(groupTemplates)
+    .values({ key: `media-${randomUUID()}`, displayName: "Media Template" })
+    .returning();
+  assert.ok(template);
+  const [version] = await harness.db
+    .insert(templateVersions)
+    .values({
+      templateId: template.id,
+      versionNo: 1,
+      status: "published",
+      systemPrompt: "Handle media.",
+      modelConfig: {},
+      toolsConfig: { tools: ["media_analyze", "message_history", "todo_create", "todo_update", "todo_list"] },
+      egressPolicy: {},
+    })
+    .returning();
+  assert.ok(version);
+  await harness.db.insert(groupBindings).values({ providerGroupId, templateVersionId: version.id, status: "active" });
 }

@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 
 import { SimpleTable } from "@/components/data-table/simple-table";
-import { StatusBadge } from "@/components/status/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,7 +43,7 @@ export default async function TemplatesPage({
     <div className="flex flex-col gap-8">
       <PageHeader
         title="Templates"
-        description="Manage template versions, model failover chains, tools, and egress policy."
+        description="Manage template versions, model failover chains, tools, and knowledge access."
         actions={
           <Button asChild>
             <Link href="/templates/new">
@@ -57,8 +56,7 @@ export default async function TemplatesPage({
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          You can now create a draft version, publish it, and bind a WhatsApp
-          group.
+          Configure it once, save, and the runtime image build will start automatically.
         </Notice>
       ) : null}
 
@@ -93,7 +91,7 @@ export default async function TemplatesPage({
                 ),
               },
               {
-                header: "Published",
+                header: "Active version",
                 cell: (row) => {
                   const version = versionsByTemplate.find(
                     (item) => item.templateId === row.id,
@@ -108,15 +106,12 @@ export default async function TemplatesPage({
                   }
 
                   return (
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">v{version.versionNo}</Badge>
-                      <StatusBadge status={version.status} />
-                    </div>
+                    <Badge variant="outline">v{version.versionNo}</Badge>
                   );
                 },
               },
               {
-                header: "Next step",
+                header: "Action",
                 cell: (row) => {
                   const templateMeta = versionsByTemplate.find(
                     (item) => item.templateId === row.id,
@@ -130,18 +125,8 @@ export default async function TemplatesPage({
                   if (!templateMeta.versions.length) {
                     return (
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/templates/${row.id}#create-draft`}>
-                          Create draft
-                        </Link>
-                      </Button>
-                    );
-                  }
-
-                  if (!templateMeta.publishedVersion) {
-                    return (
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/templates/${row.id}#timeline`}>
-                          Publish a version
+                        <Link href={`/templates/${row.id}#configuration`}>
+                          Configure
                         </Link>
                       </Button>
                     );
@@ -149,7 +134,7 @@ export default async function TemplatesPage({
 
                   return (
                     <Button variant="outline" size="sm" asChild>
-                      <Link href="/inbox/create">Bind a group</Link>
+                      <Link href={`/templates/${row.id}`}>Open</Link>
                     </Button>
                   );
                 },

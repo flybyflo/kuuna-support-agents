@@ -4,10 +4,11 @@ import fastify, { type FastifyError } from "fastify";
 import { ZodError } from "zod";
 
 import { getSettings } from "./config.js";
-import { closeDb, type Database } from "./db/client.js";
+import { closeDb, db, type Database } from "./db/client.js";
 import { closeQueues, enqueueKuunaJob, type EnqueueKuunaJob } from "./jobs/queues.js";
 import { logger } from "./logging.js";
 import { initSentry } from "./sentry.js";
+import { RuntimeToolSearchError, searchRuntimeTool } from "./runtime/tool-search.js";
 import { createTRPCContext } from "./trpc/init.js";
 import { appRouter } from "./trpc/routers/_app.js";
 
@@ -57,6 +58,27 @@ export async function buildServer(options: BuildServerOptions = {}) {
   });
 
   app.get("/health", async () => ({ status: "ok", service: "backend-ts" }));
+  app.post("/internal/runtime-tools/search", async (request, reply) => {
+    const settings = getSettings();
+    const expected = settings.RUNTIME_TOOL_TOKEN?.trim() || settings.INTERNAL_OPS_TOKEN?.trim();
+    if (!expected) {
+      return reply.code(503).send({ detail: "runtime tool token not configured" });
+    }
+    if (request.headers["x-internal-token"] !== expected) {
+      return reply.code(403).send({ detail: "invalid runtime tool token" });
+    }
+    try {
+      return await searchRuntimeTool(options.db ?? db, request.body);
+    } catch (error) {
+      if (error instanceof RuntimeToolSearchError) {
+        return reply.code(error.statusCode).send({ detail: error.message });
+      }
+      if (error instanceof ZodError) {
+        return reply.code(422).send({ detail: error.issues });
+      }
+      throw error;
+    }
+  });
 
   await app.register(fastifyTRPCPlugin, {
     prefix: "/trpc",

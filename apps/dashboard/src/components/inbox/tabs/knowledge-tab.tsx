@@ -40,8 +40,8 @@ export async function KnowledgeTab({ providerGroupId, filters = {} }: KnowledgeT
   return (
     <div className="flex flex-col gap-6 p-4">
       <Notice title="Knowledge is source-attributed" tone="info">
-        Chat-derived entries are stored as statements or extracted claims with
-        speaker, role, timestamp and message source. Treat them as attributed
+        This view is filtered to the knowledge the bound AI agent is allowed to
+        search from its active template. Chat-derived entries remain attributed
         perspectives, not objective facts.
       </Notice>
 

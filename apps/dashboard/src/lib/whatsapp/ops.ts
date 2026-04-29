@@ -16,8 +16,10 @@ export type WhatsAppGatewayConnectionStatus = {
   lastError?: string;
 };
 
+let lastKnownGatewayGroups: WhatsAppGatewayGroup[] = [];
+
 export async function listWhatsAppGatewayGroups(): Promise<WhatsAppGatewayGroup[]> {
-  return await withGatewayClient(async (client) => {
+  const groups = await withGatewayClient(async (client) => {
     const payload = await client.ops.groups.query();
     return payload.items
         .filter((item) => typeof item.jid === "string" && item.jid.length > 0)
@@ -27,7 +29,12 @@ export async function listWhatsAppGatewayGroups(): Promise<WhatsAppGatewayGroup[
           participantsCount: item.participants_count ?? 0,
         }))
         .sort((left, right) => left.groupTitle.localeCompare(right.groupTitle));
-  }) ?? [];
+  });
+  if (groups && groups.length > 0) {
+    lastKnownGatewayGroups = groups;
+    return groups;
+  }
+  return lastKnownGatewayGroups;
 }
 
 export async function getWhatsAppGatewayConnectionStatus(): Promise<WhatsAppGatewayConnectionStatus | null> {

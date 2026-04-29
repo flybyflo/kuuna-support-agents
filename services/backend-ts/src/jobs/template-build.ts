@@ -17,6 +17,7 @@ const baseImagePattern = /^[a-zA-Z0-9._/:@-]+$/;
 const tagSafePattern = /[^a-zA-Z0-9._-]+/g;
 const dockerfileSnippetMaxLength = 8000;
 const blockedDockerfileInstructions = new Set(["from", "cmd", "entrypoint", "expose"]);
+const disabledToolKeys = new Set(["context_lookup", "send_whatsapp"]);
 
 export type TemplateBuildRow = typeof templateBuilds.$inferSelect;
 
@@ -68,13 +69,18 @@ export async function queueTemplateBuild(
     throw new TemplateBuildValidationError("only published template versions can be built");
   }
 
+  const runtimeImageConfig = extractRuntimeImageConfig(version.toolsConfig);
   const baseImage = validateBaseImage(input.baseImage);
   const allowedTools = input.allowedTools
-    ? input.allowedTools.map((tool) => tool.trim().toLowerCase()).filter(Boolean)
+    ? normalizeAllowedTools(input.allowedTools)
     : extractAllowedTools(version.toolsConfig);
-  const dockerfileSnippet = validateDockerfileSnippet(input.dockerfileSnippet ?? null);
-  const piBashEnabled = input.piBashEnabled === true;
-  const piBashAllowlist = normalizeStringList(input.piBashAllowlist ?? []);
+  const dockerfileSnippet = validateDockerfileSnippet(
+    input.dockerfileSnippet !== undefined
+      ? input.dockerfileSnippet
+      : runtimeImageConfig.dockerfileSnippet,
+  );
+  const piBashEnabled = input.piBashEnabled ?? runtimeImageConfig.piBashEnabled;
+  const piBashAllowlist = normalizeStringList(input.piBashAllowlist ?? runtimeImageConfig.piBashAllowlist);
   if (piBashEnabled && piBashAllowlist.length === 0) {
     throw new TemplateBuildValidationError("pi_bash_allowlist is required when Pi bash exec is enabled");
   }
@@ -466,10 +472,14 @@ function extractAllowedTools(toolsConfig: unknown): string[] {
     }
   }
 
+  return normalizeAllowedTools(candidates);
+}
+
+function normalizeAllowedTools(candidates: string[]): string[] {
   const normalized: string[] = [];
   for (const candidate of candidates) {
     const value = candidate.trim().toLowerCase();
-    if (value && !normalized.includes(value)) {
+    if (value && !disabledToolKeys.has(value) && !normalized.includes(value)) {
       normalized.push(value);
     }
   }
@@ -478,6 +488,32 @@ function extractAllowedTools(toolsConfig: unknown): string[] {
 
 function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function extractRuntimeImageConfig(toolsConfig: unknown): {
+  dockerfileSnippet: string | null;
+  piBashEnabled: boolean;
+  piBashAllowlist: string[];
+} {
+  const config = objectRecord(toolsConfig);
+  const runtimeImage = objectRecord(config.runtime_image ?? config.runtimeImage);
+  const snippet =
+    typeof runtimeImage.dockerfile_snippet === "string"
+      ? runtimeImage.dockerfile_snippet
+      : typeof runtimeImage.dockerfileSnippet === "string"
+        ? runtimeImage.dockerfileSnippet
+        : null;
+  return {
+    dockerfileSnippet: snippet,
+    piBashEnabled: runtimeImage.pi_bash_enabled === true || runtimeImage.piBashEnabled === true,
+    piBashAllowlist: normalizeStringList(
+      arrayOfStrings(runtimeImage.pi_bash_allowlist ?? runtimeImage.piBashAllowlist),
+    ),
+  };
+}
+
+function arrayOfStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 async function markFailed(database: DbLike, build: TemplateBuildRow, error: string): Promise<void> {

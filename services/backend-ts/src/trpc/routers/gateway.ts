@@ -27,10 +27,11 @@ import { evaluateTrigger } from "../../trigger.js";
 import { createTRPCRouter, publicProcedure } from "../init.js";
 
 function mediaKindFromMimeType(mimeType: string | null | undefined): string {
-  if (!mimeType) return "file";
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
+  const normalized = mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (!normalized) return "file";
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/") || normalized.endsWith("/audio")) return "audio";
+  if (normalized.startsWith("video/") || normalized.endsWith("/video")) return "video";
   return "file";
 }
 
@@ -240,14 +241,14 @@ export async function ingestGatewayInbound(
         `retrieval_indexing_message_link_${jobToken(messageLinkId)}_${jobToken(event.trace_id)}`,
       );
     }
-    if (event.event_type !== "message_deleted") {
+    if (event.event_type !== "message_deleted" && result.activeBinding) {
       await ensureAutomaticFollowupTodo(database, {
         providerGroupId: event.provider_group_id,
         messageId: result.messageId,
         traceId: event.trace_id,
       });
     }
-    if (event.event_type !== "message_deleted" && result.mediaAssetIds.length === 0) {
+    if (event.event_type !== "message_deleted" && result.activeBinding && result.mediaAssetIds.length === 0) {
       await enqueueRuntimeChatTask(
         {
           name: "passive_message_analysis",

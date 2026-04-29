@@ -1,10 +1,7 @@
 import type { ReactNode } from "react";
 
 import { GroupList } from "@/components/inbox/group-list";
-import {
-  AUTO_REFRESH_INTERVALS,
-  AutoRefresh,
-} from "@/components/system/auto-refresh";
+import { AutoRefresh } from "@/components/system/auto-refresh";
 import {
   listBindings,
   listMessages,
@@ -44,7 +41,7 @@ export default async function InboxLayout({
         {children}
       </section>
       <AutoRefresh
-        intervalMs={AUTO_REFRESH_INTERVALS.default}
+        intervalMs={null}
         eventTypes={[
           "message.created",
           "media.updated",

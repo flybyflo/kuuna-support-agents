@@ -41,6 +41,17 @@ function formatJsonLike(value: string): string {
   }
 }
 
+function formatUnknown(value: unknown): string {
+  if (typeof value === "string") {
+    return formatJsonLike(value);
+  }
+  return JSON.stringify(value ?? {}, null, 2);
+}
+
+function countArray(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
 export default async function AgentRunDetailPage({ params }: { params: Params }) {
   const { runId } = await params;
   const session = await requireSession();
@@ -52,6 +63,8 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
   }
 
   const toolInvocations = await listToolInvocations(run.providerGroupId, run.id);
+  const inputContext = run.inputContext ?? {};
+  const hasPromptSnapshot = Boolean(run.systemPrompt || run.userPrompt || Object.keys(inputContext).length);
   const rawLog = {
     run,
     toolInvocations,
@@ -98,6 +111,10 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
             />
             <Field label="Trace" value={run.traceId ?? "n/a"} />
             <Field label="Message" value={run.messageId ?? "n/a"} />
+            <Field
+              label="Prompt snapshot"
+              value={hasPromptSnapshot ? "recorded" : "not recorded"}
+            />
           </dl>
         </div>
 
@@ -135,6 +152,47 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
                 {run.retrievalRefs.length ? run.retrievalRefs.join(", ") : "none"}
               </p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-semibold text-foreground">Input prompt</h2>
+          <p className="text-sm text-muted-foreground">
+            Exact prompt payload captured before the runtime call. Older runs may not have this snapshot.
+          </p>
+        </div>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <PromptMetric label="Recent messages" value={countArray(inputContext.recent_messages)} />
+          <PromptMetric label="Todos" value={countArray(inputContext.todos)} />
+          <PromptMetric label="Retrieval hits" value={countArray(inputContext.retrieval_hits)} />
+          <PromptMetric label="Media" value={countArray(inputContext.media_attachments)} />
+        </div>
+
+        <div className="mt-4 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <PromptPanel
+            title="User prompt"
+            value={run.userPrompt}
+            emptyLabel="No user prompt snapshot recorded for this run."
+            maxHeight="max-h-[520px]"
+          />
+          <PromptPanel
+            title="System prompt"
+            value={run.systemPrompt}
+            emptyLabel="No system prompt snapshot recorded for this run."
+            maxHeight="max-h-[520px]"
+          />
+        </div>
+
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-foreground">Runtime context</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Context object passed beside the prompts, including recent messages, todos, retrieval, links, media, and access IDs.
+          </p>
+          <div className="mt-2">
+            <CodeBlock value={formatUnknown(inputContext)} maxHeight="max-h-[640px]" />
           </div>
         </div>
       </section>
@@ -201,6 +259,42 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
           <CodeBlock value={JSON.stringify(rawLog, null, 2)} maxHeight="max-h-[640px]" />
         </div>
       </section>
+    </div>
+  );
+}
+
+function PromptMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 px-3 py-2">
+      <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-lg font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function PromptPanel({
+  title,
+  value,
+  emptyLabel,
+  maxHeight,
+}: {
+  title: string;
+  value?: string;
+  emptyLabel: string;
+  maxHeight: string;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <div className="mt-2">
+        {value ? (
+          <CodeBlock value={value} maxHeight={maxHeight} />
+        ) : (
+          <p className="rounded-md border border-border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">
+            {emptyLabel}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import { eq } from "drizzle-orm";
 import type { GatewayInboundEvent, GatewayOutboundStatusEvent } from "@kuuna/contracts";
 
-import { outboundIntents, messageLinks, messageVersions, todos } from "../src/db/schema.js";
+import {
+  groupBindings,
+  groupTemplates,
+  outboundIntents,
+  messageLinks,
+  messageVersions,
+  templateVersions,
+  todos,
+} from "../src/db/schema.js";
 import { parseRuntimeChatTask } from "../src/jobs/queues.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
 
@@ -46,6 +55,7 @@ test("contract: gateway inbound accepts and versions event", { skip: skipReason 
   });
 
   const payload = inboundPayload("msg-123");
+  await seedActiveBinding(harness, payload.provider_group_id);
   const response = await caller.gateway.inbound.ingest(payload);
 
   assert.equal(response.accepted, true);
@@ -111,6 +121,7 @@ test("contract: gateway inbound strips closing URL delimiters", { skip: skipReas
   });
 
   const payload = inboundPayload("msg-url-delimiter");
+  await seedActiveBinding(harness, payload.provider_group_id);
   payload.message.text = "Please read https://example.com/path] before replying.";
 
   const response = await caller.gateway.inbound.ingest(payload);
@@ -124,6 +135,81 @@ test("contract: gateway inbound strips closing URL delimiters", { skip: skipReas
   assert.ok(todo);
   assert.equal(todo.title, "Review shared link");
   assert.equal(todo.messageId, link.messageId);
+});
+
+test("contract: gateway inbound does not create todos or runtime tasks for unbound chats", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  const caller = await harness.caller();
+  t.after(async () => {
+    await harness.close();
+  });
+
+  const payload = inboundPayload("msg-unbound-followup");
+  payload.message.text = "Please read https://example.com/evidence";
+  payload.message.media = [
+    {
+      provider_media_id: `media-unbound-${randomUUID()}`,
+      mime_type: "image/jpeg",
+      file_name: "evidence.jpg",
+      byte_size: 123,
+      inline_data_base64: Buffer.from("image", "utf8").toString("base64"),
+    },
+  ];
+
+  const response = await caller.gateway.inbound.ingest(payload);
+
+  assert.equal(response.accepted, true);
+  assert.equal(response.execution_enqueued, false);
+  const todoRows = await harness.db.select().from(todos);
+  assert.equal(todoRows.length, 0);
+  assert.equal(harness.runtimeChatTasks.length, 0);
+  assert.deepEqual(
+    harness.jobs.map((job) => job.name),
+    ["media_processing", "retrieval_indexing", "retrieval_indexing"],
+  );
+});
+
+test("contract: gateway inbound creates automatic todos for all attachment kinds", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  const caller = await harness.caller();
+  t.after(async () => {
+    await harness.close();
+  });
+  await seedActiveBinding(harness, "group-123");
+
+  const cases = [
+    { suffix: "image", mimeType: "image/jpeg", title: "Review image attachment" },
+    { suffix: "audio", mimeType: "audio/mpeg", title: "Review audio attachment" },
+    { suffix: "video", mimeType: "video/mp4", title: "Review video attachment" },
+    { suffix: "document", mimeType: "application/pdf", title: "Review document attachment" },
+    { suffix: "file", mimeType: "application/octet-stream", title: "Review file attachment" },
+  ];
+
+  for (const item of cases) {
+    const payload = inboundPayload(`msg-${item.suffix}-${randomUUID()}`);
+    payload.message.text = null;
+    payload.message.media = [
+      {
+        provider_media_id: `media-${item.suffix}-${randomUUID()}`,
+        mime_type: item.mimeType,
+        file_name: `${item.suffix}.bin`,
+        byte_size: 123,
+        inline_data_base64: Buffer.from(item.suffix, "utf8").toString("base64"),
+      },
+    ];
+
+    const response = await caller.gateway.inbound.ingest(payload);
+    assert.equal(response.accepted, true);
+  }
+
+  const todoRows = await harness.db.select().from(todos);
+  for (const item of cases) {
+    assert.equal(
+      todoRows.some((todo) => todo.title === item.title),
+      true,
+      `missing todo title: ${item.title}`,
+    );
+  }
 });
 
 test("contract: gateway outbound status persists dispatch status", { skip: skipReason }, async (t) => {
@@ -170,3 +256,28 @@ test("contract: gateway outbound status persists dispatch status", { skip: skipR
   assert.equal(dispatch.last_error_code, null);
   assert.equal(dispatch.last_error_message, null);
 });
+
+async function seedActiveBinding(
+  harness: Awaited<ReturnType<typeof createContractHarness>>,
+  providerGroupId: string,
+): Promise<void> {
+  const [template] = await harness.db
+    .insert(groupTemplates)
+    .values({ key: `gateway-${randomUUID()}`, displayName: "Gateway Template" })
+    .returning();
+  assert.ok(template);
+  const [version] = await harness.db
+    .insert(templateVersions)
+    .values({
+      templateId: template.id,
+      versionNo: 1,
+      status: "published",
+      systemPrompt: "Handle WhatsApp messages.",
+      modelConfig: {},
+      toolsConfig: { tools: ["message_history", "todo_create", "todo_update", "todo_list"] },
+      egressPolicy: {},
+    })
+    .returning();
+  assert.ok(version);
+  await harness.db.insert(groupBindings).values({ providerGroupId, templateVersionId: version.id, status: "active" });
+}

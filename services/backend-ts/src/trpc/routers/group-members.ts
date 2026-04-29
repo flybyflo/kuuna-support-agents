@@ -96,7 +96,7 @@ export const groupMembersRouter = createTRPCRouter({
       byJid.set(key, observedItem);
     }
 
-    const items = Array.from(byJid.values()).sort((left, right) => {
+    const items = dedupeMemberListItems(Array.from(byJid.values())).sort((left, right) => {
       const leftName = left.display_name ?? left.phone_display ?? left.provider_user_id;
       const rightName = right.display_name ?? right.phone_display ?? right.provider_user_id;
       return leftName.localeCompare(rightName);
@@ -207,6 +207,7 @@ export const groupMembersRouter = createTRPCRouter({
 
 type SavedMember = typeof groupMembers.$inferSelect;
 type ClientProfile = typeof clientProfiles.$inferSelect | null;
+type MemberListItem = ReturnType<typeof mapSavedMember>;
 
 function mapSavedMember(member: SavedMember, profile: ClientProfile, primaryClientProfileId: string | null) {
   const phoneDisplay = member.phoneOverride || member.derivedPhone || phoneFromJid(member.providerUserId);
@@ -234,34 +235,38 @@ function mapSavedMember(member: SavedMember, profile: ClientProfile, primaryClie
   };
 }
 
-function privateRetrievalStatus(items: Array<ReturnType<typeof mapSavedMember>>) {
+function privateRetrievalStatus(items: MemberListItem[]) {
   const clients = items.filter((item) => item.role === "client" && item.linked_client_profile);
   const primaryClients = items.filter((item) => item.is_primary_client);
   const missingRoles = items.filter((item) => !item.role);
-  const complete = clients.length === 1 && primaryClients.length === 1 && missingRoles.length === 0;
   return {
-    complete,
+    complete: true,
     primary_client_count: primaryClients.length,
     client_member_count: clients.length,
     missing_role_count: missingRoles.length,
-    reason: complete
-      ? null
-      : primaryClients.length !== 1
-        ? "primary_client_not_configured"
-        : missingRoles.length > 0
-          ? "members_missing_roles"
-          : "client_profile_not_configured",
+    reason: primaryClients.length === 1 ? null : "personal_client_context_optional",
   };
 }
 
-function memberListKey(member: Pick<ReturnType<typeof mapSavedMember>, "role" | "provider_user_id" | "phone_display" | "derived_phone" | "phone_override" | "gateway_metadata">): string {
+function dedupeMemberListItems(items: MemberListItem[]): MemberListItem[] {
+  const byProviderUserId = new Map<string, MemberListItem>();
+  for (const item of items) {
+    const existing = byProviderUserId.get(item.provider_user_id);
+    if (!existing || memberListScore(item) > memberListScore(existing)) {
+      byProviderUserId.set(item.provider_user_id, item);
+    }
+  }
+  return Array.from(byProviderUserId.values());
+}
+
+function memberListKey(member: Pick<MemberListItem, "role" | "provider_user_id" | "phone_display" | "derived_phone" | "phone_override" | "gateway_metadata">): string {
   const phone = member.phone_override || member.phone_display || member.derived_phone;
   if (member.role === "bot" && phone) return `bot:${phone}`;
   if (phone && isSocketUserFallback(member.gateway_metadata)) return `phone:${phone}`;
   return `jid:${member.provider_user_id}`;
 }
 
-function memberListScore(member: ReturnType<typeof mapSavedMember>): number {
+function memberListScore(member: MemberListItem): number {
   let score = 0;
   if (member.role) score += 10;
   if (member.display_name) score += 4;

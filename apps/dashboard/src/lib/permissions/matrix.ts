@@ -5,7 +5,6 @@ export type PermissionResource =
   | "todos"
   | "templates"
   | "bindings"
-  | "prompts"
   | "knowledge"
   | "messages"
   | "audit"
@@ -22,7 +21,6 @@ const OWNER_PERMISSIONS: PermissionMap = {
   todos: ["read", "write"],
   templates: ["read", "write", "publish"],
   bindings: ["read", "write", "delete"],
-  prompts: ["read", "write", "publish"],
   knowledge: ["read", "write", "publish"],
   messages: ["read"],
   audit: ["read"],
@@ -40,7 +38,6 @@ const OPERATOR_PERMISSIONS: PermissionMap = {
   todos: ["read", "write"],
   templates: ["read", "write"],
   bindings: ["read"],
-  prompts: ["read", "write"],
   knowledge: ["read", "write"],
   messages: ["read"],
   audit: ["read"],
@@ -54,7 +51,6 @@ const VIEWER_PERMISSIONS: PermissionMap = {
   todos: ["read"],
   templates: ["read"],
   bindings: ["read"],
-  prompts: ["read"],
   knowledge: ["read"],
   messages: ["read"],
   audit: ["read"],

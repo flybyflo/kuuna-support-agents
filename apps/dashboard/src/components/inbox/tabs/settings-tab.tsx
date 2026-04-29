@@ -75,19 +75,31 @@ function setupBadge(member: WhatsAppGroupMember) {
   return <Badge variant="warning">Missing role</Badge>;
 }
 
+function memberRowKey(member: WhatsAppGroupMember, index: number): string {
+  return [
+    member.providerUserId,
+    member.role ?? "unassigned",
+    member.linkedClientProfile?.id ?? "no-profile",
+    index,
+  ].join(":");
+}
+
 function WhatsAppMembersSection({
   providerGroupId,
   members,
   privateRetrievalComplete,
-  privateRetrievalReason,
+  primaryClientCount,
+  clientMemberCount,
   canManage,
 }: {
   providerGroupId: string;
   members: WhatsAppGroupMember[];
   privateRetrievalComplete: boolean;
-  privateRetrievalReason: string | null;
+  primaryClientCount: number;
+  clientMemberCount: number;
   canManage: boolean;
 }) {
+  const hasClientContext = privateRetrievalComplete && primaryClientCount === 1 && clientMemberCount > 0;
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -106,16 +118,11 @@ function WhatsAppMembersSection({
         </form>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 pb-6">
-        {privateRetrievalComplete ? (
-          <Notice title="Private retrieval enabled" tone="success">
-            Group and personal Knowledge can be retrieved for authorized participants in this group.
-          </Notice>
-        ) : (
-          <Notice title="Private retrieval disabled" tone="warning">
-            Configure every member role and set exactly one primary client before private Knowledge is used.
-            {privateRetrievalReason ? ` Reason: ${privateRetrievalReason}.` : ""}
-          </Notice>
-        )}
+        <Notice title="Knowledge retrieval active" tone="success">
+          The bound agent can use this chat&apos;s allowed Knowledge and message history. Member roles and a primary
+          client are optional configuration for client-specific context.
+          {hasClientContext ? " Client context is configured." : " Client context is not configured yet."}
+        </Notice>
 
         {members.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -134,8 +141,8 @@ function WhatsAppMembersSection({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {members.map((member) => (
-                <TableRow key={member.providerUserId}>
+              {members.map((member, index) => (
+                <TableRow key={memberRowKey(member, index)}>
                   <TableCell className="min-w-[220px]">
                     <div className="flex flex-col gap-1">
                       <span className="font-medium text-foreground">
@@ -355,7 +362,8 @@ export async function SettingsTab({
           providerGroupId={providerGroupId}
           members={memberConfig.items}
           privateRetrievalComplete={memberConfig.privateRetrievalStatus.complete}
-          privateRetrievalReason={memberConfig.privateRetrievalStatus.reason ?? null}
+          primaryClientCount={memberConfig.privateRetrievalStatus.primaryClientCount}
+          clientMemberCount={memberConfig.privateRetrievalStatus.clientMemberCount}
           canManage={canWriteBindings}
         />
 

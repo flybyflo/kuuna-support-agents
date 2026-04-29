@@ -9,7 +9,6 @@ import {
   Plug,
   ShieldCheck,
   Sparkles,
-  Wrench,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,19 +31,17 @@ import {
   listKnowledgeDocs,
   listMessages,
   listTemplates,
-  listTools,
 } from "@/lib/api-client";
 import { formatDateTime } from "@/lib/utils/format";
 
 export default async function OverviewPage() {
-  const [templates, bindings, commonDocs, messages, auditEvents, tools] =
+  const [templates, bindings, commonDocs, messages, auditEvents] =
     await Promise.all([
       listTemplates(),
       listBindings(),
       listKnowledgeDocs(),
       listMessages(),
       listAuditEvents(),
-      listTools(),
     ]);
 
   const activeBindings = bindings.filter(
@@ -85,11 +82,6 @@ export default async function OverviewPage() {
         commonDocs.length > 0
           ? `${commonDocs.length} admin docs`
           : "No admin documents yet",
-    },
-    {
-      label: "Tool catalog",
-      status: tools.some((tool) => tool.isEnabled) ? "ok" : "warn",
-      detail: `${tools.filter((t) => t.isEnabled).length} of ${tools.length} enabled`,
     },
   ];
 
@@ -165,14 +157,8 @@ export default async function OverviewPage() {
 
       <section
         aria-label="Secondary metrics"
-        className="grid grid-cols-1 gap-4 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-4 sm:grid-cols-2"
       >
-        <MetricCard
-          label="Tools"
-          value={tools.length}
-          hint={`${tools.filter((t) => t.isEnabled).length} enabled`}
-          icon={Wrench}
-        />
         <MetricCard
           label="Audit events"
           value={auditEvents.length}

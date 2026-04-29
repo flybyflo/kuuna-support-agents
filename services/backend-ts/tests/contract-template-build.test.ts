@@ -27,7 +27,7 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
     versionId: seeded.versionId,
     actorUserId: actor.id,
     baseImage: "ghcr.io/kuuna/runtime-base:1",
-    allowedTools: [" Search ", "SEND_WHATSAPP"],
+    allowedTools: [" Search ", "TODO_CREATE"],
     dockerfileSnippet: "RUN apt-get update",
     piBashEnabled: true,
     piBashAllowlist: [" jq ", "PYTHON"],
@@ -37,7 +37,7 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.equal(body.template_version_id, seeded.versionId);
   assert.equal(body.status, "queued");
   assert.equal((body.build_inputs as Record<string, unknown>).base_image, "ghcr.io/kuuna/runtime-base:1");
-  assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "send_whatsapp"]);
+  assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "todo_create"]);
   assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
   assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
   assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
@@ -55,6 +55,37 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.ok(event);
   assert.equal(event.actorUserId, actor.id);
   assert.equal(event.entityId, body.id);
+});
+
+test("contract: template build tRPC uses runtime image settings from template version", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
+
+  const actor = await harness.seedUser({ email: "builder-runtime@example.com", password: "LongPassword123!", role: "admin" });
+  const login = await (await harness.caller()).auth.login({ email: "builder-runtime@example.com", password: "LongPassword123!" });
+  const caller = await harness.caller(login.access_token);
+  const seeded = await seedTemplate(harness, {
+    status: "published",
+    toolsConfig: {
+      allowed_tools: ["message_history"],
+      runtime_image: {
+        dockerfile_snippet: "RUN apt-get update",
+        pi_bash_enabled: true,
+        pi_bash_allowlist: [" jq ", "PYTHON"],
+      },
+    },
+  });
+
+  const body = await caller.templates.queueBuild({
+    templateId: seeded.templateId,
+    versionId: seeded.versionId,
+    actorUserId: actor.id,
+    baseImage: "node:22-bookworm",
+  });
+
+  assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
+  assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
+  assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
 });
 
 test("contract: template build tRPC rejects unpublished or missing versions", { skip: skipReason }, async (t) => {
@@ -313,7 +344,11 @@ test("contract: template build job succeeds and uses digest fallback", { skip: s
 
 async function seedTemplate(
   harness: Awaited<ReturnType<typeof createContractHarness>>,
-  input: { status: "draft" | "ready" | "published" | "archived"; key?: string },
+  input: {
+    status: "draft" | "ready" | "published" | "archived";
+    key?: string;
+    toolsConfig?: Record<string, unknown>;
+  },
 ) {
   const [template] = await harness.db
     .insert(groupTemplates)
@@ -328,7 +363,7 @@ async function seedTemplate(
       versionNo: 1,
       status: input.status,
       modelConfig: { model: "gpt-5-mini" },
-      toolsConfig: { tools: [{ name: "search" }, { name: "disabled", enabled: false }] },
+      toolsConfig: input.toolsConfig ?? { tools: [{ name: "search" }, { name: "disabled", enabled: false }] },
       egressPolicy: { allow: ["https://example.com"] },
     })
     .returning();

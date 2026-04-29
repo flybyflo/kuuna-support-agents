@@ -31,6 +31,8 @@ const reservedRuntimeEnvKeys = new Set([
   "KUUNA_BINDING_ID",
   "KUUNA_AGENT_INSTANCE_ID",
   "KUUNA_SECRETS_REF",
+  "KUUNA_RUNTIME_TOOL_BACKEND_BASE_URL",
+  "KUUNA_RUNTIME_TOOL_TOKEN",
   "KUUNA_RUNTIME_DATA_DIR",
 ]);
 
@@ -318,8 +320,13 @@ export function buildRuntimeEnv(identity: RuntimeIdentity, settings: Settings): 
     KUUNA_BINDING_ID: identity.bindingId,
     KUUNA_AGENT_INSTANCE_ID: identity.agentInstanceId,
     KUUNA_SECRETS_REF: identity.secretsRef,
+    KUUNA_RUNTIME_TOOL_BACKEND_BASE_URL: settings.RUNTIME_TOOL_BACKEND_BASE_URL,
     KUUNA_RUNTIME_DATA_DIR: settings.RUNTIME_CONTAINER_DATA_DIR,
   };
+  const runtimeToolToken = settings.RUNTIME_TOOL_TOKEN?.trim() || settings.INTERNAL_OPS_TOKEN?.trim();
+  if (runtimeToolToken) {
+    env.KUUNA_RUNTIME_TOOL_TOKEN = runtimeToolToken;
+  }
   if (settings.OPENAI_API_KEY?.trim()) {
     env.OPENAI_API_KEY = settings.OPENAI_API_KEY;
   }

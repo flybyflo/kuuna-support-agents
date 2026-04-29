@@ -8,7 +8,7 @@ import { mediaAssets, messages, messageVersions, transcripts } from "../db/schem
 import { createPresignedGetUrl, publicUrlFromKey, uploadBytes as uploadS3Bytes } from "../integrations/s3.js";
 import { logger } from "../logging.js";
 import { publishRuntimeEvent } from "../runtime/events.js";
-import { ensureAutomaticFollowupTodo } from "./followup-todos.js";
+import { ensureAutomaticFollowupTodo, hasActiveGroupBinding } from "./followup-todos.js";
 import {
   enqueueKuunaJob,
   enqueueRuntimeChatTask,
@@ -77,7 +77,7 @@ export async function processMediaAssetJob(
     const message = error instanceof Error ? error.message : String(error);
     await markMediaFailed(database, asset, message);
     const providerGroupId = await providerGroupIdForMessage(database, asset.messageId);
-    if (providerGroupId) {
+    if (providerGroupId && (await hasActiveGroupBinding(database, providerGroupId))) {
       await ensureAutomaticFollowupTodo(database, {
         providerGroupId,
         messageId: asset.messageId,
@@ -227,7 +227,10 @@ async function processPendingAsset(
       entityType: "media_asset",
       payload: { status: "failed", message_id: asset.messageId, kind, error: "download_url_missing" },
     });
-    await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
+    const activeBinding = await hasActiveGroupBinding(database, providerGroupId);
+    if (activeBinding) {
+      await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
+    }
     return "failed";
   }
 
@@ -281,8 +284,13 @@ async function processPendingAsset(
     entityType: "media_asset",
     payload: { status: "ready", message_id: asset.messageId, kind },
   });
-  await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
-  await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed");
+  const activeBinding = await hasActiveGroupBinding(database, providerGroupId);
+  if (activeBinding) {
+    await ensureAutomaticFollowupTodo(database, { providerGroupId, messageId: asset.messageId, traceId });
+  }
+  await enqueueMediaFollowups(options.enqueueJob, options.runtimeChatQueue, asset, providerGroupId, traceId, "media_processed", {
+    passiveAnalysis: activeBinding,
+  });
   logger.info("media_asset_processed", {
     trace_id: traceId,
     media_asset_id: asset.id,
@@ -365,6 +373,7 @@ async function enqueueMediaFollowups(
   providerGroupId: string,
   traceId: string | null,
   reason: string,
+  input: { passiveAnalysis: boolean },
 ): Promise<void> {
   const enqueue = enqueueJob ?? enqueueKuunaJob;
   await enqueue(
@@ -372,6 +381,7 @@ async function enqueueMediaFollowups(
     { source_type: "media_asset", source_id: asset.id, trace_id: traceId },
     `retrieval_indexing_media_asset_${jobToken(asset.id)}_${jobToken(traceId)}`,
   );
+  if (!input.passiveAnalysis) return;
   await enqueueRuntimeChatTask(
     {
       name: "passive_message_analysis",
@@ -587,7 +597,11 @@ function extensionFromMime(mimeType: string): string {
   if (normalized === "application/pdf") return ".pdf";
   if (normalized === "text/plain") return ".txt";
   if (normalized === "text/markdown" || normalized === "application/markdown") return ".md";
-  if (normalized === "audio/mpeg") return ".mp3";
+  if (normalized === "audio/mpeg" || normalized === "application/audio") return ".mp3";
+  if (normalized === "audio/ogg") return ".ogg";
+  if (normalized === "audio/mp4") return ".m4a";
+  if (normalized === "audio/wav" || normalized === "audio/wave") return ".wav";
+  if (normalized.startsWith("audio/")) return ".mp3";
   if (normalized === "video/mp4") return ".mp4";
   return "";
 }

@@ -1,4 +1,4 @@
-import { desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 
 import type { DbLike } from "../db/client.js";
 import { retrievalChunks } from "../db/schema.js";
@@ -56,6 +56,8 @@ export async function retrieveScopedRuntimeContext(
     limit: number;
     access: RetrievalAccessContext;
     toolsConfig?: unknown;
+    sourceTypes?: string[];
+    allowBoundConversationScope?: boolean;
   },
 ): Promise<RetrievalResult> {
   const terms = queryTerms(input.query);
@@ -66,7 +68,12 @@ export async function retrieveScopedRuntimeContext(
     fallbackLogMessage: "retrieval_query_embedding_openai_not_configured_using_pseudo_embedding",
   }))[0] ?? [];
   const queryVector = vectorLiteral(queryEmbedding);
-  const whereClause = authorizedWhereClause(input.access, access);
+  const whereClause = withSourceTypeFilter(
+    input.allowBoundConversationScope
+      ? eq(retrievalChunks.providerGroupId, input.access.providerGroupId)
+      : authorizedWhereClause(input.access, access),
+    input.sourceTypes,
+  );
   const rows = await database
     .select({
       chunk: retrievalChunks,
@@ -78,7 +85,9 @@ export async function retrieveScopedRuntimeContext(
     .limit(rowLimit);
 
   const hits = rows
-    .filter(({ chunk }) => isAuthorizedChunk(chunk, input.access, access, templateFilter))
+    .filter(({ chunk }) =>
+      isAuthorizedChunk(chunk, input.access, access, templateFilter, Boolean(input.allowBoundConversationScope)),
+    )
     .map(({ chunk: row, vectorDistance }) => {
       const metadata = objectRecord(row.metadataJson);
       const lowered = row.content.toLowerCase();
@@ -114,6 +123,12 @@ export async function retrieveScopedRuntimeContext(
       template_filter: templateFilter,
     },
   };
+}
+
+function withSourceTypeFilter(whereClause: ReturnType<typeof authorizedWhereClause>, sourceTypes?: string[]) {
+  const normalized = normalizeUniqueStrings(sourceTypes ?? []);
+  if (!normalized.length) return whereClause;
+  return and(whereClause, inArray(retrievalChunks.sourceType, normalized));
 }
 
 function authorizedWhereClause(
@@ -177,10 +192,18 @@ function isAuthorizedChunk(
   requested: RetrievalAccessContext,
   access: ReturnType<typeof evaluateAccess>,
   templateFilter: KnowledgeFilter,
+  allowBoundConversationScope: boolean,
 ): boolean {
   const metadata = objectRecord(row.metadataJson);
   if (!matchesTemplateFilter(row.scope, row.sourceType, metadata, templateFilter)) {
     return false;
+  }
+  if (
+    allowBoundConversationScope &&
+    row.scope === "conversation" &&
+    row.providerGroupId === requested.providerGroupId
+  ) {
+    return true;
   }
   if (row.scope === "common") {
     return true;

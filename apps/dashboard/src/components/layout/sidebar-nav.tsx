@@ -12,7 +12,6 @@ import {
   GitBranch,
   Inbox,
   type LucideIcon,
-  ScrollText,
   Sparkles,
   TerminalSquare,
   UsersRound,
@@ -47,9 +46,7 @@ const SECTIONS: NavSection[] = [
     label: "Build",
     items: [
       { href: "/templates", label: "Templates", icon: Sparkles },
-      { href: "/prompts", label: "Prompts", icon: ScrollText },
       { href: "/knowledge/common", label: "Knowledge", icon: BookOpen },
-      { href: "/tools", label: "Tools", icon: Wrench },
     ],
   },
   {

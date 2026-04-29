@@ -48,6 +48,12 @@ export type TemplateVersion = {
   toolProfile: string;
   knowledgeProfile: string;
   egressPolicy: string;
+  runtimeImageConfig?: {
+    baseImage?: string;
+    dockerfileSnippet?: string;
+    piBashEnabled: boolean;
+    piBashAllowlist: string[];
+  };
   updatedAt: string;
   updatedBy: string;
 };
@@ -162,6 +168,18 @@ export type KnowledgeDocVersion = {
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+};
+
+export type PrivateKnowledgeScope = "group" | "customer" | "personal";
+
+export type PrivateKnowledgeDocKey = {
+  docKey: string;
+  title: string;
+  scopes: PrivateKnowledgeScope[];
+  groupCount: number;
+  customerCount: number;
+  personalCount: number;
+  updatedAt: string;
 };
 
 export type GroupKnowledgeLevel = "common" | "group" | "personal";
@@ -350,6 +368,9 @@ export type AgentRunRecord = {
   reasoningEffort: string;
   allowedTools: string[];
   retrievalRefs: string[];
+  systemPrompt?: string;
+  userPrompt?: string;
+  inputContext: Record<string, unknown>;
   responseText?: string;
   responsePreview?: string;
   error?: string;
@@ -605,23 +626,27 @@ function toWorkflowStatus(value: string): WorkflowStatus {
 }
 
 function toMediaKind(mimeType: string): MediaAsset["kind"] {
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.startsWith("video/")) return "video";
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/") || normalized.endsWith("/audio")) return "audio";
+  if (normalized.startsWith("video/") || normalized.endsWith("/video")) return "video";
   return "file";
 }
 
 function fileExtensionFromMimeType(mimeType: string): string {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/gif") return "gif";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "text/plain") return "txt";
-  if (mimeType === "audio/mpeg") return "mp3";
-  if (mimeType === "audio/ogg") return "ogg";
-  if (mimeType === "audio/mp4") return "m4a";
-  if (mimeType === "video/mp4") return "mp4";
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized === "image/jpeg") return "jpg";
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized === "text/plain") return "txt";
+  if (normalized === "audio/mpeg" || normalized === "application/audio") return "mp3";
+  if (normalized === "audio/ogg") return "ogg";
+  if (normalized === "audio/mp4") return "m4a";
+  if (normalized === "audio/wav" || normalized === "audio/wave") return "wav";
+  if (normalized.startsWith("audio/")) return "mp3";
+  if (normalized === "video/mp4") return "mp4";
   return "bin";
 }
 

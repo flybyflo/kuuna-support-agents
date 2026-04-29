@@ -41,6 +41,8 @@ const queueBuildInput = z.object({
 
 type TemplateVersionRow = typeof templateVersions.$inferSelect;
 
+const disabledToolKeys = new Set(["context_lookup", "send_whatsapp"]);
+
 function mapTemplateVersion(version: TemplateVersionRow) {
   return {
     id: version.id,
@@ -54,6 +56,33 @@ function mapTemplateVersion(version: TemplateVersionRow) {
     created_at: version.createdAt.toISOString(),
     updated_at: version.updatedAt.toISOString(),
   };
+}
+
+function sanitizeToolsConfig(toolsConfig: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...toolsConfig };
+  for (const key of ["allowed_tools", "allowedTools"]) {
+    const value = next[key];
+    if (Array.isArray(value)) {
+      next[key] = value.filter(
+        (item): item is string =>
+          typeof item === "string" && !disabledToolKeys.has(item.trim().toLowerCase()),
+      );
+    }
+  }
+  const tools = next.tools;
+  if (Array.isArray(tools)) {
+    next.tools = tools.filter((item) => {
+      if (typeof item === "string") {
+        return !disabledToolKeys.has(item.trim().toLowerCase());
+      }
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const name = (item as Record<string, unknown>).name;
+        return typeof name !== "string" || !disabledToolKeys.has(name.trim().toLowerCase());
+      }
+      return true;
+    });
+  }
+  return next;
 }
 
 export const templatesRouter = createTRPCRouter({
@@ -157,7 +186,7 @@ export const templatesRouter = createTRPCRouter({
           status: "draft",
           systemPrompt: input.systemPrompt ?? null,
           modelConfig: input.modelConfig,
-          toolsConfig: input.toolsConfig,
+          toolsConfig: sanitizeToolsConfig(input.toolsConfig),
           egressPolicy: input.egressPolicy,
         })
         .returning();
@@ -295,9 +324,9 @@ export const templatesRouter = createTRPCRouter({
           versionId: input.versionId,
           baseImage: input.baseImage,
           allowedTools: input.allowedTools ?? null,
-          dockerfileSnippet: input.dockerfileSnippet ?? null,
-          piBashEnabled: input.piBashEnabled ?? false,
-          piBashAllowlist: input.piBashAllowlist ?? null,
+          dockerfileSnippet: input.dockerfileSnippet ?? undefined,
+          piBashEnabled: input.piBashEnabled ?? undefined,
+          piBashAllowlist: input.piBashAllowlist ?? undefined,
         }, { enqueueJob: ctx.enqueueJob }));
       } catch (error) {
         if (error instanceof TemplateBuildValidationError) {

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 
 import type { DbLike } from "../db/client.js";
-import { mediaAssets, messageLinks, messages, messageVersions, todos } from "../db/schema.js";
+import { groupBindings, mediaAssets, messageLinks, messages, messageVersions, todos } from "../db/schema.js";
 import { publishRuntimeEvent } from "../runtime/events.js";
 
 type MessageRow = typeof messages.$inferSelect;
@@ -24,6 +24,8 @@ export async function ensureAutomaticFollowupTodo(
     traceId?: string | null;
   },
 ): Promise<AutomaticFollowupTodoResult> {
+  if (!(await hasActiveGroupBinding(database, input.providerGroupId))) return { status: "not_required" };
+
   const [message] = await database
     .select()
     .from(messages)
@@ -83,10 +85,21 @@ export async function ensureAutomaticFollowupTodo(
   return todo ? { status: "created", todoId: todo.id } : { status: "not_required" };
 }
 
+export async function hasActiveGroupBinding(database: DbLike, providerGroupId: string): Promise<boolean> {
+  const [binding] = await database
+    .select({ id: groupBindings.id })
+    .from(groupBindings)
+    .where(and(eq(groupBindings.providerGroupId, providerGroupId), eq(groupBindings.status, "active")))
+    .limit(1);
+  return Boolean(binding);
+}
+
 export function automaticTodoTitle(links: MessageLinkRow[], media: MediaAssetRow[]): string {
-  const hasImages = media.some((asset) => asset.mimeType.startsWith("image/"));
-  if (hasImages) return "Review image attachment";
-  if (media.length > 0) return "Review media attachment";
+  if (media.some((asset) => mediaKindFromMimeType(asset.mimeType) === "image")) return "Review image attachment";
+  if (media.some((asset) => mediaKindFromMimeType(asset.mimeType) === "audio")) return "Review audio attachment";
+  if (media.some((asset) => mediaKindFromMimeType(asset.mimeType) === "video")) return "Review video attachment";
+  if (media.some((asset) => mediaKindFromMimeType(asset.mimeType) === "document")) return "Review document attachment";
+  if (media.length > 0) return "Review file attachment";
   if (links.length > 0) return "Review shared link";
   return "Review evidence text";
 }
@@ -142,6 +155,7 @@ function automaticTodoMetadata(
       id: asset.id,
       provider_media_id: asset.providerMediaId,
       file_name: asset.fileName,
+      kind: mediaKindFromMimeType(asset.mimeType),
       mime_type: asset.mimeType,
       byte_size: asset.byteSize,
       storage_key: asset.s3Key,
@@ -187,6 +201,24 @@ function mediaContentHash(asset: MediaAssetRow): string | null {
     }
   }
   return null;
+}
+
+function mediaKindFromMimeType(mimeType: string | null | undefined): "image" | "audio" | "video" | "document" | "file" {
+  const normalized = (mimeType ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("image/") || normalized.endsWith("/image")) return "image";
+  if (normalized.startsWith("audio/") || normalized.endsWith("/audio")) return "audio";
+  if (normalized.startsWith("video/") || normalized.endsWith("/video")) return "video";
+  if (
+    normalized === "application/pdf" ||
+    normalized.startsWith("text/") ||
+    normalized.includes("document") ||
+    normalized.includes("spreadsheet") ||
+    normalized.includes("presentation") ||
+    normalized.includes("wordprocessingml")
+  ) {
+    return "document";
+  }
+  return "file";
 }
 
 function sha256Text(value: string): string {

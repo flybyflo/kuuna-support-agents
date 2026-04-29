@@ -67,3 +67,13 @@ export function kuunaAgentInstanceId(): string | undefined {
   const value = process.env.KUUNA_AGENT_INSTANCE_ID?.trim();
   return value || undefined;
 }
+
+export function kuunaRuntimeToolBackendBaseUrl(): string | undefined {
+  const value = process.env.KUUNA_RUNTIME_TOOL_BACKEND_BASE_URL?.trim();
+  return value ? value.replace(/\/$/, "") : undefined;
+}
+
+export function kuunaRuntimeToolToken(): string | undefined {
+  const value = process.env.KUUNA_RUNTIME_TOOL_TOKEN?.trim();
+  return value || undefined;
+}

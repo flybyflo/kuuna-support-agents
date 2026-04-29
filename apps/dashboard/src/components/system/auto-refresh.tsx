@@ -11,7 +11,7 @@ export const AUTO_REFRESH_INTERVALS = {
 } as const;
 
 type AutoRefreshProps = {
-  intervalMs?: number;
+  intervalMs?: number | null;
   pauseWhenHidden?: boolean;
   eventTypes?: string[];
 };
@@ -24,14 +24,14 @@ export function AutoRefresh({
   const router = useRouter();
 
   useEffect(() => {
-    const tick = () => {
-      if (pauseWhenHidden && document.visibilityState !== "visible") return;
+    const tick = (options: { ignoreVisibility?: boolean } = {}) => {
+      if (!options.ignoreVisibility && pauseWhenHidden && document.visibilityState !== "visible") return;
       router.refresh();
     };
 
     const handleRuntimeEvent = (event: Event) => {
       if (!eventTypes?.length) {
-        tick();
+        tick({ ignoreVisibility: true });
         return;
       }
       const detail = event instanceof CustomEvent ? event.detail : null;
@@ -40,7 +40,7 @@ export function AutoRefresh({
           ? String(detail.type)
           : "";
       if (eventTypes.includes(type)) {
-        tick();
+        tick({ ignoreVisibility: true });
       }
     };
 
@@ -50,16 +50,18 @@ export function AutoRefresh({
       }
     };
 
-    const timer = window.setInterval(tick, intervalMs);
-    if (pauseWhenHidden) {
+    const timer = intervalMs === null ? null : window.setInterval(tick, intervalMs);
+    if (pauseWhenHidden && intervalMs !== null) {
       document.addEventListener("visibilitychange", handleVisibilityChange);
     }
     window.addEventListener("kuuna:runtime-event", handleRuntimeEvent);
 
     return () => {
-      window.clearInterval(timer);
+      if (timer) {
+        window.clearInterval(timer);
+      }
       window.removeEventListener("kuuna:runtime-event", handleRuntimeEvent);
-      if (pauseWhenHidden) {
+      if (pauseWhenHidden && intervalMs !== null) {
         document.removeEventListener(
           "visibilitychange",
           handleVisibilityChange,

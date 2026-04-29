@@ -8,16 +8,24 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import {
   runtimeMediaAttachmentSchema,
+  runtimeToolSearchRequestSchema,
+  runtimeToolSearchResponseSchema,
   type RuntimeAgentConfig,
   type RuntimeMediaInsight,
+  type RuntimeToolSearchResponse,
   type ToolExecutionResult,
   type ToolInvocation,
 } from "@kuuna/agent-contracts";
+import {
+  kuunaRuntimeToolBackendBaseUrl,
+  kuunaRuntimeToolToken,
+} from "./config.js";
 import { analyzeRuntimeMedia } from "./media-insights.js";
 
 export const KUUNA_TOOL_NAMES = [
   "uppercase",
   "media_analyze",
+  "chat_history_search",
   "knowledge_search",
   "message_history",
   "todo_create",
@@ -32,6 +40,7 @@ export type RuntimeToolState = {
 };
 
 const knownToolNames = new Set<string>(KUUNA_TOOL_NAMES);
+const disabledToolNames = new Set<string>(["context_lookup", "send_whatsapp"]);
 const unsafeBashCommandPattern = /[;&|<>\n\r`$()]/;
 
 function textArg(args: Record<string, unknown>, keys: string[]): string {
@@ -73,6 +82,47 @@ function runtimeMediaAttachments(context: Record<string, unknown>) {
   return parsed.success ? parsed.data : [];
 }
 
+async function callBackendSearchTool(
+  state: RuntimeToolState,
+  toolName: "chat_history_search" | "knowledge_search",
+  input: { query?: string; limit?: number },
+): Promise<RuntimeToolSearchResponse> {
+  const backendBaseUrl = kuunaRuntimeToolBackendBaseUrl();
+  const token = kuunaRuntimeToolToken();
+  if (!backendBaseUrl || !token) {
+    throw new Error("runtime backend search endpoint is not configured");
+  }
+  const context = state.context;
+  const request = runtimeToolSearchRequestSchema.parse({
+    trace_id: typeof context.trace_id === "string" ? context.trace_id : null,
+    tool_name: toolName,
+    query: input.query ?? "",
+    limit: input.limit ?? 8,
+    context: {
+      provider_group_id: context.provider_group_id,
+      binding_id: context.binding_id,
+      agent_instance_id: context.agent_instance_id,
+      sender_provider_user_id: context.sender_provider_user_id ?? null,
+    },
+  });
+  const response = await fetch(`${backendBaseUrl}/internal/runtime-tools/search`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-internal-token": token,
+    },
+    body: JSON.stringify(request),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload
+      ? String((payload as { detail: unknown }).detail)
+      : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  return runtimeToolSearchResponseSchema.parse(payload);
+}
+
 async function ensureMediaInsights(state: RuntimeToolState): Promise<RuntimeMediaInsight[]> {
   if (state.mediaInsights) {
     return state.mediaInsights;
@@ -86,7 +136,7 @@ async function ensureMediaInsights(state: RuntimeToolState): Promise<RuntimeMedi
 export function sanitizeAllowedTools(allowedTools: string[], runtimeConfig?: RuntimeAgentConfig): string[] {
   const sanitized = allowedTools
     .map((tool) => tool.trim().toLowerCase())
-    .filter((tool, index, tools) => knownToolNames.has(tool) && tools.indexOf(tool) === index);
+    .filter((tool, index, tools) => knownToolNames.has(tool) && !disabledToolNames.has(tool) && tools.indexOf(tool) === index);
   if (
     runtimeConfig?.pi_bash_enabled &&
     runtimeConfig.pi_bash_allowlist.length > 0 &&
@@ -146,25 +196,102 @@ export function createKuunaTools(state: RuntimeToolState, runtimeConfig?: Runtim
       },
     }),
     defineTool({
-      name: "knowledge_search",
-      label: "Knowledge Search",
-      description: "Read retrieved Kuuna knowledge snippets already scoped to this group.",
+      name: "chat_history_search",
+      label: "Chat History Search",
+      description: "Search older messages, links, and media transcripts for this bound WhatsApp group only.",
       parameters: Type.Object({
-        query: Type.Optional(Type.String({ description: "Search query." })),
+        query: Type.String({ description: "Search query." }),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of results." })),
       }),
       execute: async (_toolCallId, params) => {
         const startedAt = Date.now();
-        const hits = contextArray(state.context, ["retrieval_hits", "retrievalRefs", "retrieval_refs"]);
-        const stdout = JSON.stringify({ query: params.query ?? "", hits });
-        pushResult(state, startedAt, {
-          name: "knowledge_search",
-          ok: true,
-          stdout,
-          stderr: "",
-          timed_out: false,
-          details: { query: params.query ?? "", hit_count: hits.length },
-        });
-        return { content: [{ type: "text", text: stdout }], details: { hits } };
+        try {
+          const result = await callBackendSearchTool(state, "chat_history_search", {
+            query: params.query,
+            limit: params.limit,
+          });
+          const stdout = JSON.stringify({ query: result.query, hits: result.hits, access: result.access });
+          pushResult(state, startedAt, {
+            name: "chat_history_search",
+            ok: true,
+            stdout,
+            stderr: "",
+            timed_out: false,
+            details: { query: result.query, hit_count: result.hits.length, source: "backend_runtime_tool" },
+          });
+          return { content: [{ type: "text", text: stdout }], details: { hits: result.hits, access: result.access, error: "" } };
+        } catch (error) {
+          const stderr = error instanceof Error ? error.message : String(error);
+          pushResult(state, startedAt, {
+            name: "chat_history_search",
+            ok: false,
+            stdout: "",
+            stderr,
+            timed_out: /timed out|timeout/i.test(stderr),
+            details: { query: params.query, source: "backend_runtime_tool" },
+          });
+          return { content: [{ type: "text", text: stderr }], details: { hits: [], access: {}, error: stderr } };
+        }
+      },
+    }),
+    defineTool({
+      name: "knowledge_search",
+      label: "Knowledge Search",
+      description: "Search allowed Kuuna knowledge snippets through the backend policy gate.",
+      parameters: Type.Object({
+        query: Type.String({ description: "Search query." }),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of results." })),
+      }),
+      execute: async (_toolCallId, params) => {
+        const startedAt = Date.now();
+        try {
+          const result = await callBackendSearchTool(state, "knowledge_search", {
+            query: params.query,
+            limit: params.limit,
+          });
+          const stdout = JSON.stringify({ query: result.query, hits: result.hits, access: result.access });
+          pushResult(state, startedAt, {
+            name: "knowledge_search",
+            ok: true,
+            stdout,
+            stderr: "",
+            timed_out: false,
+            details: { query: result.query, hit_count: result.hits.length, source: "backend_runtime_tool" },
+          });
+          return { content: [{ type: "text", text: stdout }], details: { hits: result.hits, access: result.access, error: "" } };
+        } catch (error) {
+          const stderr = error instanceof Error ? error.message : String(error);
+          if (stderr !== "runtime backend search endpoint is not configured") {
+            pushResult(state, startedAt, {
+              name: "knowledge_search",
+              ok: false,
+              stdout: "",
+              stderr,
+              timed_out: /timed out|timeout/i.test(stderr),
+              details: {
+                query: params.query,
+                hit_count: 0,
+                source: "backend_runtime_tool",
+              },
+            });
+            return { content: [{ type: "text", text: stderr }], details: { hits: [], access: {}, error: stderr } };
+          }
+          const fallbackHits = contextArray(state.context, ["retrieval_hits", "retrievalRefs", "retrieval_refs"]);
+          const stdout = JSON.stringify({ query: params.query, hits: fallbackHits, fallback_reason: stderr });
+          pushResult(state, startedAt, {
+            name: "knowledge_search",
+            ok: fallbackHits.length > 0,
+            stdout,
+            stderr,
+            timed_out: /timed out|timeout/i.test(stderr),
+            details: {
+              query: params.query,
+              hit_count: fallbackHits.length,
+              source: "preloaded_context_fallback",
+            },
+          });
+          return { content: [{ type: "text", text: stdout }], details: { hits: fallbackHits, access: {}, error: stderr } };
+        }
       },
     }),
     defineTool({

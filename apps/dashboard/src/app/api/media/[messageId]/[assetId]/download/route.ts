@@ -9,16 +9,19 @@ type Params = Promise<{
 }>;
 
 function fileExtensionFromMimeType(mimeType: string): string {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/gif") return "gif";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType === "text/plain") return "txt";
-  if (mimeType === "audio/mpeg") return "mp3";
-  if (mimeType === "audio/ogg") return "ogg";
-  if (mimeType === "audio/mp4") return "m4a";
-  if (mimeType === "video/mp4") return "mp4";
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (normalized === "image/jpeg") return "jpg";
+  if (normalized === "image/png") return "png";
+  if (normalized === "image/webp") return "webp";
+  if (normalized === "image/gif") return "gif";
+  if (normalized === "application/pdf") return "pdf";
+  if (normalized === "text/plain") return "txt";
+  if (normalized === "audio/mpeg" || normalized === "application/audio") return "mp3";
+  if (normalized === "audio/ogg") return "ogg";
+  if (normalized === "audio/mp4") return "m4a";
+  if (normalized === "audio/wav" || normalized === "audio/wave") return "wav";
+  if (normalized.startsWith("audio/")) return "mp3";
+  if (normalized === "video/mp4") return "mp4";
   return "bin";
 }
 

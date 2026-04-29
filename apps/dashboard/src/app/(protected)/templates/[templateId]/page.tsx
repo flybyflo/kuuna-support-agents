@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { SimpleTable } from "@/components/data-table/simple-table";
-import { StatusBadge } from "@/components/status/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,22 +13,28 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FormActions, FormRow } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { SearchableKnowledgeSelector } from "@/components/templates/searchable-knowledge-selector";
+import { TemplateBuildList } from "@/components/templates/template-build-list";
 import { TemplateBuildAutoRefresh } from "@/components/templates/template-build-auto-refresh";
-import { getTemplate, listTemplateBuilds, listTemplateVersions } from "@/lib/api-client";
-import type { TemplateBuild } from "@/lib/api-client/types";
+import { ToolSelector } from "@/components/templates/tool-selector";
+import {
+  getTemplate,
+  listKnowledgeDocs,
+  listPrivateKnowledgeDocKeys,
+  listKnowledgeVersions,
+  listTemplateBuilds,
+  listTemplateVersions,
+  listTools,
+} from "@/lib/api-client";
+import type { KnowledgeDoc, KnowledgeDocVersion, TemplateBuild } from "@/lib/api-client/types";
 import { requireAuthorized } from "@/lib/auth/guards";
 import { isAdminRole } from "@/lib/permissions/matrix";
-import {
-  createTemplateDraftVersionAction,
-  publishTemplateVersionAction,
-} from "@/lib/templates/actions";
+import { saveTemplateVersionAction } from "@/lib/templates/actions";
 import { PI_OPENAI_MODELS, isPiOpenAiModel } from "@/lib/templates/pi-models";
-import { queueTemplateBuildAction } from "@/lib/templates/template-build-actions";
 import { formatDateTime } from "@/lib/utils/format";
 
 type Params = Promise<{ templateId: string }>;
@@ -53,12 +58,135 @@ function defaultModelChain(
   return latestWithChain.modelChain;
 }
 
-function csvOrEmpty(values: string[] | undefined): string {
-  return values?.length ? values.join(", ") : "";
-}
-
 function firstSupportedPiModel(modelChain: string[] | undefined): string | undefined {
   return modelChain?.find((model) => isPiOpenAiModel(model));
+}
+
+type KnowledgeDocKeyFilter = "*" | "none" | string[];
+
+type TemplateKnowledgeConfig = {
+  commonDocKeys: KnowledgeDocKeyFilter;
+  groupDocKeys: KnowledgeDocKeyFilter;
+  includeGroupKnowledge: boolean;
+};
+
+type KnowledgeDocOption = KnowledgeDoc & {
+  latestVersion?: KnowledgeDocVersion;
+  publishedVersion?: KnowledgeDocVersion;
+};
+
+const defaultKnowledgeConfig: TemplateKnowledgeConfig = {
+  commonDocKeys: "*",
+  groupDocKeys: "*",
+  includeGroupKnowledge: true,
+};
+
+const defaultSystemPrompt = [
+  "Du bist der Cyberheld WhatsApp-Beweissicherungsassistent in einer betreuten WhatsApp-Gruppe.",
+  "Cyberheld ist ein österreichischer Anbieter für Unterstützung bei Hass im Netz, digitaler Gewalt und damit verbundener Beweissicherung.",
+  "Du arbeitest für Cyberheld und das autorisierte Betreuungsteam dieser Gruppe.",
+  "Du unterstützt Klient:innen, Anwält:innen und berechtigte Mitarbeiter:innen dabei, relevante Informationen zu strukturieren, Beweise nachvollziehbar zu sichern, Fragen zum Ablauf zu beantworten und nächste Schritte vorzubereiten.",
+  "Du vertrittst keine Polizei, kein Gericht, keine Behörde und keine gegnerische Partei.",
+  "Du gibst keine verbindliche Rechtsberatung und ersetzt keine anwaltliche, medizinische, therapeutische oder behördliche Stelle.",
+  "Bei rechtlicher Bewertung, unklaren Sachverhalten, Risikoabwägungen oder sensiblen Entscheidungen erstellst du ein Todo für das zuständige Team oder verweist auf anwaltliche Prüfung.",
+  "Du leitest Antworten nur aus den Template-Anweisungen, dem Runtime-Kontext dieser Gruppe, bereitgestelltem Knowledge-/RAG-Kontext, erlaubten Tools, der aktuellen Nutzernachricht und autorisierter Chat-Historie ab.",
+  "Wenn eine Information nicht in diesen Quellen enthalten ist, sagst du das transparent oder erstellst ein Todo, statt zu raten.",
+  "Antworte auf Deutsch, präzise, freundlich und mit klaren nächsten Schritten.",
+].join("\n\n");
+
+function systemPromptForForm(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "Antworte auf Deutsch, präzise, freundlich und mit klaren nächsten Schritten.") {
+    return defaultSystemPrompt;
+  }
+  return trimmed;
+}
+
+function parseDocKeyFilter(value: unknown, fallback: KnowledgeDocKeyFilter): KnowledgeDocKeyFilter {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "*") return "*";
+    if (normalized === "none") return "none";
+    return normalized.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  }
+  return fallback;
+}
+
+function parseKnowledgeConfig(value: string | undefined): TemplateKnowledgeConfig {
+  if (!value) {
+    return defaultKnowledgeConfig;
+  }
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return {
+      commonDocKeys: parseDocKeyFilter(
+        parsed.common_doc_keys ?? parsed.commonDocKeys,
+        defaultKnowledgeConfig.commonDocKeys,
+      ),
+      groupDocKeys: parseDocKeyFilter(
+        parsed.group_doc_keys ?? parsed.groupDocKeys,
+        defaultKnowledgeConfig.groupDocKeys,
+      ),
+      includeGroupKnowledge:
+        parsed.include_group_knowledge === false || parsed.includeGroupKnowledge === false
+          ? false
+          : true,
+    };
+  } catch {
+    return defaultKnowledgeConfig;
+  }
+}
+
+function filterMode(value: KnowledgeDocKeyFilter): "all" | "selected" | "none" {
+  if (value === "*") return "all";
+  if (value === "none") return "none";
+  return "selected";
+}
+
+function selectedKeys(value: KnowledgeDocKeyFilter): Set<string> {
+  return new Set(Array.isArray(value) ? value : []);
+}
+
+function formatKnowledgeFilter(value: KnowledgeDocKeyFilter): string {
+  if (value === "*") return "all";
+  if (value === "none") return "none";
+  return value.length ? value.join(", ") : "none";
+}
+
+function formatKnowledgeProfile(value: string): string {
+  const config = parseKnowledgeConfig(value);
+  return [
+    `company: ${formatKnowledgeFilter(config.commonDocKeys)}`,
+    `bound private docs: ${config.includeGroupKnowledge ? formatKnowledgeFilter(config.groupDocKeys) : "none"}`,
+  ].join(" · ");
+}
+
+function formatRuntimeImageProfile(
+  runtimeImageConfig: { dockerfileSnippet?: string; piBashEnabled: boolean; piBashAllowlist: string[] } | undefined,
+): string {
+  const parts = ["fixed TS base"];
+  if (runtimeImageConfig?.dockerfileSnippet?.trim()) {
+    parts.push("custom Docker setup");
+  }
+  if (runtimeImageConfig?.piBashEnabled) {
+    parts.push(`bash: ${runtimeImageConfig.piBashAllowlist.length} allowlisted`);
+  }
+  return parts.join(" · ");
+}
+
+async function withKnowledgeVersionStatus(doc: KnowledgeDoc): Promise<KnowledgeDocOption> {
+  const versions = await listKnowledgeVersions(doc.id);
+  return {
+    ...doc,
+    latestVersion: versions[0],
+    publishedVersion: versions.find((version) => version.status === "published"),
+  };
 }
 
 export default async function TemplateDetailPage({
@@ -74,17 +202,23 @@ export default async function TemplateDetailPage({
   const { templateId } = await params;
   const search = await searchParams;
   const created = getSingleParam(search.created);
-  const draftCreated = getSingleParam(search.draft);
-  const published = getSingleParam(search.published);
+  const saved = getSingleParam(search.saved);
   const versionId = getSingleParam(search.versionId);
-  const cloneFromVersionId = getSingleParam(search.cloneFromVersionId);
   const error = getSingleParam(search.error);
-  const buildQueued = getSingleParam(search.buildQueued);
   const buildId = getSingleParam(search.buildId);
 
-  const [templateMaybe, versions] = await Promise.all([
+  const [
+    templateMaybe,
+    versions,
+    commonKnowledgeDocs,
+    privateKnowledgeDocKeys,
+    tools,
+  ] = await Promise.all([
     getTemplate(templateId),
     listTemplateVersions(templateId),
+    listKnowledgeDocs("common"),
+    listPrivateKnowledgeDocKeys(),
+    listTools(),
   ]);
 
   if (!templateMaybe) {
@@ -93,31 +227,34 @@ export default async function TemplateDetailPage({
 
   const template = templateMaybe;
 
-  const cloneSource = cloneFromVersionId
-    ? versions.find((version) => version.id === cloneFromVersionId)
-    : undefined;
-  const systemPromptDefault =
-    cloneSource?.systemPrompt ??
-    [
-      "Du bist der Cyberheld WhatsApp-Beweissicherungsassistent in einer betreuten WhatsApp-Gruppe.",
-      "Cyberheld ist ein österreichischer Anbieter für Unterstützung bei Hass im Netz, digitaler Gewalt und damit verbundener Beweissicherung.",
-      "Du arbeitest für Cyberheld und das autorisierte Betreuungsteam dieser Gruppe.",
-      "Du unterstützt Klient:innen, Anwält:innen und berechtigte Mitarbeiter:innen dabei, relevante Informationen zu strukturieren, Beweise nachvollziehbar zu sichern, Fragen zum Ablauf zu beantworten und nächste Schritte vorzubereiten.",
-      "Du vertrittst keine Polizei, kein Gericht, keine Behörde und keine gegnerische Partei.",
-      "Du gibst keine verbindliche Rechtsberatung und ersetzt keine anwaltliche, medizinische, therapeutische oder behördliche Stelle.",
-      "Bei rechtlicher Bewertung, unklaren Sachverhalten, Risikoabwägungen oder sensiblen Entscheidungen erstellst du ein Todo für das zuständige Team oder verweist auf anwaltliche Prüfung.",
-      "Du leitest Antworten nur aus den Template-Anweisungen, dem Runtime-Kontext dieser Gruppe, bereitgestelltem Knowledge-/RAG-Kontext, erlaubten Tools, der aktuellen Nutzernachricht und autorisierter Chat-Historie ab.",
-      "Wenn eine Information nicht in diesen Quellen enthalten ist, sagst du das transparent oder erstellst ein Todo, statt zu raten.",
-      "Antworte auf Deutsch, präzise, freundlich und mit klaren nächsten Schritten.",
-    ].join("\n\n");
+  const activeVersion =
+    versions.find((version) => version.status === "published") ?? versions[0];
+  const systemPromptDefault = systemPromptForForm(activeVersion?.systemPrompt);
   const modelChainPrefill =
-    firstSupportedPiModel(cloneSource?.modelChain) ??
+    firstSupportedPiModel(activeVersion?.modelChain) ??
     firstSupportedPiModel(defaultModelChain(versions)) ??
     "gpt-5.5";
-  const allowedToolsPrefill = cloneSource?.allowedTools?.length
-    ? csvOrEmpty(cloneSource.allowedTools)
-    : "uppercase, knowledge_search, message_history, todo_create, todo_update, todo_list";
-  const egressModePrefill = cloneSource?.egressPolicy ?? "restricted";
+  const allowedToolsPrefill = activeVersion?.allowedTools?.length
+    ? activeVersion.allowedTools.filter(
+        (tool) => tool !== "knowledge_search" && tool !== "chat_history_search",
+      )
+    : ["message_history", "media_analyze", "todo_create", "todo_update", "todo_list"];
+  const knowledgeConfigPrefill = parseKnowledgeConfig(activeVersion?.knowledgeProfile);
+  const commonKnowledgeModePrefill = filterMode(knowledgeConfigPrefill.commonDocKeys);
+  const selectedCommonDocKeys = selectedKeys(knowledgeConfigPrefill.commonDocKeys);
+  const groupKnowledgeModePrefill =
+    knowledgeConfigPrefill.includeGroupKnowledge
+      ? filterMode(knowledgeConfigPrefill.groupDocKeys)
+      : "none";
+  const selectedGroupDocKeys = Array.isArray(knowledgeConfigPrefill.groupDocKeys)
+    ? knowledgeConfigPrefill.groupDocKeys
+    : [];
+  const includeChatHistorySearchPrefill =
+    activeVersion?.allowedTools?.includes("chat_history_search") ?? true;
+  const runtimeImageConfigPrefill = activeVersion?.runtimeImageConfig;
+  const commonKnowledgeOptions = await Promise.all(
+    commonKnowledgeDocs.map(withKnowledgeVersionStatus),
+  );
 
   const publishedVersionIds = Array.from(
     new Set(
@@ -166,27 +303,12 @@ export default async function TemplateDetailPage({
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          Next step: create a draft version, then publish it before binding
-          groups.
+          Configure the template below and save it to build the runtime image.
         </Notice>
       ) : null}
 
-      {draftCreated === "1" ? (
-        <Notice title="Draft version created" tone="success">
-          {versionId ? (
-            <p>
-              Version ID:{" "}
-              <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
-                {versionId}
-              </code>
-            </p>
-          ) : null}
-          <p>Publish it so staff can bind WhatsApp groups with this template.</p>
-        </Notice>
-      ) : null}
-
-      {published === "1" ? (
-        <Notice title="Template version published" tone="success">
+      {saved === "1" ? (
+        <Notice title="Template saved" tone="success">
           {versionId ? (
             <p>
               Active version:{" "}
@@ -195,26 +317,15 @@ export default async function TemplateDetailPage({
               </code>
             </p>
           ) : null}
-          <p>
-            Existing active group bindings for this template now use this version.
-            New groups can also be bound to it.
-          </p>
-        </Notice>
-      ) : null}
-
-      {buildQueued === "1" ? (
-        <Notice title="Template-Build gestartet" tone="success">
           {buildId ? (
             <p>
-              Build-ID:{" "}
+              Runtime image build:{" "}
               <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
                 {buildId}
               </code>
             </p>
           ) : null}
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Status aktualisiert sich automatisch alle paar Sekunden, solange der Build läuft.
-          </p>
+          <p>The build status updates automatically while the image is queued or running.</p>
         </Notice>
       ) : null}
 
@@ -231,28 +342,28 @@ export default async function TemplateDetailPage({
         </CardHeader>
         <CardContent className="pb-6">
           <p className="text-sm text-muted-foreground">
-            Published version ID:{" "}
+            Active version ID:{" "}
             <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
               {template.publishedVersionId || "n/a"}
             </code>
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Flow: create draft → (optionally clone/edit) → publish → bind group.
+            Saving makes this configuration active and starts a runtime image build.
           </p>
         </CardContent>
       </Card>
 
       <Card>
-        <div id="create-draft" />
+        <div id="configuration" />
         <CardHeader>
-          <CardTitle>Create draft version</CardTitle>
+          <CardTitle>Template configuration</CardTitle>
           <CardDescription>
-            Start from defaults or clone an existing version using the timeline actions below.
+            Save once to update the active template and start the Pi runtime image build.
           </CardDescription>
         </CardHeader>
         <CardContent className="pb-6">
           <form
-            action={createTemplateDraftVersionAction}
+            action={saveTemplateVersionAction}
             className="flex flex-col gap-4"
           >
             <input type="hidden" name="templateId" value={template.id} />
@@ -289,71 +400,92 @@ export default async function TemplateDetailPage({
                 </Select>
               </FormRow>
 
-              <FormRow
-                label="Allowed tools"
-                htmlFor="allowedTools"
-                hint="Comma-separated tool keys."
-              >
-                <Input
-                  id="allowedTools"
-                  name="allowedTools"
-                  defaultValue={allowedToolsPrefill}
-                  placeholder="uppercase, knowledge_search, message_history, todo_create"
-                />
-              </FormRow>
-            </div>
-
-            <FormRow label="Egress mode" htmlFor="egressMode">
-              <Select
-                id="egressMode"
-                name="egressMode"
-                defaultValue={egressModePrefill}
-              >
-                <option value="restricted">restricted</option>
-                <option value="strict">strict</option>
-                <option value="allow-all">allow-all</option>
-              </Select>
-            </FormRow>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <FormRow
-                label="Company knowledge doc keys"
-                htmlFor="commonKnowledgeDocKeys"
-                hint="Comma-separated doc_key values. Use * for all, none for no company docs."
-              >
-                <Input
-                  id="commonKnowledgeDocKeys"
-                  name="commonKnowledgeDocKeys"
-                  defaultValue="*"
-                  placeholder="*, financing-policy, intake-rules"
-                />
-              </FormRow>
-
-              <FormRow
-                label="Group knowledge doc keys"
-                htmlFor="groupKnowledgeDocKeys"
-                hint="Applied to the bound WhatsApp group. Use * for all, none for no group docs."
-              >
-                <Input
-                  id="groupKnowledgeDocKeys"
-                  name="groupKnowledgeDocKeys"
-                  defaultValue="*"
-                  placeholder="*, bookkeeping, customer-rules"
-                />
-              </FormRow>
-            </div>
-
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <Checkbox
-                name="includeGroupKnowledge"
-                defaultChecked
-                aria-label="Include current group knowledge"
+              <ToolSelector
+                tools={tools}
+                defaultSelectedToolKeys={allowedToolsPrefill}
               />
-              <span>Include current WhatsApp-group knowledge</span>
-            </label>
+            </div>
+
+            <SearchableKnowledgeSelector
+              companyDocs={commonKnowledgeOptions.map((doc) => ({
+                id: doc.id,
+                docKey: doc.docKey,
+                title: doc.title,
+                status:
+                  doc.publishedVersion?.status ??
+                  doc.latestVersion?.status ??
+                  doc.status,
+              }))}
+              privateDocKeys={privateKnowledgeDocKeys}
+              defaultCompanyMode={commonKnowledgeModePrefill}
+              defaultCompanyDocKeys={Array.from(selectedCommonDocKeys)}
+              defaultPrivateMode={groupKnowledgeModePrefill}
+              defaultPrivateDocKeys={selectedGroupDocKeys}
+              defaultIncludeChatHistorySearch={includeChatHistorySearchPrefill}
+            />
+
+            <div className="space-y-4 rounded-lg border border-border p-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-medium text-foreground">Pi runtime image</h3>
+                <p className="text-xs text-muted-foreground">
+                  Saved with this template version. Image builds use these settings without asking again.
+                </p>
+              </div>
+
+              <FormRow
+                label="Additional Dockerfile instructions"
+                htmlFor="dockerfileSnippet"
+                hint="Inserted after the TS agent setup. FROM, CMD, ENTRYPOINT, and EXPOSE are blocked."
+              >
+                <Textarea
+                  id="dockerfileSnippet"
+                  name="dockerfileSnippet"
+                  defaultValue={runtimeImageConfigPrefill?.dockerfileSnippet ?? ""}
+                  placeholder={"RUN apt-get update && apt-get install -y --no-install-recommends jq ffmpeg && rm -rf /var/lib/apt/lists/*"}
+                  rows={4}
+                />
+              </FormRow>
+
+              <div className="space-y-1">
+                <h4 className="text-sm font-medium text-foreground">Runtime tools</h4>
+                <p className="text-xs text-muted-foreground">
+                  Template tools are selected above. Only enable bash when this runtime image needs allowlisted shell commands.
+                </p>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="piBashEnabled"
+                  name="piBashEnabled"
+                  defaultChecked={runtimeImageConfigPrefill?.piBashEnabled ?? false}
+                />
+                <div className="space-y-1">
+                  <label htmlFor="piBashEnabled" className="text-sm font-medium text-foreground">
+                    Enable Pi bash exec
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Allows the agent to run allowlisted commands inside this runtime image.
+                  </p>
+                </div>
+              </div>
+
+              <FormRow
+                label="Bash allowlist"
+                htmlFor="piBashAllowlist"
+                hint="Comma- or newline-separated command prefixes, for example jq, python, ffmpeg -i."
+              >
+                <Textarea
+                  id="piBashAllowlist"
+                  name="piBashAllowlist"
+                  defaultValue={runtimeImageConfigPrefill?.piBashAllowlist.join("\n") ?? ""}
+                  placeholder={"jq\npython\nffmpeg -i"}
+                  rows={4}
+                />
+              </FormRow>
+            </div>
 
             <FormActions>
-              <Button type="submit">Create draft</Button>
+              <Button type="submit">Save</Button>
             </FormActions>
           </form>
         </CardContent>
@@ -362,9 +494,9 @@ export default async function TemplateDetailPage({
       <Card className="overflow-hidden">
         <div id="timeline" />
         <CardHeader>
-          <CardTitle>Version timeline</CardTitle>
+          <CardTitle>Saved versions</CardTitle>
           <CardDescription>
-            All template versions with their model and egress configuration.
+            Configuration history for this template.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0 pt-4">
@@ -377,10 +509,6 @@ export default async function TemplateDetailPage({
                 cell: (version) => (
                   <Badge variant="outline">v{version.versionNo}</Badge>
                 ),
-              },
-              {
-                header: "Status",
-                cell: (version) => <StatusBadge status={version.status} />,
               },
               {
                 header: "Model failover",
@@ -413,15 +541,15 @@ export default async function TemplateDetailPage({
                 header: "Knowledge",
                 cell: (version) => (
                   <span className="text-sm text-foreground">
-                    {version.knowledgeProfile || "common: *, group: *"}
+                    {formatKnowledgeProfile(version.knowledgeProfile)}
                   </span>
                 ),
               },
               {
-                header: "Egress",
+                header: "Runtime image",
                 cell: (version) => (
                   <span className="text-sm text-foreground">
-                    {version.egressPolicy || "default"}
+                    {formatRuntimeImageProfile(version.runtimeImageConfig)}
                   </span>
                 ),
               },
@@ -433,42 +561,6 @@ export default async function TemplateDetailPage({
                   </span>
                 ),
               },
-              {
-                header: "Actions",
-                cell: (version) => {
-                  const cloneHref = `/templates/${encodeURIComponent(template.id)}?cloneFromVersionId=${encodeURIComponent(version.id)}#create-draft`;
-
-                  if (
-                    version.status !== "draft" &&
-                    version.status !== "ready"
-                  ) {
-                    return (
-                      <Button type="button" variant="outline" size="sm" asChild>
-                        <Link href={cloneHref}>Clone</Link>
-                      </Button>
-                    );
-                  }
-
-                  return (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" variant="outline" size="sm" asChild>
-                        <Link href={cloneHref}>Clone</Link>
-                      </Button>
-                      <form action={publishTemplateVersionAction}>
-                        <input
-                          type="hidden"
-                          name="templateId"
-                          value={template.id}
-                        />
-                        <input type="hidden" name="versionId" value={version.id} />
-                        <Button type="submit" variant="outline" size="sm">
-                          Publish
-                        </Button>
-                      </form>
-                    </div>
-                  );
-                },
-              },
             ]}
           />
         </CardContent>
@@ -477,17 +569,15 @@ export default async function TemplateDetailPage({
       {canManageTemplateBuilds ? (
         <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle>Pi runtime images (published)</CardTitle>
+            <CardTitle>Pi runtime image builds</CardTitle>
             <CardDescription>
-              Docker builds for the TypeScript Pi runtime per published template version. Builds run
-              asynchronously in the worker and are stored as <span className="font-mono">image_ref</span> in{" "}
-              <span className="font-mono">template_builds</span>.
+              Docker image history for saved template versions.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 pb-6">
             {publishedVersionIds.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No published version yet. Publish first, then build a Pi runtime image.
+                Save the template to start the first Pi runtime image build.
               </p>
             ) : (
               publishedVersionIds.map((publishedVersionId) => {
@@ -496,7 +586,7 @@ export default async function TemplateDetailPage({
 
                 return (
                   <div key={publishedVersionId} className="space-y-3">
-                    <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+                    <div className="space-y-2 border-t border-border pt-4 first:border-t-0 first:pt-0">
                       <div>
                         <p className="text-sm font-medium text-foreground">
                           Version{" "}
@@ -511,132 +601,12 @@ export default async function TemplateDetailPage({
                           </code>
                         </p>
                       </div>
-
-                      <form action={queueTemplateBuildAction} className="w-full md:max-w-3xl">
-                        <input type="hidden" name="templateId" value={template.id} />
-                        <input type="hidden" name="versionId" value={publishedVersionId} />
-
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <FormRow label="Node base image" htmlFor={`baseImage-${publishedVersionId}`}>
-                            <Input
-                              id={`baseImage-${publishedVersionId}`}
-                              name="baseImage"
-                              placeholder="node:22-bookworm"
-                              required
-                            />
-                          </FormRow>
-
-                          <FormRow
-                            label="Allowed tools (optional)"
-                            htmlFor={`allowedTools-${publishedVersionId}`}
-                            hint="Comma-separated. Empty uses the template default."
-                          >
-                            <Input
-                              id={`allowedTools-${publishedVersionId}`}
-                              name="allowedTools"
-                              placeholder="echo, uppercase"
-                            />
-                          </FormRow>
-
-                          <FormRow
-                            label="Dockerfile snippet"
-                            htmlFor={`dockerfileSnippet-${publishedVersionId}`}
-                            hint="Inserted after pnpm setup. Use it for RUN/ENV/package installs."
-                            className="md:col-span-2"
-                          >
-                            <Textarea
-                              id={`dockerfileSnippet-${publishedVersionId}`}
-                              name="dockerfileSnippet"
-                              placeholder={"RUN apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*"}
-                              rows={4}
-                            />
-                          </FormRow>
-
-                          <div className="flex items-start gap-2 pt-6">
-                            <Checkbox id={`piBashEnabled-${publishedVersionId}`} name="piBashEnabled" />
-                            <div className="space-y-1">
-                              <label
-                                htmlFor={`piBashEnabled-${publishedVersionId}`}
-                                className="text-sm font-medium text-foreground"
-                              >
-                                Enable Pi bash exec
-                              </label>
-                              <p className="text-xs text-muted-foreground">
-                                Allows the agent to run matching commands inside this runtime image.
-                              </p>
-                            </div>
-                          </div>
-
-                          <FormRow
-                            label="Bash allowlist"
-                            htmlFor={`piBashAllowlist-${publishedVersionId}`}
-                            hint="Comma- or newline-separated command prefixes, for example jq, python, ffmpeg -i."
-                          >
-                            <Textarea
-                              id={`piBashAllowlist-${publishedVersionId}`}
-                              name="piBashAllowlist"
-                              placeholder={"jq\npython\nffmpeg -i"}
-                              rows={4}
-                            />
-                          </FormRow>
-
-                          <FormActions className="md:col-span-2 md:justify-end">
-                            <Button type="submit" variant="outline">
-                              Start build
-                            </Button>
-                          </FormActions>
-                        </div>
-                      </form>
+                      <p className="text-xs text-muted-foreground">
+                        {formatRuntimeImageProfile(publishedVersion?.runtimeImageConfig)}
+                      </p>
                     </div>
 
-                    <SimpleTable
-                      data={builds}
-                      emptyMessage="Noch keine Builds für diese Version."
-                      columns={[
-                        {
-                          header: "Build",
-                          cell: (build) => (
-                            <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-                              {build.id}
-                            </code>
-                          ),
-                        },
-                        {
-                          header: "Status",
-                          cell: (build) => <StatusBadge status={build.status} />,
-                        },
-                        {
-                          header: "Image",
-                          cell: (build) => (
-                            <div className="space-y-1">
-                              {build.imageRef ? (
-                                <p className="font-mono text-[11px] text-foreground">{build.imageRef}</p>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">n/a</p>
-                              )}
-                              {build.imageTag ? (
-                                <p className="font-mono text-[11px] text-muted-foreground">{build.imageTag}</p>
-                              ) : null}
-                            </div>
-                          ),
-                        },
-                        {
-                          header: "Logs",
-                          cell: (build) =>
-                            build.logsRef ? (
-                              <span className="font-mono text-[11px] text-foreground">{build.logsRef}</span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">n/a</span>
-                            ),
-                        },
-                        {
-                          header: "Updated",
-                          cell: (build) => (
-                            <span className="text-xs text-muted-foreground">{formatDateTime(build.updatedAt)}</span>
-                          ),
-                        },
-                      ]}
-                    />
+                    <TemplateBuildList builds={builds} />
                   </div>
                 );
               })

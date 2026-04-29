@@ -137,16 +137,6 @@ export const toolCatalog: ToolCatalogItem[] = [
     isEnabled: true,
     updatedAt: "2026-04-18T10:18:00Z",
   },
-  {
-    id: "tool-send-whatsapp",
-    toolKey: "send_whatsapp",
-    displayName: "Send WhatsApp",
-    description: "Sends outbound messages via gateway with idempotency.",
-    riskClass: "write",
-    category: "communication",
-    isEnabled: true,
-    updatedAt: "2026-04-18T10:20:00Z",
-  },
 ];
 
 export const bindings: GroupBinding[] = [
