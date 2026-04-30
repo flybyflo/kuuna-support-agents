@@ -12,7 +12,10 @@ const migrationsTable = "__kuuna_drizzle_migrations";
 const migrationNamePattern = /^\d{4}_[a-z0-9][a-z0-9_]*\.sql$/;
 
 function serviceRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  return currentDir.endsWith(path.join("dist", "src", "db"))
+    ? path.resolve(currentDir, "../../..")
+    : path.resolve(currentDir, "../..");
 }
 
 function compareMigrationNames(left: string, right: string): number {
