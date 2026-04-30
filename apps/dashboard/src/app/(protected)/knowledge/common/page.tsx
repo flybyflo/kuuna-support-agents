@@ -92,7 +92,10 @@ export default async function CommonKnowledgePage({
           <CardTitle>Create Common document</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action={createCommonKnowledgeDocAction} className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+          <form
+            action={createCommonKnowledgeDocAction}
+            className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-start"
+          >
             <FormRow
               label="Title"
               htmlFor="title"
@@ -107,7 +110,7 @@ export default async function CommonKnowledgePage({
             >
               <Input id="docKey" name="docKey" placeholder="evidence-intake" required />
             </FormRow>
-            <FormActions className="pt-0">
+            <FormActions className="pt-0 md:mt-[calc(theme(fontSize.sm)+theme(spacing.1.5))]">
               <Button type="submit">
                 <Plus className="size-4" aria-hidden />
                 Create

@@ -15,8 +15,12 @@ export type TriggerEvent = {
   };
 };
 
-export function evaluateTrigger(event: TriggerEvent): TriggerDecision {
-  if (hasAgentMention(event)) {
+export type TriggerOptions = {
+  agentMentionIds?: string[];
+};
+
+export function evaluateTrigger(event: TriggerEvent, options: TriggerOptions = {}): TriggerDecision {
+  if (hasAgentMention(event, options)) {
     return { shouldExecute: true, reason: "agent_mention_present", triggerType: "mention" };
   }
   if (event.message.reply_to_provider_message_id) {
@@ -46,13 +50,21 @@ function normalizeMention(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase();
 }
 
-function hasAgentMention(event: TriggerEvent): boolean {
-  const configuredIds = configuredCsvValues("AGENT_MENTION_IDS");
+function hasAgentMention(event: TriggerEvent, options: TriggerOptions): boolean {
+  const configuredIds = identityCandidates([
+    ...configuredCsvValues("AGENT_MENTION_IDS"),
+    ...(options.agentMentionIds ?? []),
+  ]);
   const aliases = new Set([...defaultAliases, ...configuredCsvValues("AGENT_MENTION_ALIASES")]);
 
   for (const mention of event.message.mentions) {
     const normalized = normalizeMention(mention);
-    if (configuredIds.size > 0 && configuredIds.has(normalized)) return true;
+    if (
+      configuredIds.size > 0 &&
+      Array.from(identityCandidates([mention])).some((candidate) => configuredIds.has(candidate))
+    ) {
+      return true;
+    }
     if (aliases.has(normalized)) return true;
   }
 
@@ -63,4 +75,27 @@ function hasAgentMention(event: TriggerEvent): boolean {
     }
   }
   return false;
+}
+
+function identityCandidates(values: Iterable<string>): Set<string> {
+  const candidates = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeMention(value);
+    if (!normalized) continue;
+    candidates.add(normalized);
+
+    const phone = phoneFromJid(normalized) ?? (/^\d{5,20}$/.test(normalized) ? normalized : null);
+    if (phone) {
+      candidates.add(phone);
+      candidates.add(`${phone}@s.whatsapp.net`);
+    }
+  }
+  return candidates;
+}
+
+function phoneFromJid(jid: string): string | null {
+  const [user, server] = jid.split("@", 2);
+  if (!user || server === "lid") return null;
+  const phone = user.split(":", 1)[0]?.replace(/\D/g, "") ?? "";
+  return phone.length >= 5 ? phone : null;
 }

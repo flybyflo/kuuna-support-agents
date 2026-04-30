@@ -16,6 +16,37 @@ test("mention trigger wins", () => {
   assert.equal(decision.reason, "agent_mention_present");
 });
 
+test("configured agent identity mention triggers by WhatsApp lid", () => {
+  const decision = evaluateTrigger(
+    {
+      message: {
+        text: "@2768027737581120",
+        reply_to_provider_message_id: null,
+        mentions: ["2768027737581120@lid"],
+      },
+    },
+    { agentMentionIds: ["2768027737581120@lid"] },
+  );
+  assert.equal(decision.shouldExecute, true);
+  assert.equal(decision.triggerType, "mention");
+  assert.equal(decision.reason, "agent_mention_present");
+});
+
+test("configured agent identity mention triggers by WhatsApp phone jid", () => {
+  const decision = evaluateTrigger(
+    {
+      message: {
+        text: "@436765308907",
+        reply_to_provider_message_id: null,
+        mentions: ["436765308907@s.whatsapp.net"],
+      },
+    },
+    { agentMentionIds: ["436765308907"] },
+  );
+  assert.equal(decision.shouldExecute, true);
+  assert.equal(decision.triggerType, "mention");
+});
+
 test("reply trigger is detected", () => {
   const decision = evaluateTrigger({
     message: {

@@ -5,6 +5,8 @@ import { logger } from "../logging.js";
 
 export const embeddingDimensions = 1536;
 const maxChunkChars = 1000;
+const maxEmbeddingInputChars = 12000;
+const maxEmbeddingInputWords = 6000;
 
 export function chunkMarkdown(content: string, maxLength = maxChunkChars): string[] {
   const normalized = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim();
@@ -43,7 +45,7 @@ export async function createEmbeddings(
   chunks: string[],
   options: { fallbackLogMessage?: string } = {},
 ): Promise<number[][]> {
-  const normalizedChunks = chunks.map((chunk) => (chunk.trim() ? chunk : "__empty__"));
+  const normalizedChunks = chunks.map(normalizeEmbeddingInput);
   const settings = getSettings();
 
   if (!settings.OPENAI_API_KEY) {
@@ -94,6 +96,34 @@ export async function createEmbeddings(
     }
     return vector;
   });
+}
+
+export function normalizeEmbeddingInput(chunk: string): string {
+  const trimmed = chunk.trim();
+  if (!trimmed) return "__empty__";
+
+  let normalized = trimmed;
+  const words = normalized.split(/\s+/);
+  if (words.length > maxEmbeddingInputWords) {
+    normalized = words.slice(0, maxEmbeddingInputWords).join(" ");
+  }
+  if (normalized.length > maxEmbeddingInputChars) {
+    normalized = normalized.slice(0, maxEmbeddingInputChars);
+    const splitAt = Math.max(normalized.lastIndexOf("\n"), normalized.lastIndexOf(" "));
+    if (splitAt > maxEmbeddingInputChars * 0.8) {
+      normalized = normalized.slice(0, splitAt);
+    }
+  }
+
+  if (normalized.length !== trimmed.length) {
+    logger.warn("embedding_input_truncated", {
+      original_chars: trimmed.length,
+      normalized_chars: normalized.length,
+      original_words: words.length,
+    });
+  }
+
+  return normalized.trim() || "__empty__";
 }
 
 export function vectorLiteral(vector: number[]): string {

@@ -8,6 +8,7 @@ import type { GatewayInboundEvent, GatewayOutboundStatusEvent } from "@kuuna/con
 
 import {
   groupBindings,
+  groupMembers,
   groupTemplates,
   outboundIntents,
   messageLinks,
@@ -72,6 +73,35 @@ test("contract: gateway inbound accepts and versions event", { skip: skipReason 
   assert.equal(harness.jobs[1]?.data.provider_group_id, payload.provider_group_id);
   assert.equal(harness.jobs[1]?.data.queued_task, undefined);
   assert.equal(parseRuntimeChatTask(harness.runtimeChatTasks[0]).name, "passive_message_analysis");
+});
+
+test("contract: gateway inbound triggers when WhatsApp mentions bound bot identity", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  const caller = await harness.caller();
+  t.after(async () => {
+    await harness.close();
+  });
+
+  const payload = inboundPayload("msg-bot-lid-mention");
+  await seedActiveBinding(harness, payload.provider_group_id);
+  await harness.db.insert(groupMembers).values({
+    providerGroupId: payload.provider_group_id,
+    providerUserId: "2768027737581120@lid",
+    role: "bot",
+    displayName: "Kuuna Bot",
+    derivedPhone: "436765308907",
+  });
+  payload.message.text = "@2768027737581120 can you check this?";
+  payload.message.mentions = ["2768027737581120@lid"];
+
+  const response = await caller.gateway.inbound.ingest(payload);
+
+  assert.equal(response.accepted, true);
+  assert.equal(response.execution_enqueued, true);
+  assert.deepEqual(harness.runtimeChatTasks.map((task) => parseRuntimeChatTask(task).name), [
+    "passive_message_analysis",
+    "inbound_execution",
+  ]);
 });
 
 test("contract: gateway inbound dedupes duplicate created event", { skip: skipReason }, async (t) => {

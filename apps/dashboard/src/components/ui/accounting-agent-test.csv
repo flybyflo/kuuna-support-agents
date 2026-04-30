@@ -1,0 +1,13 @@
+employee_name,expense_date,vendor,category,amount,currency,vat_amount,payment_method,paid_by,business_purpose,receipt_attached,receipt_file,project,cost_center
+Anna Berger,2026-04-12,Uber,Travel,34.20,EUR,3.42,Personal card,Employee,Client meeting,true,uber-2026-04-12.pdf,Client A,Sales
+Anna Berger,2026-04-12,Uber,Travel,34.20,EUR,3.42,Personal card,Employee,Client meeting,true,uber-duplicate.pdf,Client A,Sales
+Max Hofer,2026-04-14,Amazon,Office supplies,89.90,EUR,14.98,Company card,Company,,true,amazon-office.pdf,Internal,Operations
+Sara Klein,2026-04-15,Restaurant Adler,Meals,126.40,EUR,12.64,Personal card,Employee,Team lunch,false,,Internal,HR
+Lena Weiss,2026-04-17,ÖBB,Travel,58.00,EUR,,Personal card,Employee,Workshop travel,true,oebb-ticket.pdf,Training,People
+Tom Mayer,2026-04-18,Adobe,Software and subscriptions,71.40,EUR,11.90,Company card,Company,Design software subscription,true,adobe-invoice.pdf,Marketing,Marketing
+Mina Gruber,2026-04-18,Adobe,Software and subscriptions,71.40,EUR,11.90,Company card,Company,Design software subscription,true,adobe-invoice-copy.pdf,Marketing,Marketing
+Paul Steiner,2026-04-20,Hotel Central,Travel,312.00,EUR,31.20,Personal card,Employee,,false,,Client B,Sales
+Julia Braun,2026-04-20,Cafe Mozart,Meals,21.50,EUR,2.15,Personal card,Employee,Coffee with client,true,mozart-receipt.pdf,Client B,Marketing
+Martin Koch,2026-04-21,Lufthansa,Travel,450.00,EUR,43.00,Company card,Company,Business flight,true,lufthansa-ticket.pdf,Client C,Sales
+Eva Schmidt,2026-04-19,Apple,Equipment,1299.00,EUR,207.84,Company card,Company,New MacBook Pro,true,apple-invoice.pdf,Internal,IT
+Lisa Winkler,2026-04-18,IKEA,Office supplies,215.80,EUR,34.10,Personal card,Employee,Desk and chair,true,ikea-receipt.pdf,Internal,Operations

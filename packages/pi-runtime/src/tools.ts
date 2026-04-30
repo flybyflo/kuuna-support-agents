@@ -42,6 +42,7 @@ export type RuntimeToolState = {
 const knownToolNames = new Set<string>(KUUNA_TOOL_NAMES);
 const disabledToolNames = new Set<string>(["context_lookup", "send_whatsapp"]);
 const unsafeBashCommandPattern = /[;&|<>\n\r`$()]/;
+const pythonCommandPattern = /^python(?:\d+(?:\.\d+)*)?(?:\s|$)/;
 
 function textArg(args: Record<string, unknown>, keys: string[]): string {
   for (const key of keys) {
@@ -547,7 +548,15 @@ function createAllowlistedBashTool(state: RuntimeToolState, allowlist: string[])
 
 export function isBashCommandAllowed(command: string, allowlist: string[]): boolean {
   const normalizedCommand = normalizeBashCommand(command);
-  if (!normalizedCommand || unsafeBashCommandPattern.test(command)) {
+  if (!normalizedCommand) {
+    return false;
+  }
+
+  if (allowsPythonFamily(allowlist) && isPythonCommandAllowed(command)) {
+    return true;
+  }
+
+  if (unsafeBashCommandPattern.test(command)) {
     return false;
   }
 
@@ -555,6 +564,57 @@ export function isBashCommandAllowed(command: string, allowlist: string[]): bool
     .map(normalizeBashCommand)
     .filter(Boolean)
     .some((prefix) => normalizedCommand === prefix || normalizedCommand.startsWith(`${prefix} `));
+}
+
+function allowsPythonFamily(allowlist: string[]): boolean {
+  return allowlist.map(normalizeBashCommand).some((prefix) => prefix === "python");
+}
+
+function isPythonCommandAllowed(command: string): boolean {
+  const trimmed = command.trim();
+  if (!pythonCommandPattern.test(trimmed.toLowerCase())) {
+    return false;
+  }
+  if (/[`\r]/.test(trimmed) || trimmed.includes("$(")) {
+    return false;
+  }
+  if (isQuotedPythonHeredoc(trimmed)) {
+    return true;
+  }
+  return !hasUnquotedShellControl(trimmed);
+}
+
+function isQuotedPythonHeredoc(command: string): boolean {
+  const match = command.match(/^(python(?:\d+(?:\.\d+)*)?)\s+-\s+<<'([A-Za-z_][A-Za-z0-9_]*)'\n([\s\S]*)\n\2$/);
+  return Boolean(match);
+}
+
+function hasUnquotedShellControl(command: string): boolean {
+  let quote: "'" | "\"" | null = null;
+  let escaped = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === "\"" && char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      if (quote === char) {
+        quote = null;
+      } else if (!quote) {
+        quote = char;
+      }
+      continue;
+    }
+    if (!quote && /[;&|<>\n]/.test(char)) {
+      return true;
+    }
+  }
+  return quote !== null;
 }
 
 function normalizeBashCommand(command: string): string {

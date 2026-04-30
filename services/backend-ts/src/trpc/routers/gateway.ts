@@ -12,6 +12,7 @@ import { getSettings } from "../../config.js";
 import type { Database } from "../../db/client.js";
 import {
   groupBindings,
+  groupMembers,
   mediaAssets,
   messageDecisions,
   messageLinks,
@@ -79,7 +80,9 @@ export async function ingestGatewayInbound(
   runtimeChatQueue?: RuntimeChatTaskQueueClient,
 ): Promise<GatewayInboundAck> {
   const occurredAt = new Date(event.occurred_at);
-  const triggerDecision = evaluateTrigger(event);
+  const triggerDecision = evaluateTrigger(event, {
+    agentMentionIds: await loadGroupBotMentionIds(database, event.provider_group_id),
+  });
 
   const result = await database.transaction(async (tx) => {
     const [existing] = await tx
@@ -326,6 +329,23 @@ export async function ingestGatewayInbound(
     execution_enqueued:
       !result.deduped && result.activeBinding && event.event_type !== "message_deleted" && triggerDecision.shouldExecute,
   };
+}
+
+async function loadGroupBotMentionIds(database: Database, providerGroupId: string): Promise<string[]> {
+  const rows = await database
+    .select({
+      providerUserId: groupMembers.providerUserId,
+      derivedPhone: groupMembers.derivedPhone,
+      phoneOverride: groupMembers.phoneOverride,
+    })
+    .from(groupMembers)
+    .where(and(eq(groupMembers.providerGroupId, providerGroupId), eq(groupMembers.role, "bot")));
+
+  return rows.flatMap((row) => [row.providerUserId, row.derivedPhone, row.phoneOverride].filter(isPresentString));
+}
+
+function isPresentString(value: string | null): value is string {
+  return Boolean(value?.trim());
 }
 
 export async function recordGatewayOutboundStatus(

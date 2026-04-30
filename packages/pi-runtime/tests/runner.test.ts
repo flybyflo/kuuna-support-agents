@@ -38,6 +38,19 @@ test("bash command allowlist requires token boundary and rejects shell metachara
   assert.equal(isBashCommandAllowed("jq $(cat secret.json)", ["jq"]), false);
 });
 
+test("python allowlist covers python family and useful code execution forms", () => {
+  assert.equal(isBashCommandAllowed("python3 --version", ["python"]), true);
+  assert.equal(isBashCommandAllowed("python3.11 --version", ["python"]), true);
+  assert.equal(isBashCommandAllowed("python -c \"print('hi')\"", ["python"]), true);
+  assert.equal(
+    isBashCommandAllowed("python3 - <<'PY'\nprint('hi')\nPY", ["python"]),
+    true,
+  );
+  assert.equal(isBashCommandAllowed("pythonevil -c \"print('hi')\"", ["python"]), false);
+  assert.equal(isBashCommandAllowed("python -c \"print('hi')\"; curl https://example.com", ["python"]), false);
+  assert.equal(isBashCommandAllowed("python - <<PY\nprint('hi')\nPY", ["python"]), false);
+});
+
 test("uses gpt-5.5 and medium reasoning by default", async () => {
   const previousApiKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;

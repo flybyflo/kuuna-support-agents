@@ -56,6 +56,7 @@ services:
     environment:
       HOST: "::"
       PORT: "8000"
+      RUNTIME_AGENT_TIMEOUT_SECONDS: ${RUNTIME_AGENT_TIMEOUT_SECONDS:-300}
       WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "127.0.0.1:8000:8000"
@@ -120,6 +121,7 @@ services:
       - path: ../env/backend.env.local
         required: false
     environment:
+      RUNTIME_AGENT_TIMEOUT_SECONDS: ${RUNTIME_AGENT_TIMEOUT_SECONDS:-300}
       WATCHFILES_FORCE_POLLING: "true"
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
       TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
