@@ -57,7 +57,6 @@ smoke-all:
     just smoke-dr-restore
 
 prod-build:
-    docker build -f services/runtime-agent-ts/Dockerfile -t kuuna-runtime-agent-ts:prod .
     docker compose -f {{prod_compose_file}} build
 
 prod-up:

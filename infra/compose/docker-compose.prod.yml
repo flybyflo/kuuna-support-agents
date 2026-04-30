@@ -36,6 +36,7 @@ services:
     build:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile
+      target: runner
     env_file:
       - path: ../env/backend.env.example
       - path: ../env/backend.env.local
@@ -49,7 +50,7 @@ services:
       GATEWAY_BASE_URL: http://gateway:8090
       S3_ENDPOINT_URL: http://minio:9000
       RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
-      RUNTIME_DOCKER_NETWORK: kuuna-prod_default
+      RUNTIME_DOCKER_NETWORK: ${RUNTIME_DOCKER_NETWORK:-kuuna-prod_default}
       RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
       RUNTIME_AGENT_CONTAINER_PORT: "8100"
       RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
@@ -87,6 +88,7 @@ services:
     build:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile
+      target: runner-base
     command: ["node", "dist/src/db/migrate.js"]
     env_file:
       - path: ../env/backend.env.example
@@ -103,6 +105,7 @@ services:
     build:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile
+      target: runner
     command: ["node", "dist/src/jobs/worker.js"]
     env_file:
       - path: ../env/backend.env.example
@@ -115,7 +118,7 @@ services:
       GATEWAY_BASE_URL: http://gateway:8090
       S3_ENDPOINT_URL: http://minio:9000
       RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
-      RUNTIME_DOCKER_NETWORK: kuuna-prod_default
+      RUNTIME_DOCKER_NETWORK: ${RUNTIME_DOCKER_NETWORK:-kuuna-prod_default}
       RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
       RUNTIME_AGENT_CONTAINER_PORT: "8100"
       RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000

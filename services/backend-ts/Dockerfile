@@ -26,18 +26,20 @@ RUN pnpm exec turbo run build --filter=@kuuna/backend-ts...
 RUN pnpm --filter @kuuna/backend-ts deploy --prod --legacy /app \
   && cp -R services/backend-ts/dist /app/dist
 
-FROM ${BASE_IMAGE} AS runner
+FROM ${BASE_IMAGE} AS runner-base
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=8000
 WORKDIR /app
+COPY --from=builder /app ./
+EXPOSE 8000
+CMD ["node", "dist/src/server.js"]
+
+FROM runner-base AS runner
 RUN apt-get update \
   && apt-get install -y --no-install-recommends docker.io \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app ./
 COPY --from=builder /workspace/package.json /workspace/pnpm-lock.yaml /workspace/pnpm-workspace.yaml /workspace/turbo.json /workspace/
 COPY --from=builder /workspace/apps/dashboard/package.json /workspace/apps/dashboard/package.json
 COPY --from=builder /workspace/packages /workspace/packages
 COPY --from=builder /workspace/services/runtime-agent-ts /workspace/services/runtime-agent-ts
-EXPOSE 8000
-CMD ["node", "dist/src/server.js"]
