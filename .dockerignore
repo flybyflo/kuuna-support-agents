@@ -1,9 +1,11 @@
 .git
+.gitignore
 .DS_Store
 
 # Local dependencies and build output must never enter Docker build contexts.
 node_modules
 **/node_modules
+.pnpm-store
 .next
 **/.next
 dist
@@ -32,11 +34,18 @@ __pycache__
 # Local secrets/session state.
 .env
 .env.local
+.env.*.local
+**/.env.local
+**/.env.*.local
 *.env.local
 infra/env/*.local
 neonize.db
 
 # Logs and editor state.
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 .vscode
 .idea

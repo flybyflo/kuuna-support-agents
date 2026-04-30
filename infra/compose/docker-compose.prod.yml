@@ -1,0 +1,205 @@
+name: kuuna-prod
+
+services:
+  runtime-agent-image:
+    image: kuuna-runtime-agent-ts:prod
+    build:
+      context: ../..
+      dockerfile: services/runtime-agent-ts/Dockerfile
+    command: ["node", "-e", "process.exit(0)"]
+
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${NEXT_PUBLIC_SENTRY_ENVIRONMENT:-prod}
+    env_file:
+      - path: ../env/dashboard.env.example
+      - path: ../env/dashboard.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+      BACKEND_BASE_URL: http://backend:8000
+      GATEWAY_OPS_BASE_URL: http://gateway:8090
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/kuuna
+      REDIS_URL: redis://redis:6379/0
+      GATEWAY_BASE_URL: http://gateway:8090
+      S3_ENDPOINT_URL: http://minio:9000
+      RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
+      RUNTIME_DOCKER_NETWORK: kuuna-prod_default
+      RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
+      RUNTIME_AGENT_CONTAINER_PORT: "8100"
+      RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
+      TEMPLATE_BUILD_CONTEXT_PATH: /workspace
+      TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      runtime-agent-image:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8000/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile
+    command: ["node", "dist/src/db/migrate.js"]
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/kuuna
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: services/backend-ts/Dockerfile
+    command: ["node", "dist/src/jobs/worker.js"]
+    env_file:
+      - path: ../env/backend.env.example
+      - path: ../env/backend.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/kuuna
+      REDIS_URL: redis://redis:6379/0
+      GATEWAY_BASE_URL: http://gateway:8090
+      S3_ENDPOINT_URL: http://minio:9000
+      RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
+      RUNTIME_DOCKER_NETWORK: kuuna-prod_default
+      RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
+      RUNTIME_AGENT_CONTAINER_PORT: "8100"
+      RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
+      TEMPLATE_BUILD_CONTEXT_PATH: /workspace
+      TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      runtime-agent-image:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: services/gateway/Dockerfile
+    env_file:
+      - path: ../env/gateway.env.example
+      - path: ../env/gateway.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      BACKEND_BASE_URL: http://backend:8000
+      GATEWAY_OPS_HOST: "0.0.0.0"
+      GATEWAY_OPS_PORT: "8090"
+      SENTRY_ENVIRONMENT: prod
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - gateway_session:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: kuuna
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kuuna"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniopassword
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  gateway_session:
+  postgres_data:
+  minio_data:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"

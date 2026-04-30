@@ -3,6 +3,7 @@ import path from "node:path";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  output: "standalone",
   allowedDevOrigins: ["127.0.0.1", "localhost"],
   outputFileTracingRoot: path.join(process.cwd(), "../.."),
   transpilePackages: ["@kuuna/api-client-ts"],

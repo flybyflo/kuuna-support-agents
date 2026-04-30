@@ -1,6 +1,7 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 compose_file := "infra/compose/docker-compose.dev.yml"
+prod_compose_file := "infra/compose/docker-compose.prod.yml"
 
 default:
     @just --list
@@ -54,3 +55,20 @@ smoke-dr-restore:
 smoke-all:
     just smoke-docker
     just smoke-dr-restore
+
+prod-build:
+    docker build -f services/runtime-agent-ts/Dockerfile -t kuuna-runtime-agent-ts:prod .
+    docker compose -f {{prod_compose_file}} build
+
+prod-up:
+    just prod-build
+    docker compose -f {{prod_compose_file}} up
+
+prod-down:
+    docker compose -f {{prod_compose_file}} down
+
+prod-logs:
+    docker compose -f {{prod_compose_file}} logs -f
+
+prod-migrate:
+    docker compose -f {{prod_compose_file}} run --build --rm migrate
