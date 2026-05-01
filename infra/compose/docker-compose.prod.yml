@@ -1,13 +1,6 @@
 name: kuuna-prod
 
 services:
-  runtime-agent-image:
-    image: kuuna-runtime-agent-ts:prod
-    build:
-      context: ../..
-      dockerfile: services/runtime-agent-ts/Dockerfile
-    command: ["node", "-e", "process.exit(0)"]
-
   dashboard:
     build:
       context: ../..
@@ -49,21 +42,15 @@ services:
       REDIS_URL: redis://redis:6379/0
       GATEWAY_BASE_URL: http://gateway:8090
       S3_ENDPOINT_URL: http://minio:9000
-      RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
-      RUNTIME_DOCKER_NETWORK: ${RUNTIME_DOCKER_NETWORK:-kuuna-prod_default}
-      RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
       RUNTIME_AGENT_TIMEOUT_SECONDS: ${RUNTIME_AGENT_TIMEOUT_SECONDS:-300}
       RUNTIME_AGENT_CONTAINER_PORT: "8100"
       RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
-      TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
+      RUNTIME_GONDOLIN_DATA_ROOT: /workspace/.kuuna/gondolin/runtime-data
+      RUNTIME_GONDOLIN_BUILD_ROOT: /workspace/.kuuna/gondolin/template-builds
     ports:
       - "127.0.0.1:8000:8000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      runtime-agent-image:
-        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       postgres:
@@ -118,19 +105,13 @@ services:
       REDIS_URL: redis://redis:6379/0
       GATEWAY_BASE_URL: http://gateway:8090
       S3_ENDPOINT_URL: http://minio:9000
-      RUNTIME_DOCKER_SOCKET: /var/run/docker.sock
-      RUNTIME_DOCKER_NETWORK: ${RUNTIME_DOCKER_NETWORK:-kuuna-prod_default}
-      RUNTIME_AGENT_IMAGE: kuuna-runtime-agent-ts:prod
       RUNTIME_AGENT_TIMEOUT_SECONDS: ${RUNTIME_AGENT_TIMEOUT_SECONDS:-300}
       RUNTIME_AGENT_CONTAINER_PORT: "8100"
       RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
-      TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      RUNTIME_GONDOLIN_DATA_ROOT: /workspace/.kuuna/gondolin/runtime-data
+      RUNTIME_GONDOLIN_BUILD_ROOT: /workspace/.kuuna/gondolin/template-builds
     depends_on:
-      runtime-agent-image:
-        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
       postgres:

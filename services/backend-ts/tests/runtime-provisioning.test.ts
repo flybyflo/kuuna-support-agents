@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import type { Settings } from "../src/config.js";
@@ -7,12 +7,14 @@ import {
   buildRuntimeEnv,
   buildRuntimeLabels,
   dataVolumeName,
-  provisionRuntimeContainer,
+  provisionGondolinRuntime,
   RuntimeProvisioningError,
+  runtimeConfigHash,
   safeContainerSuffix,
-  type DockerClient,
-  type DockerContainerInspect,
+  type GondolinRuntimeManager,
   type RuntimeIdentity,
+  type RuntimeVmSession,
+  type RuntimeVmSpec,
 } from "../src/runtime/provisioning.js";
 
 const baseSettings: Settings = {
@@ -45,55 +47,49 @@ const baseSettings: Settings = {
   OUTBOUND_DISPATCH_TIMEOUT_SECONDS: 10,
   TODO_EXPORT_ENABLED: false,
   TODO_EXPORT_TIMEOUT_SECONDS: 20,
-  DOCKER_CLI_PATH: "docker",
   TEMPLATE_BUILD_CONTEXT_PATH: ".",
-  TEMPLATE_BUILD_DOCKERFILE_PATH: "services/runtime-agent-ts/Dockerfile",
+  TEMPLATE_BUILD_GONDOLIN_CONFIG_PATH: "",
   RUNTIME_AGENT_TIMEOUT_SECONDS: 45,
-  RUNTIME_DOCKER_SOCKET: "/var/run/docker.sock",
-  RUNTIME_DOCKER_NETWORK: "kuuna-dev_default",
-  RUNTIME_AGENT_IMAGE: "kuuna-runtime-agent-ts:dev",
+  RUNTIME_GONDOLIN_ASSET_REF: "/opt/kuuna/gondolin/default-runtime",
+  RUNTIME_GONDOLIN_DATA_ROOT: "/tmp/kuuna-runtime-data",
+  RUNTIME_GONDOLIN_BUILD_ROOT: "/tmp/kuuna-template-builds",
+  RUNTIME_GONDOLIN_ROOTFS_MODE: "cow",
+  RUNTIME_GONDOLIN_ALLOWED_HOSTS_JSON: JSON.stringify(["api.openai.com", "127.0.0.1"]),
+  RUNTIME_GONDOLIN_START_COMMAND: "node dist/src/server.js",
   RUNTIME_AGENT_CONTAINER_PORT: 8100,
-  RUNTIME_TOOL_BACKEND_BASE_URL: "http://backend:8000",
+  RUNTIME_TOOL_BACKEND_BASE_URL: "http://127.0.0.1:8000",
   RUNTIME_CONTAINER_DATA_DIR: "/runtime-data",
-  RUNTIME_CONTAINER_DATA_VOLUME_PREFIX: "kuuna-runtime-data",
 };
 
-class FakeDockerClient implements DockerClient {
-  container: DockerContainerInspect | null = null;
-  createdPayloads: unknown[] = [];
-  startedContainers: string[] = [];
-  removedContainers: string[] = [];
-  connectedNetworks: string[] = [];
-  nextContainerId = "container-new";
+class FakeGondolinRuntimeManager implements GondolinRuntimeManager {
+  sessions = new Map<string, RuntimeVmSession>();
+  starts: RuntimeVmSpec[] = [];
+  closes: string[] = [];
+  nextSessionId = "gondolin-session-new";
 
-  async inspectContainer(containerNameOrId: string): Promise<DockerContainerInspect | null> {
-    if (containerNameOrId === this.nextContainerId) {
-      return { Id: this.nextContainerId, State: { Running: false }, Config: {}, NetworkSettings: { Networks: {} } };
+  async ensure(spec: RuntimeVmSpec): Promise<RuntimeVmSession> {
+    const existing = this.sessions.get(spec.identity.containerName);
+    if (existing && existing.configHash === spec.configHash && existing.assetRef === spec.assetRef) {
+      return existing;
     }
-    return this.container;
+    if (existing) {
+      await this.close(spec.identity.containerName);
+    }
+    this.starts.push(spec);
+    const session = {
+      sessionId: this.nextSessionId,
+      sessionLabel: spec.identity.containerName,
+      runtimeBaseUrl: "http://127.0.0.1:49152",
+      configHash: spec.configHash,
+      assetRef: spec.assetRef,
+    };
+    this.sessions.set(spec.identity.containerName, session);
+    return session;
   }
 
-  async inspectImage(): Promise<{ Id: string }> {
-    return { Id: "sha256:runtime-dev" };
-  }
-
-  async createContainer(_containerName: string, payload: unknown): Promise<{ Id: string }> {
-    this.createdPayloads.push(payload);
-    this.container = { Id: this.nextContainerId, State: { Running: false }, Config: {}, NetworkSettings: { Networks: {} } };
-    return { Id: this.nextContainerId };
-  }
-
-  async startContainer(containerId: string): Promise<void> {
-    this.startedContainers.push(containerId);
-  }
-
-  async removeContainer(containerId: string): Promise<void> {
-    this.removedContainers.push(containerId);
-    this.container = null;
-  }
-
-  async connectNetwork(networkName: string, containerId: string, containerName: string): Promise<void> {
-    this.connectedNetworks.push(`${networkName}:${containerId}:${containerName}`);
+  async close(sessionLabel: string): Promise<void> {
+    this.closes.push(sessionLabel);
+    this.sessions.delete(sessionLabel);
   }
 }
 
@@ -108,42 +104,6 @@ function identity(providerGroupId = "group-a@g.us"): RuntimeIdentity {
   };
 }
 
-function matchingContainer(runtimeIdentity: RuntimeIdentity, running: boolean): DockerContainerInspect {
-  const env = buildRuntimeEnv(runtimeIdentity, baseSettings);
-  const labels = buildRuntimeLabels(runtimeIdentity);
-  const configHashLabels = {
-    ...labels,
-    "dev.kuuna.runtime-image-id": "sha256:runtime-dev",
-    "dev.kuuna.runtime-config-hash": "placeholder",
-  };
-  const desiredHash = buildDesiredHash(runtimeIdentity);
-  configHashLabels["dev.kuuna.runtime-config-hash"] = desiredHash;
-  assert.ok(env.length > 0);
-  return {
-    Id: "container-existing",
-    Image: "sha256:runtime-dev",
-    State: { Running: running },
-    Config: {
-      Image: "kuuna-runtime-agent-ts:dev",
-      Labels: configHashLabels,
-    },
-    NetworkSettings: { Networks: { "kuuna-dev_default": {} } },
-  };
-}
-
-function buildDesiredHash(runtimeIdentity: RuntimeIdentity): string {
-  const labels = buildRuntimeLabels(runtimeIdentity);
-  const env = buildRuntimeEnv(runtimeIdentity, baseSettings);
-  return createHash("sha256")
-    .update(JSON.stringify({
-      image: "kuuna-runtime-agent-ts:dev",
-      imageId: "sha256:runtime-dev",
-      env: [...env].sort(),
-      labels: Object.entries(labels).sort(([left], [right]) => left.localeCompare(right)),
-    }))
-    .digest("hex");
-}
-
 async function withHealthyRuntime<T>(callback: () => Promise<T>): Promise<T> {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ status: "ok" }), { status: 200 });
@@ -154,137 +114,109 @@ async function withHealthyRuntime<T>(callback: () => Promise<T>): Promise<T> {
   }
 }
 
-test("provisionRuntimeContainer creates a lazy per-chat container and volume", async () => {
+test("provisionGondolinRuntime creates a lazy per-chat VM with data mount path", async () => {
   await withHealthyRuntime(async () => {
     const runtimeIdentity = identity();
-    const docker = new FakeDockerClient();
+    const manager = new FakeGondolinRuntimeManager();
 
-    const result = await provisionRuntimeContainer(docker, {
+    const result = await provisionGondolinRuntime(manager, {
       identity: runtimeIdentity,
-      image: "kuuna-runtime-agent-ts:dev",
+      assetRef: "/assets/runtime-a",
       settings: baseSettings,
     });
 
-    assert.equal(result.containerId, "container-new");
-    assert.equal(result.runtimeBaseUrl, `http://${runtimeIdentity.containerName}:8100`);
-    assert.equal(docker.createdPayloads.length, 1);
-    assert.equal(docker.startedContainers[0], "container-new");
-    const payload = docker.createdPayloads[0] as {
-      Cmd?: string[];
-      HostConfig: { Binds: string[]; NetworkMode: string };
-      Labels: Record<string, string>;
-      Env: string[];
-    };
-    assert.equal(payload.Cmd, undefined);
-    assert.deepEqual(payload.HostConfig.Binds, [`${dataVolumeName(runtimeIdentity.containerName, baseSettings)}:/runtime-data`]);
-    assert.equal(payload.HostConfig.NetworkMode, "kuuna-dev_default");
-    assert.equal(payload.Labels["dev.kuuna.provider-group-id"], runtimeIdentity.providerGroupId);
-    assert.ok(payload.Env.includes(`KUUNA_PROVIDER_GROUP_ID=${runtimeIdentity.providerGroupId}`));
+    assert.equal(result.containerId, "gondolin-session-new");
+    assert.equal(result.runtimeBaseUrl, "http://127.0.0.1:49152");
+    assert.equal(result.dockerNetwork, null);
+    assert.equal(result.assetRef, "/assets/runtime-a");
+    assert.equal(manager.starts.length, 1);
+    const spec = manager.starts[0]!;
+    assert.equal(spec.identity.providerGroupId, runtimeIdentity.providerGroupId);
+    assert.equal(spec.dataDir, dataVolumeName(runtimeIdentity.containerName, baseSettings));
+    assert.ok(spec.env.includes(`KUUNA_PROVIDER_GROUP_ID=${runtimeIdentity.providerGroupId}`));
   });
 });
 
-test("provisionRuntimeContainer reuses a matching running container", async () => {
+test("Gondolin manager fake reuses a matching healthy VM", async () => {
   await withHealthyRuntime(async () => {
     const runtimeIdentity = identity();
-    const docker = new FakeDockerClient();
-    docker.container = matchingContainer(runtimeIdentity, true);
+    const manager = new FakeGondolinRuntimeManager();
 
-    const result = await provisionRuntimeContainer(docker, {
+    await provisionGondolinRuntime(manager, {
       identity: runtimeIdentity,
-      image: "kuuna-runtime-agent-ts:dev",
+      assetRef: "/assets/runtime-a",
+      settings: baseSettings,
+    });
+    await provisionGondolinRuntime(manager, {
+      identity: runtimeIdentity,
+      assetRef: "/assets/runtime-a",
       settings: baseSettings,
     });
 
-    assert.equal(result.containerId, "container-existing");
-    assert.equal(docker.createdPayloads.length, 0);
-    assert.deepEqual(docker.startedContainers, []);
+    assert.equal(manager.starts.length, 1);
+    assert.deepEqual(manager.closes, []);
   });
 });
 
-test("provisionRuntimeContainer starts a stopped matching container", async () => {
+test("Gondolin manager fake restarts stale asset or config sessions", async () => {
   await withHealthyRuntime(async () => {
     const runtimeIdentity = identity();
-    const docker = new FakeDockerClient();
-    docker.container = matchingContainer(runtimeIdentity, false);
+    const manager = new FakeGondolinRuntimeManager();
 
-    await provisionRuntimeContainer(docker, {
+    await provisionGondolinRuntime(manager, {
       identity: runtimeIdentity,
-      image: "kuuna-runtime-agent-ts:dev",
+      assetRef: "/assets/runtime-a",
+      settings: baseSettings,
+    });
+    await provisionGondolinRuntime(manager, {
+      identity: runtimeIdentity,
+      assetRef: "/assets/runtime-b",
       settings: baseSettings,
     });
 
-    assert.deepEqual(docker.startedContainers, ["container-existing"]);
-    assert.equal(docker.createdPayloads.length, 0);
+    assert.equal(manager.starts.length, 2);
+    assert.deepEqual(manager.closes, [runtimeIdentity.containerName]);
   });
 });
 
-test("provisionRuntimeContainer refuses unmanaged same-name containers", async () => {
-  await withHealthyRuntime(async () => {
+test("provisionGondolinRuntime closes VM sessions that fail health checks", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ status: "starting" }), { status: 503 });
+  try {
     const runtimeIdentity = identity();
-    const docker = new FakeDockerClient();
-    docker.container = { Id: "foreign", Config: { Labels: {} }, State: { Running: true } };
+    const manager = new FakeGondolinRuntimeManager();
 
     await assert.rejects(
-      () => provisionRuntimeContainer(docker, { identity: runtimeIdentity, image: "kuuna-runtime-agent-ts:dev", settings: baseSettings }),
-      (error: unknown) => error instanceof RuntimeProvisioningError && error.code === "runtime_container_unmanaged",
+      async () => provisionGondolinRuntime(manager, {
+        identity: runtimeIdentity,
+        assetRef: "/assets/runtime-a",
+        settings: baseSettings,
+      }),
+      (error: unknown) => error instanceof RuntimeProvisioningError && error.code === "runtime_healthcheck_failed",
     );
-  });
+
+    assert.deepEqual(manager.closes, [runtimeIdentity.containerName]);
+    assert.equal(manager.sessions.has(runtimeIdentity.containerName), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("provisionRuntimeContainer refuses containers labeled for another chat", async () => {
-  await withHealthyRuntime(async () => {
-    const runtimeIdentity = identity("group-a@g.us");
-    const docker = new FakeDockerClient();
-    docker.container = matchingContainer({ ...runtimeIdentity, providerGroupId: "group-b@g.us" }, true);
+test("runtime config hash changes when binding identity changes", () => {
+  const runtimeIdentity = identity("group-a@g.us");
+  const oldIdentity: RuntimeIdentity = {
+    ...runtimeIdentity,
+    bindingId: randomUUID(),
+    agentInstanceId: randomUUID(),
+    secretsRef: "runtime/old-group-a",
+  };
+  const env = buildRuntimeEnv(runtimeIdentity, baseSettings);
+  const oldEnv = buildRuntimeEnv(oldIdentity, baseSettings);
 
-    await assert.rejects(
-      () => provisionRuntimeContainer(docker, { identity: runtimeIdentity, image: "kuuna-runtime-agent-ts:dev", settings: baseSettings }),
-      (error: unknown) => error instanceof RuntimeProvisioningError && error.code === "runtime_container_identity_mismatch",
-    );
-  });
-});
-
-test("provisionRuntimeContainer recreates stale managed containers", async () => {
-  await withHealthyRuntime(async () => {
-    const runtimeIdentity = identity();
-    const docker = new FakeDockerClient();
-    const stale = matchingContainer(runtimeIdentity, true);
-    stale.Image = "sha256:old";
-    docker.container = stale;
-
-    await provisionRuntimeContainer(docker, {
-      identity: runtimeIdentity,
-      image: "kuuna-runtime-agent-ts:dev",
-      settings: baseSettings,
-    });
-
-    assert.deepEqual(docker.removedContainers, ["container-existing"]);
-    assert.equal(docker.createdPayloads.length, 1);
-    assert.deepEqual(docker.startedContainers, ["container-new"]);
-  });
-});
-
-test("provisionRuntimeContainer recreates same-chat containers with stale binding identity", async () => {
-  await withHealthyRuntime(async () => {
-    const runtimeIdentity = identity("group-a@g.us");
-    const oldIdentity: RuntimeIdentity = {
-      ...runtimeIdentity,
-      bindingId: randomUUID(),
-      agentInstanceId: randomUUID(),
-      secretsRef: "runtime/old-group-a",
-    };
-    const docker = new FakeDockerClient();
-    docker.container = matchingContainer(oldIdentity, true);
-
-    await provisionRuntimeContainer(docker, {
-      identity: runtimeIdentity,
-      image: "kuuna-runtime-agent-ts:dev",
-      settings: baseSettings,
-    });
-
-    assert.deepEqual(docker.removedContainers, ["container-existing"]);
-    assert.equal(docker.createdPayloads.length, 1);
-  });
+  assert.notEqual(
+    runtimeConfigHash({ assetRef: "/assets/runtime-a", env, identity: runtimeIdentity }),
+    runtimeConfigHash({ assetRef: "/assets/runtime-a", env: oldEnv, identity: oldIdentity }),
+  );
 });
 
 test("buildRuntimeEnv refuses extra env overrides for reserved runtime identity", () => {
@@ -299,12 +231,21 @@ test("buildRuntimeEnv refuses extra env overrides for reserved runtime identity"
   );
 });
 
-test("safeContainerSuffix and dataVolumeName are stable per chat", () => {
+test("safeContainerSuffix and runtime data paths are stable per chat", () => {
   const first = safeContainerSuffix("customer chat@g.us");
   const second = safeContainerSuffix("customer chat@g.us");
   const third = safeContainerSuffix("other chat@g.us");
 
   assert.equal(first, second);
   assert.notEqual(first, third);
-  assert.equal(dataVolumeName(`kuuna-runtime-${first}`, baseSettings), `kuuna-runtime-data-kuuna-runtime-${first}`);
+  assert.equal(dataVolumeName(`kuuna-runtime-${first}`, baseSettings), `/tmp/kuuna-runtime-data/kuuna-runtime-${first}`);
+});
+
+test("buildRuntimeLabels retains identity labels for audit compatibility", () => {
+  const runtimeIdentity = identity("group-a@g.us");
+  const labels = buildRuntimeLabels(runtimeIdentity);
+
+  assert.equal(labels["dev.kuuna.managed-runtime"], "true");
+  assert.equal(labels["dev.kuuna.provider-group-id"], runtimeIdentity.providerGroupId);
+  assert.equal(labels["dev.kuuna.binding-id"], runtimeIdentity.bindingId);
 });

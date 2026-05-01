@@ -21,6 +21,7 @@ import { processRetrievalIndexingJob } from "./retrieval-indexing.js";
 import { processInboundExecutionJob, processPassiveMessageAnalysisJob } from "./runtime-execution.js";
 import { processTemplateBuildJob } from "./template-build.js";
 import { processTodoExportJob } from "./todo-export.js";
+import { closeDefaultRuntimeManager } from "../runtime/provisioning.js";
 
 type Handler = (job: Job<Record<string, unknown>, unknown, KuunaJobName>) => Promise<unknown>;
 
@@ -215,6 +216,7 @@ export async function runWorker(): Promise<void> {
   logger.info("backend_ts_worker_started", { queue: "default" });
 
   const shutdown = async () => {
+    await closeDefaultRuntimeManager();
     await worker.close();
     await closeQueues();
   };

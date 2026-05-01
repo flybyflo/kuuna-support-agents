@@ -90,7 +90,7 @@ function rethrowRedirectError(error: unknown): void {
   }
 }
 
-const TEMPLATE_RUNTIME_BASE_IMAGE = "node:22-bookworm";
+const TEMPLATE_RUNTIME_BASE_IMAGE = "alpine-3.23";
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -152,7 +152,7 @@ export async function saveTemplateVersionAction(formData: FormData): Promise<voi
   );
   const includeGroupKnowledge = groupKnowledgeDocKeys !== "none";
   const includeChatHistorySearch = formData.get("includeChatHistorySearch") === "on";
-  const dockerfileSnippet = clean(formData.get("dockerfileSnippet"));
+  const setupScript = clean(formData.get("setupScript"));
   const piBashEnabled = formData.get("piBashEnabled") === "on";
   const piBashAllowlist = splitCsvLike(clean(formData.get("piBashAllowlist")));
 
@@ -169,7 +169,7 @@ export async function saveTemplateVersionAction(formData: FormData): Promise<voi
   if (piBashEnabled && piBashAllowlist.length === 0) {
     redirect(
       `/templates/${encodeURIComponent(templateId)}?error=${encodeURIComponent(
-        "Pi runtime image: Bash allowlist is required when Pi bash exec is enabled.",
+        "Pi runtime asset: Bash allowlist is required when Pi bash exec is enabled.",
       )}`,
     );
   }
@@ -213,7 +213,7 @@ export async function saveTemplateVersionAction(formData: FormData): Promise<voi
         },
         runtime_image: {
           base_image: TEMPLATE_RUNTIME_BASE_IMAGE,
-          dockerfile_snippet: dockerfileSnippet,
+          setup_script: setupScript,
           pi_bash_enabled: piBashEnabled,
           pi_bash_allowlist: piBashAllowlist,
         },
@@ -234,6 +234,7 @@ export async function saveTemplateVersionAction(formData: FormData): Promise<voi
       actorUserId: session.userId,
       baseImage: TEMPLATE_RUNTIME_BASE_IMAGE,
       allowedTools: null,
+      setupScript,
     });
 
     const params = new URLSearchParams({ saved: "1" });

@@ -4,7 +4,6 @@ import test from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { resetSettingsForTests } from "../src/config.js";
 import { auditEvents, groupTemplates, templateBuilds, templateVersions } from "../src/db/schema.js";
 import { processTemplateBuildJob } from "../src/jobs/template-build.js";
 import { contractDatabaseUrl, createContractHarness } from "./contract-harness.js";
@@ -26,9 +25,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
     templateId: seeded.templateId,
     versionId: seeded.versionId,
     actorUserId: actor.id,
-    baseImage: "ghcr.io/kuuna/runtime-base:1",
+    baseImage: "alpine-3.23",
     allowedTools: [" Search ", "TODO_CREATE"],
-    dockerfileSnippet: "RUN apt-get update",
+    dockerfileSnippet: "apk add --no-cache jq",
     piBashEnabled: true,
     piBashAllowlist: [" jq ", "PYTHON"],
   });
@@ -36,9 +35,9 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.equal(body.template_id, seeded.templateId);
   assert.equal(body.template_version_id, seeded.versionId);
   assert.equal(body.status, "queued");
-  assert.equal((body.build_inputs as Record<string, unknown>).base_image, "ghcr.io/kuuna/runtime-base:1");
+  assert.equal((body.build_inputs as Record<string, unknown>).base_image, "alpine-3.23");
   assert.deepEqual((body.build_inputs as Record<string, unknown>).allowed_tools, ["search", "todo_create"]);
-  assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
+  assert.equal((body.build_inputs as Record<string, unknown>).setup_script, "apk add --no-cache jq");
   assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
   assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
 
@@ -57,7 +56,7 @@ test("contract: template build tRPC queues published version", { skip: skipReaso
   assert.equal(event.entityId, body.id);
 });
 
-test("contract: template build tRPC uses runtime image settings from template version", { skip: skipReason }, async (t) => {
+test("contract: template build tRPC uses runtime asset settings from template version", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
@@ -69,7 +68,7 @@ test("contract: template build tRPC uses runtime image settings from template ve
     toolsConfig: {
       allowed_tools: ["message_history"],
       runtime_image: {
-        dockerfile_snippet: "RUN apt-get update",
+        setup_script: "apk add --no-cache jq",
         pi_bash_enabled: true,
         pi_bash_allowlist: [" jq ", "PYTHON"],
       },
@@ -80,10 +79,10 @@ test("contract: template build tRPC uses runtime image settings from template ve
     templateId: seeded.templateId,
     versionId: seeded.versionId,
     actorUserId: actor.id,
-    baseImage: "node:22-bookworm",
+    baseImage: "alpine-3.23",
   });
 
-  assert.equal((body.build_inputs as Record<string, unknown>).dockerfile_snippet, "RUN apt-get update");
+  assert.equal((body.build_inputs as Record<string, unknown>).setup_script, "apk add --no-cache jq");
   assert.equal((body.build_inputs as Record<string, unknown>).pi_bash_enabled, true);
   assert.deepEqual((body.build_inputs as Record<string, unknown>).pi_bash_allowlist, ["jq", "python"]);
 });
@@ -118,7 +117,7 @@ test("contract: template build tRPC rejects unpublished or missing versions", { 
   );
 });
 
-test("contract: template build tRPC rejects bash without allowlist and blocked Dockerfile instructions", { skip: skipReason }, async (t) => {
+test("contract: template build tRPC rejects bash without allowlist and blocked Docker setup instructions", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
@@ -147,7 +146,7 @@ test("contract: template build tRPC rejects bash without allowlist and blocked D
       baseImage: "node:22-alpine",
       dockerfileSnippet: "ENTRYPOINT [\"bad\"]",
     }),
-    /dockerfile_snippet cannot contain ENTRYPOINT/,
+    /setup_script cannot contain Docker ENTRYPOINT/,
   );
 });
 
@@ -166,9 +165,9 @@ test("contract: template build tRPC list mirrors response shape", { skip: skipRe
       templateId: seeded.templateId,
       templateVersionId: seeded.versionId,
       status: "succeeded",
-      imageRef: "kuuna/template-support@sha256:abc",
-      imageTag: "kuuna/template-support:build-abc",
-      buildInputs: { base_image: "node:22-alpine" },
+      imageRef: "/assets/template-support",
+      imageTag: "gondolin-template-support-build-abc",
+      buildInputs: { base_image: "alpine-3.23" },
       logsRef: "{\"returncode\":0}",
     })
     .returning();
@@ -177,7 +176,7 @@ test("contract: template build tRPC list mirrors response shape", { skip: skipRe
   const list = await caller.templates.builds({ templateId: seeded.templateId, versionId: seeded.versionId });
   assert.equal(list.length, 1);
   assert.equal(list[0]?.id, build.id);
-  assert.equal(list[0]?.image_ref, "kuuna/template-support@sha256:abc");
+  assert.equal(list[0]?.image_ref, "/assets/template-support");
   assert.equal(typeof list[0]?.created_at, "string");
 });
 
@@ -222,7 +221,7 @@ test("contract: template build job fails when base image is missing", { skip: sk
   assert.deepEqual(event.payload, { error: "missing base_image in build_inputs" });
 });
 
-test("contract: template build job records docker failure logs", { skip: skipReason }, async (t) => {
+test("contract: template build job records Gondolin failure logs", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
@@ -233,7 +232,7 @@ test("contract: template build job records docker failure logs", { skip: skipRea
       templateId: seeded.templateId,
       templateVersionId: seeded.versionId,
       status: "queued",
-      buildInputs: { base_image: "node:22-alpine" },
+      buildInputs: { base_image: "alpine-3.23" },
     })
     .returning();
   assert.ok(build);
@@ -241,39 +240,7 @@ test("contract: template build job records docker failure logs", { skip: skipRea
   const result = await processTemplateBuildJob(
     harness.db,
     { buildId: build.id },
-    { commandRunner: async () => ({ returncode: 17, stdout: "out", stderr: "bad docker" }) },
-  );
-  assert.deepEqual(result, { processed: true, status: "failed" });
-
-  const stored = await findBuild(harness, build.id);
-  assert.equal(stored.status, "failed");
-  const logs = JSON.parse(stored.logsRef ?? "{}") as Record<string, unknown>;
-  assert.equal(logs.returncode, 17);
-  assert.equal(logs.stderr_tail, "bad docker");
-  const event = await findAuditEvent(harness, "template_build.failed");
-  assert.deepEqual(event.payload, { error: "docker build failed (exit 17)" });
-});
-
-test("contract: template build job marks failed when docker runner throws", { skip: skipReason }, async (t) => {
-  const harness = await createContractHarness();
-  t.after(() => harness.close());
-
-  const seeded = await seedTemplate(harness, { status: "published" });
-  const [build] = await harness.db
-    .insert(templateBuilds)
-    .values({
-      templateId: seeded.templateId,
-      templateVersionId: seeded.versionId,
-      status: "queued",
-      buildInputs: { base_image: "node:22-alpine" },
-    })
-    .returning();
-  assert.ok(build);
-
-  const result = await processTemplateBuildJob(
-    harness.db,
-    { buildId: build.id },
-    { commandRunner: async () => { throw new Error("spawn docker ENOENT"); } },
+    { gondolinBuilder: async () => { throw new Error("bad gondolin build"); } },
   );
   assert.deepEqual(result, { processed: true, status: "failed" });
 
@@ -281,25 +248,39 @@ test("contract: template build job marks failed when docker runner throws", { sk
   assert.equal(stored.status, "failed");
   const logs = JSON.parse(stored.logsRef ?? "{}") as Record<string, unknown>;
   assert.equal(logs.returncode, null);
-  assert.equal(logs.stderr_tail, "spawn docker ENOENT");
+  assert.equal(logs.stderr_tail, "bad gondolin build");
   const event = await findAuditEvent(harness, "template_build.failed");
-  assert.deepEqual(event.payload, { error: "docker build failed: spawn docker ENOENT" });
+  assert.deepEqual(event.payload, { error: "Gondolin asset build failed: bad gondolin build" });
 });
 
-test("contract: template build job succeeds and uses digest fallback", { skip: skipReason }, async (t) => {
+test("contract: template build job marks failed when setup script is invalid", { skip: skipReason }, async (t) => {
   const harness = await createContractHarness();
   t.after(() => harness.close());
 
-  process.env.DOCKER_CLI_PATH = "docker-test";
-  process.env.TEMPLATE_BUILD_CONTEXT_PATH = "/repo";
-  process.env.TEMPLATE_BUILD_DOCKERFILE_PATH = "/repo/Dockerfile";
-  resetSettingsForTests();
-  t.after(() => {
-    delete process.env.DOCKER_CLI_PATH;
-    delete process.env.TEMPLATE_BUILD_CONTEXT_PATH;
-    delete process.env.TEMPLATE_BUILD_DOCKERFILE_PATH;
-    resetSettingsForTests();
-  });
+  const seeded = await seedTemplate(harness, { status: "published" });
+  const [build] = await harness.db
+    .insert(templateBuilds)
+    .values({
+      templateId: seeded.templateId,
+      templateVersionId: seeded.versionId,
+      status: "queued",
+      buildInputs: { base_image: "alpine-3.23", setup_script: "FROM alpine" },
+    })
+    .returning();
+  assert.ok(build);
+
+  const result = await processTemplateBuildJob(harness.db, { buildId: build.id });
+  assert.deepEqual(result, { processed: true, status: "failed" });
+
+  const stored = await findBuild(harness, build.id);
+  assert.equal(stored.status, "failed");
+  const event = await findAuditEvent(harness, "template_build.failed");
+  assert.deepEqual(event.payload, { error: "setup_script cannot contain Docker FROM instructions" });
+});
+
+test("contract: template build job succeeds and stores Gondolin asset ref", { skip: skipReason }, async (t) => {
+  const harness = await createContractHarness();
+  t.after(() => harness.close());
 
   const seeded = await seedTemplate(harness, { status: "published", key: "Support Bot!" });
   const [build] = await harness.db
@@ -308,38 +289,31 @@ test("contract: template build job succeeds and uses digest fallback", { skip: s
       templateId: seeded.templateId,
       templateVersionId: seeded.versionId,
       status: "queued",
-      buildInputs: { base_image: "node:22-alpine" },
+      buildInputs: { base_image: "alpine-3.23" },
     })
     .returning();
   assert.ok(build);
 
-  const calls: Array<{ command: string; args: string[] }> = [];
   const result = await processTemplateBuildJob(
     harness.db,
     { buildId: build.id },
     {
-      commandRunner: async (command, args) => {
-        calls.push({ command, args });
-        if (args[0] === "image") {
-          return { returncode: 0, stdout: "[]", stderr: "" };
-        }
-        return { returncode: 0, stdout: "built", stderr: "" };
-      },
+      gondolinBuilder: async () => ({
+        assetRef: "/repo/.kuuna/gondolin/template-builds/support-bot",
+        assetLabel: `gondolin-template-support-bot-build-${build.id.replaceAll("-", "").slice(0, 12)}`,
+        logs: "built",
+      }),
     },
   );
 
   assert.deepEqual(result, { processed: true, status: "succeeded" });
-  assert.equal(calls[0]?.command, "docker-test");
-  assert.deepEqual(calls[0]?.args.slice(0, 3), ["build", "-f", "/repo/Dockerfile"]);
-  assert.ok(calls[0]?.args.includes("BASE_IMAGE=node:22-alpine"));
-  assert.equal(calls[0]?.args.at(-1), "/repo");
 
   const stored = await findBuild(harness, build.id);
   assert.equal(stored.status, "succeeded");
-  assert.equal(stored.imageTag, `kuuna/template-support-bot:build-${build.id.replaceAll("-", "").slice(0, 12)}`);
-  assert.equal(stored.imageRef, stored.imageTag);
+  assert.equal(stored.imageTag, `gondolin-template-support-bot-build-${build.id.replaceAll("-", "").slice(0, 12)}`);
+  assert.equal(stored.imageRef, "/repo/.kuuna/gondolin/template-builds/support-bot");
   const event = await findAuditEvent(harness, "template_build.succeeded");
-  assert.equal((event.payload as Record<string, unknown>).image_ref, stored.imageTag);
+  assert.equal((event.payload as Record<string, unknown>).image_ref, stored.imageRef);
 });
 
 async function seedTemplate(

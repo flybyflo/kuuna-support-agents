@@ -168,11 +168,11 @@ function formatKnowledgeProfile(value: string): string {
 }
 
 function formatRuntimeImageProfile(
-  runtimeImageConfig: { dockerfileSnippet?: string; piBashEnabled: boolean; piBashAllowlist: string[] } | undefined,
+  runtimeImageConfig: { setupScript?: string; dockerfileSnippet?: string; piBashEnabled: boolean; piBashAllowlist: string[] } | undefined,
 ): string {
-  const parts = ["fixed TS base"];
-  if (runtimeImageConfig?.dockerfileSnippet?.trim()) {
-    parts.push("custom Docker setup");
+  const parts = ["Gondolin TS runtime"];
+  if ((runtimeImageConfig?.setupScript ?? runtimeImageConfig?.dockerfileSnippet)?.trim()) {
+    parts.push("custom setup");
   }
   if (runtimeImageConfig?.piBashEnabled) {
     parts.push(`bash: ${runtimeImageConfig.piBashAllowlist.length} allowlisted`);
@@ -303,7 +303,7 @@ export default async function TemplateDetailPage({
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          Configure the template below and save it to build the runtime image.
+          Configure the template below and save it to build the runtime asset.
         </Notice>
       ) : null}
 
@@ -319,13 +319,13 @@ export default async function TemplateDetailPage({
           ) : null}
           {buildId ? (
             <p>
-              Runtime image build:{" "}
+              Runtime asset build:{" "}
               <code className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
                 {buildId}
               </code>
             </p>
           ) : null}
-          <p>The build status updates automatically while the image is queued or running.</p>
+          <p>The build status updates automatically while the asset is queued or running.</p>
         </Notice>
       ) : null}
 
@@ -348,7 +348,7 @@ export default async function TemplateDetailPage({
             </code>
           </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Saving makes this configuration active and starts a runtime image build.
+            Saving makes this configuration active and starts a Gondolin runtime asset build.
           </p>
         </CardContent>
       </Card>
@@ -358,7 +358,7 @@ export default async function TemplateDetailPage({
         <CardHeader>
           <CardTitle>Template configuration</CardTitle>
           <CardDescription>
-            Save once to update the active template and start the Pi runtime image build.
+            Save once to update the active template and start the Pi runtime asset build.
           </CardDescription>
         </CardHeader>
         <CardContent className="pb-6">
@@ -426,22 +426,22 @@ export default async function TemplateDetailPage({
 
             <div className="space-y-4 rounded-lg border border-border p-4">
               <div className="space-y-1">
-                <h3 className="text-sm font-medium text-foreground">Pi runtime image</h3>
+                <h3 className="text-sm font-medium text-foreground">Pi runtime asset</h3>
                 <p className="text-xs text-muted-foreground">
-                  Saved with this template version. Image builds use these settings without asking again.
+                  Saved with this template version. Gondolin asset builds use these settings without asking again.
                 </p>
               </div>
 
               <FormRow
-                label="Additional Dockerfile instructions"
-                htmlFor="dockerfileSnippet"
-                hint="Inserted after the TS agent setup. FROM, CMD, ENTRYPOINT, and EXPOSE are blocked."
+                label="Runtime setup script"
+                htmlFor="setupScript"
+                hint="Runs during the Gondolin Alpine asset build. Dockerfile-only instructions such as FROM, CMD, ENTRYPOINT, and EXPOSE are blocked."
               >
                 <Textarea
-                  id="dockerfileSnippet"
-                  name="dockerfileSnippet"
-                  defaultValue={runtimeImageConfigPrefill?.dockerfileSnippet ?? ""}
-                  placeholder={"RUN apt-get update && apt-get install -y --no-install-recommends jq ffmpeg && rm -rf /var/lib/apt/lists/*"}
+                  id="setupScript"
+                  name="setupScript"
+                  defaultValue={runtimeImageConfigPrefill?.setupScript ?? runtimeImageConfigPrefill?.dockerfileSnippet ?? ""}
+                  placeholder={"apk add --no-cache jq ffmpeg"}
                   rows={4}
                 />
               </FormRow>
@@ -449,7 +449,7 @@ export default async function TemplateDetailPage({
               <div className="space-y-1">
                 <h4 className="text-sm font-medium text-foreground">Runtime tools</h4>
                 <p className="text-xs text-muted-foreground">
-                  Template tools are selected above. Only enable bash when this runtime image needs allowlisted shell commands.
+                  Template tools are selected above. Only enable bash when this runtime asset needs allowlisted shell commands.
                 </p>
               </div>
 
@@ -464,7 +464,7 @@ export default async function TemplateDetailPage({
                     Enable Pi bash exec
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    Allows the agent to run allowlisted commands inside this runtime image.
+                    Allows the agent to run allowlisted commands inside this Gondolin runtime.
                   </p>
                 </div>
               </div>
@@ -546,7 +546,7 @@ export default async function TemplateDetailPage({
                 ),
               },
               {
-                header: "Runtime image",
+                header: "Runtime asset",
                 cell: (version) => (
                   <span className="text-sm text-foreground">
                     {formatRuntimeImageProfile(version.runtimeImageConfig)}
@@ -569,15 +569,15 @@ export default async function TemplateDetailPage({
       {canManageTemplateBuilds ? (
         <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle>Pi runtime image builds</CardTitle>
+            <CardTitle>Pi runtime asset builds</CardTitle>
             <CardDescription>
-              Docker image history for saved template versions.
+              Gondolin asset history for saved template versions.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 pb-6">
             {publishedVersionIds.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Save the template to start the first Pi runtime image build.
+                Save the template to start the first Pi runtime asset build.
               </p>
             ) : (
               publishedVersionIds.map((publishedVersionId) => {

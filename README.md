@@ -72,15 +72,15 @@ Implementation is targeting a single dev environment first.
 - `apps/dashboard` - Next.js 15 + TypeScript dashboard scaffold
 - `services/backend-ts` - TypeScript control plane API and worker
 - `services/gateway` - TypeScript WhatsApp gateway using Baileys
-- `services/runtime-agent-ts` - TypeScript Pi runtime agent image used for lazy per-group containers
+- `services/runtime-agent-ts` - TypeScript Pi runtime agent launched inside per-group Gondolin VMs
 - `packages/api-client-ts` - shared typed backend API client and dashboard read models
 - `packages/contracts` - shared gateway/event contracts
 - `packages/agent-contracts` - shared runtime request/result contracts
 - `infra` - compose/env/scripts placeholders
 - `docs` - architecture/runbooks/ADR placeholders
 
-## Local Setup (Docker-only via Just)
-Run everything through the dev stack:
+## Local Setup
+Run the normal control plane through the dev Docker stack:
 
 ```bash
 just up
@@ -88,9 +88,13 @@ just up
 
 (or via pnpm wrapper: `pnpm dev`)
 
-`just up` first builds `kuuna-runtime-agent-ts:dev`, then starts the control plane.
-The runtime agent is not a shared Compose service; the worker lazily creates one
-managed container per `provider_group_id` when that chat first needs agent work.
+`just up` starts the dashboard, backend API, gateway, Postgres, Redis, and MinIO.
+AI runtime jobs are no longer Docker-backed. Run the backend worker on a host with
+QEMU and Gondolin guest assets available so it can lazily create one Gondolin VM
+per `provider_group_id` when a chat first needs agent work.
+The host worker must use a Node.js version supported by the installed Gondolin
+SDK and should set `RUNTIME_GONDOLIN_ASSET_REF` once a default runtime asset has
+been built.
 
 ## TypeScript Monorepo Commands
 
@@ -164,7 +168,7 @@ See also: `infra/compose/DR_RUNBOOK.md`.
 ## Hot Reload
 - Frontend: Next.js HMR (`next dev`) in container.
 - Backend API: `tsx watch` in container.
-- Worker: `tsx watch` in container.
+- Worker: `tsx watch` on the host for AI runtime jobs; an opt-in container profile exists only for non-runtime queue work.
 - Gateway: `tsx watch` runs the Baileys gateway in container.
 - Source code is bind-mounted into containers.
 

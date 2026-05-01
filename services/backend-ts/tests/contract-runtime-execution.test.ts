@@ -251,14 +251,16 @@ test("contract: inbound execution provisions strict per-chat runtime", { skip: s
       runtimeProvisioner: async (_database, input) => {
         provisioned.push(`${input.providerGroupId}:${input.messageId}`);
         return {
-          containerId: "container-chat",
+          containerId: "gondolin-session-chat",
           containerName: "kuuna-runtime-chat",
-          runtimeBaseUrl: "http://kuuna-runtime-chat:8100",
-          dockerNetwork: "kuuna-dev_default",
+          runtimeBaseUrl: "http://127.0.0.1:49152",
+          dockerNetwork: null,
+          assetRef: "/assets/runtime-chat",
+          sessionId: "gondolin-session-chat",
         };
       },
       runtimeAgentCaller: async (runtimeBaseUrl, request) => {
-        assert.equal(runtimeBaseUrl, "http://kuuna-runtime-chat:8100");
+        assert.equal(runtimeBaseUrl, "http://127.0.0.1:49152");
         assert.equal(request.context.provider_group_id, seeded.providerGroupId);
         assert.equal(request.context.binding_id, seeded.bindingId);
         assert.equal(request.context.agent_instance_id, seeded.agentInstanceId);
@@ -299,7 +301,7 @@ test("contract: provisioning failure fails run without fallback", { skip: skipRe
     },
     {
       runtimeProvisioner: async () => {
-        throw new RuntimeProvisioningError("runtime_container_identity_mismatch", "wrong chat container");
+        throw new RuntimeProvisioningError("runtime_session_identity_mismatch", "wrong chat runtime session");
       },
       runtimeAgentCaller: async () => {
         runtimeCalled = true;
@@ -313,7 +315,7 @@ test("contract: provisioning failure fails run without fallback", { skip: skipRe
   const [run] = await harness.db.select().from(agentRuns).where(eq(agentRuns.traceId, "trace-provisioning-failed")).limit(1);
   assert.ok(run);
   assert.equal(run.status, "failed");
-  assert.match(run.error ?? "", /wrong chat container/);
+  assert.match(run.error ?? "", /wrong chat runtime session/);
   const intents = await harness.db.select().from(outboundIntents).where(eq(outboundIntents.providerGroupId, seeded.providerGroupId));
   assert.equal(intents.length, 0);
 });

@@ -1,23 +1,27 @@
 import { createHash } from "node:crypto";
-import http, { type IncomingMessage } from "node:http";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 
+import type {
+  createHttpHooks as createHttpHooksFn,
+  ExecProcess,
+  IngressAccess,
+  RealFSProvider as RealFSProviderClass,
+  RootfsMode,
+  VM as VMClass,
+} from "@earendil-works/gondolin";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 import { getSettings, type Settings } from "../config.js";
 import type { Database, DbLike } from "../db/client.js";
 import { agentInstances, groupBindings, templateBuilds } from "../db/schema.js";
+import { logger } from "../logging.js";
 
-const managedRuntimeLabel = "dev.kuuna.managed-runtime";
-const providerGroupLabel = "dev.kuuna.provider-group-id";
-const bindingLabel = "dev.kuuna.binding-id";
-const agentInstanceLabel = "dev.kuuna.agent-instance-id";
-const secretsRefLabel = "dev.kuuna.secrets-ref";
-const runtimeImageIdLabel = "dev.kuuna.runtime-image-id";
-const runtimeConfigHashLabel = "dev.kuuna.runtime-config-hash";
 const defaultHealthcheckAttempts = 20;
 const defaultHealthcheckIntervalMs = 250;
 const defaultRuntimeModel = "gpt-5.5";
 const defaultReasoningEffort = "medium";
+const managedRuntimeLabel = "dev.kuuna.managed-runtime";
 const reservedRuntimeEnvKeys = new Set([
   "PORT",
   "OPENAI_API_KEY",
@@ -39,17 +43,15 @@ const reservedRuntimeEnvKeys = new Set([
 export type RuntimeProvisioningErrorCode =
   | "runtime_binding_not_found"
   | "runtime_agent_instance_not_found"
-  | "runtime_image_required"
-  | "runtime_image_inspect_failed"
-  | "runtime_container_unmanaged"
-  | "runtime_container_identity_mismatch"
-  | "runtime_container_create_failed"
-  | "runtime_container_start_failed"
-  | "runtime_container_remove_failed"
-  | "runtime_container_network_failed"
+  | "runtime_asset_required"
+  | "runtime_session_unmanaged"
+  | "runtime_session_identity_mismatch"
+  | "runtime_session_start_failed"
+  | "runtime_session_stop_failed"
   | "runtime_healthcheck_failed"
   | "runtime_extra_env_invalid"
-  | "runtime_docker_error";
+  | "runtime_gondolin_config_invalid"
+  | "runtime_gondolin_error";
 
 export class RuntimeProvisioningError extends Error {
   readonly code: RuntimeProvisioningErrorCode;
@@ -74,51 +76,31 @@ export type RuntimeProvisioningResult = {
   containerName: string;
   runtimeBaseUrl: string;
   dockerNetwork: string | null;
+  assetRef: string;
+  sessionId: string;
 };
 
-export type DockerContainerInspect = {
-  Id: string;
-  Image?: string;
-  State?: { Running?: boolean };
-  Config?: {
-    Image?: string;
-    Labels?: Record<string, string>;
-  };
-  NetworkSettings?: {
-    Networks?: Record<string, unknown>;
-  };
+export type RuntimeVmSpec = {
+  identity: RuntimeIdentity;
+  assetRef: string;
+  env: string[];
+  configHash: string;
+  dataDir: string;
+  port: number;
+  settings: Settings;
 };
 
-export type DockerImageInspect = {
-  Id: string;
+export type RuntimeVmSession = {
+  sessionId: string;
+  sessionLabel: string;
+  runtimeBaseUrl: string;
+  configHash: string;
+  assetRef: string;
 };
 
-type DockerCreateContainerPayload = {
-  Image: string;
-  Env: string[];
-  Labels: Record<string, string>;
-  ExposedPorts: Record<string, Record<string, never>>;
-  HostConfig: {
-    RestartPolicy: { Name: "unless-stopped" };
-    Binds: string[];
-    NetworkMode?: string;
-  };
-  NetworkingConfig?: {
-    EndpointsConfig: Record<string, { Aliases: string[] }>;
-  };
-};
-
-type DockerCreateContainerResult = {
-  Id: string;
-};
-
-export interface DockerClient {
-  inspectContainer(containerNameOrId: string): Promise<DockerContainerInspect | null>;
-  inspectImage(image: string): Promise<DockerImageInspect>;
-  createContainer(containerName: string, payload: DockerCreateContainerPayload): Promise<DockerCreateContainerResult>;
-  startContainer(containerId: string): Promise<void>;
-  removeContainer(containerId: string): Promise<void>;
-  connectNetwork(networkName: string, containerId: string, containerName: string): Promise<void>;
+export interface GondolinRuntimeManager {
+  ensure(spec: RuntimeVmSpec): Promise<RuntimeVmSession>;
+  close?(sessionLabel: string): Promise<void>;
 }
 
 export type EnsureRuntimeForChatInput = {
@@ -132,18 +114,31 @@ export type RuntimeProvisioner = (
   input: EnsureRuntimeForChatInput,
 ) => Promise<RuntimeProvisioningResult>;
 
+type ManagedVm = RuntimeVmSession & {
+  vm: VMClass;
+  ingress: IngressAccess;
+  server: ExecProcess;
+  lastUsedAt: number;
+};
+
+type GondolinSdk = {
+  VM: typeof VMClass;
+  RealFSProvider: typeof RealFSProviderClass;
+  createHttpHooks: typeof createHttpHooksFn;
+};
+
 export async function ensureRuntimeForChat(
   database: DbLike,
   input: EnsureRuntimeForChatInput,
-  options: { dockerClient?: DockerClient; settings?: Settings } = {},
+  options: { runtimeManager?: GondolinRuntimeManager; settings?: Settings } = {},
 ): Promise<RuntimeProvisioningResult> {
   const settings = options.settings ?? getSettings();
   const run = async (tx: DbLike): Promise<RuntimeProvisioningResult> => {
     await acquireChatProvisioningLock(tx, input.providerGroupId);
     const target = await resolveProvisioningTarget(tx, input.providerGroupId);
-    const image = target.imageRef || settings.RUNTIME_AGENT_IMAGE.trim();
-    if (!image) {
-      throw new RuntimeProvisioningError("runtime_image_required", "runtime image is required");
+    const assetRef = target.imageRef || settings.RUNTIME_GONDOLIN_ASSET_REF.trim();
+    if (!assetRef) {
+      throw new RuntimeProvisioningError("runtime_asset_required", "Gondolin runtime asset ref is required");
     }
 
     const identity: RuntimeIdentity = {
@@ -153,25 +148,39 @@ export async function ensureRuntimeForChat(
       containerName: target.containerName,
       secretsRef: target.secretsRef,
     };
-    const dockerClient = options.dockerClient ?? new DockerSocketClient(settings.RUNTIME_DOCKER_SOCKET);
-    const result = await provisionRuntimeContainer(dockerClient, {
+    const env = buildRuntimeEnv(identity, settings);
+    const spec: RuntimeVmSpec = {
       identity,
-      image,
+      assetRef,
+      env,
+      configHash: runtimeConfigHash({ assetRef, env, identity }),
+      dataDir: runtimeDataPath(identity.containerName, settings),
+      port: settings.RUNTIME_AGENT_CONTAINER_PORT,
       settings,
-    });
+    };
+    const manager = options.runtimeManager ?? defaultRuntimeManager();
+    const session = await manager.ensure(spec);
+    await ensureRuntimeSessionHealthy(manager, session);
 
     await tx
       .update(agentInstances)
       .set({
         status: "healthy",
-        runtimeBaseUrl: result.runtimeBaseUrl,
-        runtimeContainerName: result.containerName,
+        runtimeBaseUrl: session.runtimeBaseUrl,
+        runtimeContainerName: identity.containerName,
         secretsRef: identity.secretsRef,
         updatedAt: new Date(),
       })
       .where(eq(agentInstances.id, identity.agentInstanceId));
 
-    return result;
+    return {
+      containerId: session.sessionId,
+      containerName: identity.containerName,
+      runtimeBaseUrl: session.runtimeBaseUrl,
+      dockerNetwork: null,
+      assetRef: session.assetRef,
+      sessionId: session.sessionId,
+    };
   };
 
   try {
@@ -185,98 +194,32 @@ export async function ensureRuntimeForChat(
   }
 }
 
-export async function provisionRuntimeContainer(
-  dockerClient: DockerClient,
+export async function provisionGondolinRuntime(
+  manager: GondolinRuntimeManager,
   input: {
     identity: RuntimeIdentity;
-    image: string;
+    assetRef: string;
     settings: Settings;
   },
 ): Promise<RuntimeProvisioningResult> {
-  const port = input.settings.RUNTIME_AGENT_CONTAINER_PORT;
-  const dockerNetwork = normalizeOptional(input.settings.RUNTIME_DOCKER_NETWORK);
-  const imageInspect = await dockerClient.inspectImage(input.image).catch((error: unknown) => {
-    throw new RuntimeProvisioningError(
-      "runtime_image_inspect_failed",
-      `failed to inspect runtime image ${input.image}: ${errorMessage(error)}`,
-    );
-  });
-  const baseLabels = buildRuntimeLabels(input.identity);
   const env = buildRuntimeEnv(input.identity, input.settings);
-  const labels = withRuntimeConfigLabels(baseLabels, {
-    image: input.image,
-    imageId: imageInspect.Id,
+  const session = await manager.ensure({
+    identity: input.identity,
+    assetRef: input.assetRef,
     env,
+    configHash: runtimeConfigHash({ assetRef: input.assetRef, env, identity: input.identity }),
+    dataDir: runtimeDataPath(input.identity.containerName, input.settings),
+    port: input.settings.RUNTIME_AGENT_CONTAINER_PORT,
+    settings: input.settings,
   });
-
-  const existing = await dockerClient.inspectContainer(input.identity.containerName);
-  let containerId: string;
-  if (!existing) {
-    containerId = (await dockerClient.createContainer(
-      input.identity.containerName,
-      buildCreateContainerPayload({
-        image: input.image,
-        port,
-        env,
-        labels,
-        containerName: input.identity.containerName,
-        dataVolumeName: dataVolumeName(input.identity.containerName, input.settings),
-        dataDir: input.settings.RUNTIME_CONTAINER_DATA_DIR,
-        dockerNetwork,
-      }),
-    )).Id;
-  } else {
-    assertManagedContainerIdentity(existing, input.identity);
-    if (!containerMatchesRuntimeConfig(existing, input.image, imageInspect.Id, labels)) {
-      await dockerClient.removeContainer(existing.Id).catch((error: unknown) => {
-        throw new RuntimeProvisioningError(
-          "runtime_container_remove_failed",
-          `failed to remove stale runtime container ${input.identity.containerName}: ${errorMessage(error)}`,
-        );
-      });
-      containerId = (await dockerClient.createContainer(
-        input.identity.containerName,
-        buildCreateContainerPayload({
-          image: input.image,
-          port,
-          env,
-          labels,
-          containerName: input.identity.containerName,
-          dataVolumeName: dataVolumeName(input.identity.containerName, input.settings),
-          dataDir: input.settings.RUNTIME_CONTAINER_DATA_DIR,
-          dockerNetwork,
-        }),
-      )).Id;
-    } else {
-      containerId = existing.Id;
-      if (dockerNetwork && !containerNetworkNames(existing).has(dockerNetwork)) {
-        await dockerClient.connectNetwork(dockerNetwork, containerId, input.identity.containerName).catch((error: unknown) => {
-          throw new RuntimeProvisioningError(
-            "runtime_container_network_failed",
-            `failed to connect runtime container ${input.identity.containerName} to ${dockerNetwork}: ${errorMessage(error)}`,
-          );
-        });
-      }
-    }
-  }
-
-  const current = await dockerClient.inspectContainer(containerId);
-  if (!current?.State?.Running) {
-    await dockerClient.startContainer(containerId).catch((error: unknown) => {
-      throw new RuntimeProvisioningError(
-        "runtime_container_start_failed",
-        `failed to start runtime container ${input.identity.containerName}: ${errorMessage(error)}`,
-      );
-    });
-  }
-
-  const runtimeBaseUrl = `http://${input.identity.containerName}:${port}`;
-  await waitForRuntimeHealth(runtimeBaseUrl);
+  await ensureRuntimeSessionHealthy(manager, session);
   return {
-    containerId,
+    containerId: session.sessionId,
     containerName: input.identity.containerName,
-    runtimeBaseUrl,
-    dockerNetwork,
+    runtimeBaseUrl: session.runtimeBaseUrl,
+    dockerNetwork: null,
+    assetRef: session.assetRef,
+    sessionId: session.sessionId,
   };
 }
 
@@ -293,17 +236,20 @@ export function safeContainerSuffix(providerGroupId: string): string {
 }
 
 export function dataVolumeName(containerName: string, settings: Settings): string {
-  const prefix = settings.RUNTIME_CONTAINER_DATA_VOLUME_PREFIX.trim() || "kuuna-runtime-data";
-  return `${prefix}-${containerName}`.slice(0, 255);
+  return runtimeDataPath(containerName, settings);
+}
+
+export function runtimeDataPath(containerName: string, settings: Settings): string {
+  return path.resolve(settings.RUNTIME_GONDOLIN_DATA_ROOT, safePathSegment(containerName));
 }
 
 export function buildRuntimeLabels(identity: RuntimeIdentity): Record<string, string> {
   return {
     [managedRuntimeLabel]: "true",
-    [providerGroupLabel]: identity.providerGroupId,
-    [bindingLabel]: identity.bindingId,
-    [agentInstanceLabel]: identity.agentInstanceId,
-    [secretsRefLabel]: identity.secretsRef,
+    "dev.kuuna.provider-group-id": identity.providerGroupId,
+    "dev.kuuna.binding-id": identity.bindingId,
+    "dev.kuuna.agent-instance-id": identity.agentInstanceId,
+    "dev.kuuna.secrets-ref": identity.secretsRef,
   };
 }
 
@@ -367,100 +313,143 @@ export function parseExtraEnv(rawValue: string | undefined): Record<string, stri
   return env;
 }
 
-export function withRuntimeConfigLabels(
-  labels: Record<string, string>,
-  input: { image: string; imageId: string; env: string[] },
-): Record<string, string> {
-  const next: Record<string, string> = { ...labels, [runtimeImageIdLabel]: input.imageId };
-  next[runtimeConfigHashLabel] = runtimeConfigHash({
-    image: input.image,
-    imageId: input.imageId,
-    env: input.env,
-    labels,
-  });
-  return next;
-}
-
-function runtimeConfigHash(input: {
-  image: string;
-  imageId: string;
+export function runtimeConfigHash(input: {
+  assetRef: string;
   env: string[];
-  labels: Record<string, string>;
+  identity: RuntimeIdentity;
 }): string {
   return createHash("sha256")
     .update(JSON.stringify({
-      image: input.image,
-      imageId: input.imageId,
+      assetRef: input.assetRef,
       env: [...input.env].sort(),
-      labels: Object.entries(input.labels).sort(([left], [right]) => left.localeCompare(right)),
+      labels: Object.entries(buildRuntimeLabels(input.identity)).sort(([left], [right]) => left.localeCompare(right)),
     }))
     .digest("hex");
 }
 
-function buildCreateContainerPayload(input: {
-  image: string;
-  port: number;
-  env: string[];
-  labels: Record<string, string>;
-  containerName: string;
-  dataVolumeName: string;
-  dataDir: string;
-  dockerNetwork: string | null;
-}): DockerCreateContainerPayload {
-  const exposedPort = `${input.port}/tcp`;
-  const payload: DockerCreateContainerPayload = {
-    Image: input.image,
-    Env: input.env,
-    Labels: input.labels,
-    ExposedPorts: { [exposedPort]: {} },
-    HostConfig: {
-      RestartPolicy: { Name: "unless-stopped" },
-      Binds: [`${input.dataVolumeName}:${input.dataDir}`],
-    },
-  };
-  if (input.dockerNetwork) {
-    payload.HostConfig.NetworkMode = input.dockerNetwork;
-    payload.NetworkingConfig = {
-      EndpointsConfig: {
-        [input.dockerNetwork]: { Aliases: [input.containerName] },
+export class SdkGondolinRuntimeManager implements GondolinRuntimeManager {
+  private readonly sessions = new Map<string, ManagedVm>();
+  private readonly idleTtlMs: number;
+  private gcTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(options: { idleTtlMs?: number } = {}) {
+    this.idleTtlMs = options.idleTtlMs ?? 15 * 60 * 1000;
+    this.startGc();
+  }
+
+  async ensure(spec: RuntimeVmSpec): Promise<RuntimeVmSession> {
+    const existing = this.sessions.get(spec.identity.containerName);
+    if (existing && existing.configHash === spec.configHash && existing.assetRef === spec.assetRef) {
+      existing.lastUsedAt = Date.now();
+      return toRuntimeVmSession(existing);
+    }
+    if (existing) {
+      await this.closeManaged(existing);
+      this.sessions.delete(spec.identity.containerName);
+    }
+
+    const session = await this.start(spec);
+    this.sessions.set(spec.identity.containerName, session);
+    return toRuntimeVmSession(session);
+  }
+
+  async close(sessionLabel: string): Promise<void> {
+    const existing = this.sessions.get(sessionLabel);
+    if (!existing) return;
+    await this.closeManaged(existing);
+    this.sessions.delete(sessionLabel);
+  }
+
+  async closeAll(): Promise<void> {
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    await Promise.allSettled(sessions.map((session) => this.closeManaged(session)));
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+      this.gcTimer = null;
+    }
+  }
+
+  private async start(spec: RuntimeVmSpec): Promise<ManagedVm> {
+    const { VM, RealFSProvider, createHttpHooks } = await loadGondolinSdk();
+    await mkdir(spec.dataDir, { recursive: true });
+    const envRecord = envArrayToRecord(spec.env);
+    const secretHooks = runtimeHttpHooks(createHttpHooks, envRecord, spec.settings);
+    const vmEnv = { ...envRecord, ...secretHooks.env };
+    const rootfsMode = parseRootfsMode(spec.settings.RUNTIME_GONDOLIN_ROOTFS_MODE);
+    const tcp = parseTcpMap(spec.settings.RUNTIME_GONDOLIN_TCP_MAP_JSON);
+    const vm = await VM.create({
+      sessionLabel: spec.identity.containerName,
+      sandbox: { imagePath: spec.assetRef },
+      rootfs: { mode: rootfsMode },
+      httpHooks: secretHooks.httpHooks,
+      env: vmEnv,
+      tcp: tcp ? { hosts: tcp } : undefined,
+      dns: tcp ? { mode: "synthetic", syntheticHostMapping: "per-host" } : undefined,
+      vfs: {
+        mounts: {
+          [spec.settings.RUNTIME_CONTAINER_DATA_DIR]: new RealFSProvider(spec.dataDir),
+        },
       },
+    });
+    const ingress = await vm.enableIngress({ listenHost: "127.0.0.1", listenPort: 0 });
+    vm.setIngressRoutes([{ prefix: "/", port: spec.port, stripPrefix: true }]);
+    const server = vm.exec(["/bin/sh", "-lc", runtimeStartCommand(spec.settings)], {
+      cwd: "/workspace/services/runtime-agent-ts",
+      env: vmEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      buffer: false,
+    });
+    server.catch((error: unknown) => {
+      // The health check and next provisioning attempt report failures to callers.
+      void error;
+    });
+    return {
+      vm,
+      ingress,
+      server,
+      sessionId: vm.id,
+      sessionLabel: spec.identity.containerName,
+      runtimeBaseUrl: ingress.url,
+      configHash: spec.configHash,
+      assetRef: spec.assetRef,
+      lastUsedAt: Date.now(),
     };
   }
-  return payload;
-}
 
-function assertManagedContainerIdentity(container: DockerContainerInspect, identity: RuntimeIdentity): void {
-  const labels = container.Config?.Labels ?? {};
-  if (labels[managedRuntimeLabel] !== "true") {
-    throw new RuntimeProvisioningError(
-      "runtime_container_unmanaged",
-      `container ${identity.containerName} exists but is not Kuuna-managed`,
-    );
+  private async closeManaged(session: ManagedVm): Promise<void> {
+    await Promise.allSettled([
+      session.ingress.close(),
+      session.vm.close(),
+    ]);
   }
-  if (
-    labels[providerGroupLabel] !== identity.providerGroupId
-  ) {
-    throw new RuntimeProvisioningError(
-      "runtime_container_identity_mismatch",
-      `container ${identity.containerName} is managed by another runtime identity`,
-    );
+
+  private startGc(): void {
+    if (this.gcTimer || this.idleTtlMs <= 0) return;
+    this.gcTimer = setInterval(() => {
+      const cutoff = Date.now() - this.idleTtlMs;
+      for (const [label, session] of this.sessions.entries()) {
+        if (session.lastUsedAt >= cutoff) continue;
+        this.sessions.delete(label);
+        void this.closeManaged(session);
+      }
+    }, Math.min(this.idleTtlMs, 60_000));
+    this.gcTimer.unref();
   }
 }
 
-function containerMatchesRuntimeConfig(
-  container: DockerContainerInspect,
-  image: string,
-  imageId: string,
-  labels: Record<string, string>,
-): boolean {
-  if (container.Config?.Image !== image) return false;
-  if (container.Image !== imageId) return false;
-  const existingLabels = container.Config?.Labels ?? {};
-  return Object.entries(labels).every(([key, value]) => existingLabels[key] === value);
+let singletonRuntimeManager: SdkGondolinRuntimeManager | null = null;
+
+export function defaultRuntimeManager(): SdkGondolinRuntimeManager {
+  singletonRuntimeManager ??= new SdkGondolinRuntimeManager();
+  return singletonRuntimeManager;
 }
 
-function containerNetworkNames(container: DockerContainerInspect): Set<string> {
-  return new Set(Object.keys(container.NetworkSettings?.Networks ?? {}));
+export async function closeDefaultRuntimeManager(): Promise<void> {
+  if (!singletonRuntimeManager) return;
+  await singletonRuntimeManager.closeAll();
+  singletonRuntimeManager = null;
 }
 
 async function resolveProvisioningTarget(database: DbLike, providerGroupId: string): Promise<RuntimeIdentity & { imageRef: string | null }> {
@@ -542,118 +531,135 @@ async function waitForRuntimeHealth(runtimeBaseUrl: string): Promise<void> {
   }
   throw new RuntimeProvisioningError(
     "runtime_healthcheck_failed",
-    `runtime container did not become healthy at ${healthUrl}: ${lastError}`,
+    `Gondolin runtime did not become healthy at ${healthUrl}: ${lastError}`,
   );
 }
 
-class DockerSocketClient implements DockerClient {
-  readonly socketPath: string;
-
-  constructor(socketPath: string) {
-    this.socketPath = socketPath;
-  }
-
-  async inspectContainer(containerNameOrId: string): Promise<DockerContainerInspect | null> {
-    const response = await this.request("GET", `/containers/${encodeURIComponent(containerNameOrId)}/json`);
-    if (response.statusCode === 404) return null;
-    if (response.statusCode >= 400) throw dockerError("runtime_docker_error", response, `inspect container ${containerNameOrId}`);
-    return parseDockerObject(response.body, isDockerContainerInspect, `invalid container inspect payload for ${containerNameOrId}`);
-  }
-
-  async inspectImage(image: string): Promise<DockerImageInspect> {
-    const response = await this.request("GET", `/images/${encodeURIComponent(image)}/json`);
-    if (response.statusCode >= 400) throw dockerError("runtime_image_inspect_failed", response, `inspect image ${image}`);
-    return parseDockerObject(response.body, isDockerImageInspect, `invalid image inspect payload for ${image}`);
-  }
-
-  async createContainer(containerName: string, payload: DockerCreateContainerPayload): Promise<DockerCreateContainerResult> {
-    const response = await this.request("POST", `/containers/create?name=${encodeURIComponent(containerName)}`, payload);
-    if (response.statusCode !== 201) throw dockerError("runtime_container_create_failed", response, `create container ${containerName}`);
-    return parseDockerObject(response.body, isDockerCreateResult, `invalid create container payload for ${containerName}`);
-  }
-
-  async startContainer(containerId: string): Promise<void> {
-    const response = await this.request("POST", `/containers/${encodeURIComponent(containerId)}/start`);
-    if (response.statusCode !== 204 && response.statusCode !== 304) {
-      throw dockerError("runtime_container_start_failed", response, `start container ${containerId}`);
-    }
-  }
-
-  async removeContainer(containerId: string): Promise<void> {
-    const response = await this.request("DELETE", `/containers/${encodeURIComponent(containerId)}?force=true&v=false`);
-    if (response.statusCode !== 204 && response.statusCode !== 404) {
-      throw dockerError("runtime_container_remove_failed", response, `remove container ${containerId}`);
-    }
-  }
-
-  async connectNetwork(networkName: string, containerId: string, containerName: string): Promise<void> {
-    const response = await this.request("POST", `/networks/${encodeURIComponent(networkName)}/connect`, {
-      Container: containerId,
-      EndpointConfig: { Aliases: [containerName] },
+async function ensureRuntimeSessionHealthy(
+  manager: GondolinRuntimeManager,
+  session: RuntimeVmSession,
+): Promise<void> {
+  try {
+    await waitForRuntimeHealth(session.runtimeBaseUrl);
+  } catch (error) {
+    await manager.close?.(session.sessionLabel).catch((closeError: unknown) => {
+      logger.warn("runtime_gondolin_close_after_health_failure_failed", {
+        session_label: session.sessionLabel,
+        error: errorMessage(closeError),
+      });
     });
-    if (![200, 201, 204].includes(response.statusCode)) {
-      throw dockerError("runtime_container_network_failed", response, `connect container ${containerName} to ${networkName}`);
-    }
-  }
-
-  private request(method: string, path: string, payload?: unknown): Promise<{ statusCode: number; body: string }> {
-    const body = payload === undefined ? undefined : JSON.stringify(payload);
-    return new Promise((resolve, reject) => {
-      const request = http.request(
-        {
-          socketPath: this.socketPath,
-          method,
-          path,
-          headers: body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : undefined,
-        },
-        (response: IncomingMessage) => {
-          const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer | string) => {
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-          });
-          response.on("end", () => {
-            resolve({ statusCode: response.statusCode ?? 500, body: Buffer.concat(chunks).toString("utf8") });
-          });
-        },
-      );
-      request.on("error", reject);
-      if (body) request.write(body);
-      request.end();
-    });
+    throw error;
   }
 }
 
-function dockerError(
-  code: RuntimeProvisioningErrorCode,
-  response: { statusCode: number; body: string },
-  action: string,
-): RuntimeProvisioningError {
-  return new RuntimeProvisioningError(code, `Docker ${action} failed with HTTP ${response.statusCode}: ${response.body}`);
+async function loadGondolinSdk(): Promise<GondolinSdk> {
+  return import("@earendil-works/gondolin");
 }
 
-function parseDockerObject<T>(body: string, guard: (value: unknown) => value is T, error: string): T {
+function runtimeHttpHooks(
+  createHttpHooks: typeof createHttpHooksFn,
+  env: Record<string, string>,
+  settings: Settings,
+) {
+  const allowedHosts = parseStringListJson(settings.RUNTIME_GONDOLIN_ALLOWED_HOSTS_JSON);
+  const internalHosts = allowedHosts.filter((host) => isInternalHost(host));
+  const secrets: Record<string, { hosts: string[]; value: string }> = {};
+  const openAiHost = hostnameFromUrl(settings.OPENAI_BASE_URL);
+  if (env.OPENAI_API_KEY && openAiHost) {
+    secrets.OPENAI_API_KEY = { hosts: [openAiHost], value: env.OPENAI_API_KEY };
+  }
+  const runtimeToolHost = hostnameFromUrl(settings.RUNTIME_TOOL_BACKEND_BASE_URL);
+  if (env.KUUNA_RUNTIME_TOOL_TOKEN && runtimeToolHost) {
+    secrets.KUUNA_RUNTIME_TOOL_TOKEN = { hosts: [runtimeToolHost], value: env.KUUNA_RUNTIME_TOOL_TOKEN };
+  }
+  return createHttpHooks({
+    allowedHosts: [...allowedHosts, ...Object.values(secrets).flatMap((secret) => secret.hosts)],
+    allowedInternalHosts: internalHosts,
+    secrets,
+  });
+}
+
+function runtimeStartCommand(settings: Settings): string {
+  const command = settings.RUNTIME_GONDOLIN_START_COMMAND.trim();
+  return command || "node dist/src/server.js";
+}
+
+function toRuntimeVmSession(session: ManagedVm): RuntimeVmSession {
+  return {
+    sessionId: session.sessionId,
+    sessionLabel: session.sessionLabel,
+    runtimeBaseUrl: session.runtimeBaseUrl,
+    configHash: session.configHash,
+    assetRef: session.assetRef,
+  };
+}
+
+function envArrayToRecord(env: string[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const item of env) {
+    const index = item.indexOf("=");
+    if (index <= 0) continue;
+    record[item.slice(0, index)] = item.slice(index + 1);
+  }
+  return record;
+}
+
+function parseStringListJson(rawValue: string | undefined): string[] {
+  const normalized = normalizeOptional(rawValue);
+  if (!normalized) return [];
   let decoded: unknown;
   try {
-    decoded = JSON.parse(body);
+    decoded = JSON.parse(normalized);
+  } catch (error) {
+    throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", `invalid JSON string list: ${errorMessage(error)}`);
+  }
+  if (!Array.isArray(decoded) || !decoded.every((item) => typeof item === "string")) {
+    throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", "expected JSON string list");
+  }
+  return decoded.map((item) => item.trim()).filter(Boolean);
+}
+
+function parseTcpMap(rawValue: string | undefined): Record<string, string> | null {
+  const normalized = normalizeOptional(rawValue);
+  if (!normalized) return null;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(normalized);
+  } catch (error) {
+    throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", `RUNTIME_GONDOLIN_TCP_MAP_JSON must be valid JSON: ${errorMessage(error)}`);
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", "RUNTIME_GONDOLIN_TCP_MAP_JSON must be an object");
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(decoded)) {
+    if (typeof value !== "string" || !key.trim() || !value.trim()) {
+      throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", "RUNTIME_GONDOLIN_TCP_MAP_JSON values must be strings");
+    }
+    out[key.trim()] = value.trim();
+  }
+  return out;
+}
+
+function parseRootfsMode(value: string): RootfsMode {
+  if (value === "readonly" || value === "memory" || value === "cow") return value;
+  throw new RuntimeProvisioningError("runtime_gondolin_config_invalid", `invalid RUNTIME_GONDOLIN_ROOTFS_MODE: ${value}`);
+}
+
+function hostnameFromUrl(value: string): string | null {
+  try {
+    return new URL(value).hostname;
   } catch {
-    throw new RuntimeProvisioningError("runtime_docker_error", error);
+    return null;
   }
-  if (!guard(decoded)) {
-    throw new RuntimeProvisioningError("runtime_docker_error", error);
-  }
-  return decoded;
 }
 
-function isDockerContainerInspect(value: unknown): value is DockerContainerInspect {
-  return Boolean(value && typeof value === "object" && typeof (value as { Id?: unknown }).Id === "string");
+function isInternalHost(host: string): boolean {
+  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".internal");
 }
 
-function isDockerImageInspect(value: unknown): value is DockerImageInspect {
-  return Boolean(value && typeof value === "object" && typeof (value as { Id?: unknown }).Id === "string");
-}
-
-function isDockerCreateResult(value: unknown): value is DockerCreateContainerResult {
-  return Boolean(value && typeof value === "object" && typeof (value as { Id?: unknown }).Id === "string");
+function safePathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "") || "runtime";
 }
 
 function normalizeOptional(value: string | undefined): string | null {

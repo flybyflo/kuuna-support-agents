@@ -50,6 +50,7 @@ export type TemplateVersion = {
   egressPolicy: string;
   runtimeImageConfig?: {
     baseImage?: string;
+    setupScript?: string;
     dockerfileSnippet?: string;
     piBashEnabled: boolean;
     piBashAllowlist: string[];

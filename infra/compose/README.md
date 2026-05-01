@@ -1,15 +1,18 @@
 # Docker Compose (Development)
 
-Use Docker for all local runs (frontend + backend + gateway + infra dependencies).
+Use Docker for frontend, backend API, gateway, and infra dependencies. AI runtime
+execution is handled by the host-level backend worker through Gondolin VMs.
 
 ## Start
 ```bash
 just up
 ```
 
-This builds the `kuuna-runtime-agent-ts:dev` image and then starts the stack.
-Runtime agents are not long-running shared Compose services; they are created
-on demand as per-chat containers by the backend worker.
+This starts the normal control-plane stack. Runtime agents are not long-running
+Compose services; they are created on demand as per-chat Gondolin VMs by a
+backend worker running on a host with QEMU and Gondolin guest assets.
+Set `RUNTIME_GONDOLIN_ASSET_REF` for the host worker after building the default
+runtime asset.
 
 ## Stop
 ```bash

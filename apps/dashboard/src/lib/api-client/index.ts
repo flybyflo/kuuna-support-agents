@@ -159,12 +159,16 @@ function mapTemplateVersion(row: {
         : typeof runtimeImage.baseImage === "string"
           ? runtimeImage.baseImage
           : undefined,
-    dockerfileSnippet:
-      typeof runtimeImage.dockerfile_snippet === "string"
-        ? runtimeImage.dockerfile_snippet
-        : typeof runtimeImage.dockerfileSnippet === "string"
-          ? runtimeImage.dockerfileSnippet
-          : undefined,
+    setupScript:
+      typeof runtimeImage.setup_script === "string"
+        ? runtimeImage.setup_script
+        : typeof runtimeImage.setupScript === "string"
+          ? runtimeImage.setupScript
+          : typeof runtimeImage.dockerfile_snippet === "string"
+            ? runtimeImage.dockerfile_snippet
+            : typeof runtimeImage.dockerfileSnippet === "string"
+              ? runtimeImage.dockerfileSnippet
+              : undefined,
     piBashEnabled: runtimeImage.pi_bash_enabled === true || runtimeImage.piBashEnabled === true,
     piBashAllowlist: stringList(runtimeImage.pi_bash_allowlist ?? runtimeImage.piBashAllowlist),
   };

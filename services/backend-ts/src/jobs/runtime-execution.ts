@@ -536,11 +536,19 @@ async function runViaRuntimeAgent(
     traceId: input.traceId,
     entityId: agentRun.id,
     entityType: "agent_run",
-    payload: { status: "running", message_id: input.message.id },
+    payload: { status: "running", phase: "created", message_id: input.message.id },
   });
 
   const settings = getSettings();
   try {
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: { status: "running", phase: "provisioning_runtime", message_id: input.message.id },
+    });
     const runtimeBaseUrl = (await (options.runtimeProvisioner ?? ensureRuntimeForChat)(database, {
       providerGroupId: input.providerGroupId,
       messageId: input.message.id,
@@ -561,6 +569,22 @@ async function runViaRuntimeAgent(
       .update(agentRuns)
       .set({ inputContext: context })
       .where(eq(agentRuns.id, agentRun.id));
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: {
+        status: "running",
+        phase: "context_ready",
+        message_id: input.message.id,
+        recent_message_count: context.recent_messages?.length ?? 0,
+        todo_count: context.todos?.length ?? 0,
+        retrieval_hit_count: input.retrievalHits.length,
+        allowed_tool_count: input.allowedTools.length,
+      },
+    });
     const runtimeRequest: RuntimeAgentRequest = runtimeAgentRequestSchema.parse({
       trace_id: input.traceId,
       system_prompt: input.systemPrompt,
@@ -571,6 +595,19 @@ async function runViaRuntimeAgent(
       reasoning_effort: input.reasoningEffort,
       allowed_tools: input.allowedTools,
       tool_requests: input.toolRequests ?? [],
+    });
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: {
+        status: "running",
+        phase: "pi_agent_running",
+        message_id: input.message.id,
+        model_path: input.modelPath,
+      },
     });
     const result = runtimeAgentResultSchema.parse(await (options.runtimeAgentCaller ?? callRuntimeAgentViaTrpc)(
       runtimeBaseUrl,
@@ -586,6 +623,22 @@ async function runViaRuntimeAgent(
     }
     const attemptModels = extractAttemptModels(result);
     const modelUsed = result.model_used ?? null;
+    await publishRuntimeEvent({
+      type: "agent_run.updated",
+      providerGroupId: input.providerGroupId,
+      traceId: input.traceId,
+      entityId: agentRun.id,
+      entityType: "agent_run",
+      payload: {
+        status: "running",
+        phase: "response_received",
+        message_id: input.message.id,
+        model_used: modelUsed,
+        response_chars: responseText.length,
+        tool_result_count: result.tool_results.length,
+        media_insight_count: result.media_insights.length,
+      },
+    });
     await database
       .update(agentRuns)
       .set({

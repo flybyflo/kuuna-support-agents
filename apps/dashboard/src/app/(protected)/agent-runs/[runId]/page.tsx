@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { listAgentRuns, listToolInvocations } from "@/lib/api-client";
 import { canAccessGroup, requireSession } from "@/lib/auth/session";
 import { formatDateTime } from "@/lib/utils/format";
+import { LiveAgentRunStream } from "./live-agent-run-stream";
 
 type Params = Promise<{ runId: string }>;
 
@@ -83,7 +84,7 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
       />
       <PageHeader
         title="Agent run"
-        description={`Execution log for ${run.groupTitle}.`}
+        description={`Live Pi runtime trace for ${run.groupTitle}.`}
         actions={
           <Button asChild variant="outline">
             <Link href="/agent-runs">
@@ -93,6 +94,8 @@ export default async function AgentRunDetailPage({ params }: { params: Params })
           </Button>
         }
       />
+
+      <LiveAgentRunStream run={run} toolInvocations={toolInvocations} />
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div>

@@ -81,7 +81,7 @@ export default async function RuntimeRunsPage({ searchParams }: { searchParams: 
                 ),
               },
               {
-                header: "Image",
+                header: "Asset",
                 cell: (run) => (
                   <span className="font-mono text-[11px] text-foreground">
                     {run.imageRef}

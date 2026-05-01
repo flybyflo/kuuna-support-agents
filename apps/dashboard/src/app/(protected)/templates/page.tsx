@@ -56,7 +56,7 @@ export default async function TemplatesPage({
 
       {created === "1" ? (
         <Notice title="Template created" tone="success">
-          Configure it once, save, and the runtime image build will start automatically.
+          Configure it once, save, and the runtime asset build will start automatically.
         </Notice>
       ) : null}
 

@@ -64,7 +64,6 @@ services:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       node-deps:
         condition: service_completed_successfully
@@ -110,6 +109,7 @@ services:
         condition: service_healthy
 
   worker:
+    profiles: ["container-worker"]
     build:
       context: ../..
       dockerfile: services/backend-ts/Dockerfile.dev
@@ -124,12 +124,13 @@ services:
       RUNTIME_AGENT_TIMEOUT_SECONDS: ${RUNTIME_AGENT_TIMEOUT_SECONDS:-300}
       WATCHFILES_FORCE_POLLING: "true"
       TEMPLATE_BUILD_CONTEXT_PATH: /workspace
-      TEMPLATE_BUILD_DOCKERFILE_PATH: /workspace/services/runtime-agent-ts/Dockerfile
+      RUNTIME_GONDOLIN_DATA_ROOT: /workspace/.kuuna/gondolin/runtime-data
+      RUNTIME_GONDOLIN_BUILD_ROOT: /workspace/.kuuna/gondolin/template-builds
+      RUNTIME_TOOL_BACKEND_BASE_URL: http://backend:8000
     volumes:
       - ../..:/workspace
       - workspace_node_modules:/workspace/node_modules
       - backend_ts_node_modules:/workspace/services/backend-ts/node_modules
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       node-deps:
         condition: service_completed_successfully

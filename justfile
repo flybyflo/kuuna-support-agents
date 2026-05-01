@@ -6,12 +6,72 @@ prod_compose_file := "infra/compose/docker-compose.prod.yml"
 default:
     @just --list
 
-runtime-image:
-    docker build -f services/runtime-agent-ts/Dockerfile -t kuuna-runtime-agent-ts:dev .
-
 up:
-    just runtime-image
-    docker compose -f {{compose_file}} up --build
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    compose_file="{{compose_file}}"
+    compose_pid=""
+    worker_pid=""
+
+    cleanup() {
+        if [[ -n "${worker_pid}" ]]; then
+            kill "${worker_pid}" 2>/dev/null || true
+        fi
+        if [[ -n "${compose_pid}" ]]; then
+            kill "${compose_pid}" 2>/dev/null || true
+        fi
+        wait "${worker_pid}" 2>/dev/null || true
+        wait "${compose_pid}" 2>/dev/null || true
+    }
+    trap cleanup INT TERM EXIT
+
+    load_env_file() {
+        local file="$1"
+        [[ -f "${file}" ]] || return 0
+        while IFS= read -r line || [[ -n "${line}" ]]; do
+            [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+            export "${line}"
+        done < "${file}"
+    }
+
+    docker compose -f "${compose_file}" up --build --remove-orphans \
+        node-deps postgres redis minio migrate backend dashboard gateway &
+    compose_pid=$!
+
+    until curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; do
+        if ! kill -0 "${compose_pid}" 2>/dev/null; then
+            wait "${compose_pid}"
+            exit $?
+        fi
+        sleep 1
+    done
+
+    load_env_file infra/env/backend.env.example
+    load_env_file infra/env/backend.env.local
+    export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/kuuna
+    export REDIS_URL=redis://127.0.0.1:6379/0
+    export GATEWAY_BASE_URL=http://127.0.0.1:8090
+    export S3_ENDPOINT_URL=http://127.0.0.1:9000
+    export TEMPLATE_BUILD_CONTEXT_PATH="${PWD}"
+    export RUNTIME_GONDOLIN_DATA_ROOT="${PWD}/.kuuna/gondolin/runtime-data"
+    export RUNTIME_GONDOLIN_BUILD_ROOT="${PWD}/.kuuna/gondolin/template-builds"
+    export RUNTIME_TOOL_BACKEND_BASE_URL=http://127.0.0.1:8000
+
+    pnpm --filter @kuuna/backend-ts dev:worker &
+    worker_pid=$!
+
+    while true; do
+        if ! kill -0 "${compose_pid}" 2>/dev/null; then
+            wait "${compose_pid}"
+            exit $?
+        fi
+        if ! kill -0 "${worker_pid}" 2>/dev/null; then
+            wait "${worker_pid}"
+            exit $?
+        fi
+        sleep 1
+    done
 
 down:
     docker compose -f {{compose_file}} down

@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
+import { platform } from "node:os";
 import path from "node:path";
 
+import type { BuildConfig } from "@earendil-works/gondolin";
 import { and, desc, eq } from "drizzle-orm";
 
 import { getSettings } from "../config.js";
@@ -15,19 +15,26 @@ import { enqueueKuunaJob, type EnqueueKuunaJob } from "./queues.js";
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const baseImagePattern = /^[a-zA-Z0-9._/:@-]+$/;
 const tagSafePattern = /[^a-zA-Z0-9._-]+/g;
-const dockerfileSnippetMaxLength = 8000;
-const blockedDockerfileInstructions = new Set(["from", "cmd", "entrypoint", "expose"]);
+const setupScriptMaxLength = 8000;
+const blockedSetupInstructions = new Set(["from", "cmd", "entrypoint", "expose"]);
 const disabledToolKeys = new Set(["context_lookup", "send_whatsapp"]);
+const runtimeWorkspaceDest = "/workspace";
 
 export type TemplateBuildRow = typeof templateBuilds.$inferSelect;
 
-export type CommandResult = {
-  returncode: number;
-  stdout: string;
-  stderr: string;
+export type GondolinBuildResult = {
+  assetRef: string;
+  assetLabel: string;
+  logs: string;
 };
 
-export type CommandRunner = (command: string, args: string[]) => Promise<CommandResult>;
+export type GondolinAssetBuilder = (input: {
+  buildId: string;
+  templateKey: string;
+  templateVersionId: string;
+  baseImage: string;
+  setupScript: string;
+}) => Promise<GondolinBuildResult>;
 
 export class TemplateBuildValidationError extends Error {}
 export class TemplateBuildNotFoundError extends Error {}
@@ -74,10 +81,10 @@ export async function queueTemplateBuild(
   const allowedTools = input.allowedTools
     ? normalizeAllowedTools(input.allowedTools)
     : extractAllowedTools(version.toolsConfig);
-  const dockerfileSnippet = validateDockerfileSnippet(
+  const setupScript = validateSetupScript(
     input.dockerfileSnippet !== undefined
       ? input.dockerfileSnippet
-      : runtimeImageConfig.dockerfileSnippet,
+      : runtimeImageConfig.setupScript,
   );
   const piBashEnabled = input.piBashEnabled ?? runtimeImageConfig.piBashEnabled;
   const piBashAllowlist = normalizeStringList(input.piBashAllowlist ?? runtimeImageConfig.piBashAllowlist);
@@ -88,7 +95,7 @@ export async function queueTemplateBuild(
   const buildInputs = {
     base_image: baseImage,
     allowed_tools: allowedTools,
-    dockerfile_snippet: dockerfileSnippet || null,
+    setup_script: setupScript || null,
     pi_bash_enabled: piBashEnabled,
     pi_bash_allowlist: piBashAllowlist,
     egress_policy: version.egressPolicy,
@@ -174,7 +181,7 @@ export async function getTemplateBuild(database: DbLike, buildId: string): Promi
 export async function processTemplateBuildJob(
   database: DbLike,
   input: { buildId: string },
-  options: { commandRunner?: CommandRunner } = {},
+  options: { gondolinBuilder?: GondolinAssetBuilder } = {},
 ): Promise<{ processed: boolean; status: "succeeded" | "failed" | "invalid" | "not_found" }> {
   if (!uuidPattern.test(input.buildId)) {
     logger.error("template_build_invalid_build_id", { build_id: input.buildId });
@@ -227,65 +234,26 @@ export async function processTemplateBuildJob(
     await markFailed(database, build, "missing base_image in build_inputs");
     return { processed: true, status: "failed" };
   }
-  const snippetResult = validateDockerfileSnippetForJob(buildInputs.dockerfile_snippet);
+  const snippetResult = validateSetupScriptForJob(buildInputs.setup_script ?? buildInputs.dockerfile_snippet);
   if (!snippetResult.ok) {
     await markFailed(database, build, snippetResult.error);
     return { processed: true, status: "failed" };
   }
 
-  const settings = getSettings();
-  const docker = settings.DOCKER_CLI_PATH;
-  const imageTag = buildImageTag(template.key, build.id);
-  const generatedDockerfile = await createTemplateBuildDockerfile({
-    sourceDockerfilePath: settings.TEMPLATE_BUILD_DOCKERFILE_PATH,
-    snippet: snippetResult.snippet,
-  }).catch(async (error: unknown) => {
-    await markFailed(database, build, `failed to prepare Dockerfile: ${errorMessage(error)}`);
-    return null;
-  });
-  if (!generatedDockerfile) {
-    return { processed: true, status: "failed" };
-  }
-  const buildArgs = [
-    "build",
-    "-f",
-    generatedDockerfile.path,
-    "--build-arg",
-    `BASE_IMAGE=${baseImage}`,
-    "--build-arg",
-    `KUUNA_TEMPLATE_KEY=${template.key}`,
-    "--build-arg",
-    `KUUNA_TEMPLATE_VERSION_ID=${version.id}`,
-    "-t",
-    imageTag,
-    settings.TEMPLATE_BUILD_CONTEXT_PATH,
-  ];
-  const runner = options.commandRunner ?? runCommand;
-  let inspect: CommandResult;
+  const builder = options.gondolinBuilder ?? buildGondolinRuntimeAssets;
+  let result: GondolinBuildResult;
   try {
-    const completed = await runner(docker, buildArgs);
-    const logs = JSON.stringify({
-      command: [docker, ...buildArgs],
-      returncode: completed.returncode,
-      stdout_tail: tail(completed.stdout, 4000),
-      stderr_tail: tail(completed.stderr, 4000),
+    result = await builder({
+      buildId: build.id,
+      templateKey: template.key,
+      templateVersionId: version.id,
+      baseImage,
+      setupScript: snippetResult.snippet,
     });
-
-    await database
-      .update(templateBuilds)
-      .set({ logsRef: logs, updatedAt: new Date() })
-      .where(eq(templateBuilds.id, build.id));
-
-    if (completed.returncode !== 0) {
-      await markFailed(database, build, `docker build failed (exit ${completed.returncode})`);
-      return { processed: true, status: "failed" };
-    }
-
-    inspect = await runner(docker, ["image", "inspect", "--format", "{{json .RepoDigests}}", imageTag]);
   } catch (error) {
     const message = errorMessage(error);
     const logs = JSON.stringify({
-      command: [docker, ...buildArgs],
+      command: ["gondolin", "build"],
       returncode: null,
       stdout_tail: "",
       stderr_tail: tail(message, 4000),
@@ -294,19 +262,23 @@ export async function processTemplateBuildJob(
       .update(templateBuilds)
       .set({ logsRef: logs, updatedAt: new Date() })
       .where(eq(templateBuilds.id, build.id));
-    await markFailed(database, build, `docker build failed: ${message}`);
+    await markFailed(database, build, `Gondolin asset build failed: ${message}`);
     return { processed: true, status: "failed" };
-  } finally {
-    await generatedDockerfile.cleanup();
   }
-  const imageRef = parseFirstDigest(inspect) ?? imageTag;
+  const logs = JSON.stringify({
+    command: ["gondolin", "build"],
+    returncode: 0,
+    stdout_tail: tail(result.logs, 4000),
+    stderr_tail: "",
+  });
 
   await database
     .update(templateBuilds)
     .set({
       status: "succeeded",
-      imageRef: imageRef.slice(0, 512),
-      imageTag: imageTag.slice(0, 255),
+      imageRef: result.assetRef.slice(0, 512),
+      imageTag: result.assetLabel.slice(0, 255),
+      logsRef: logs,
       updatedAt: new Date(),
     })
     .where(eq(templateBuilds.id, build.id));
@@ -319,7 +291,7 @@ export async function processTemplateBuildJob(
     payload: {
       template_id: template.id,
       template_version_id: version.id,
-      image_ref: imageRef.slice(0, 512),
+      image_ref: result.assetRef.slice(0, 512),
     },
   });
   await publishRuntimeEvent({
@@ -330,7 +302,7 @@ export async function processTemplateBuildJob(
       status: "succeeded",
       template_id: template.id,
       template_version_id: version.id,
-      image_ref: imageRef.slice(0, 512),
+      image_ref: result.assetRef.slice(0, 512),
     },
   });
 
@@ -377,36 +349,36 @@ function normalizeStringList(values: string[]): string[] {
   return normalized;
 }
 
-function validateDockerfileSnippet(value: string | null): string {
+function validateSetupScript(value: string | null): string {
   const normalized = (value ?? "").trim();
   if (!normalized) {
     return "";
   }
-  const invalid = dockerfileSnippetValidationError(normalized);
+  const invalid = setupScriptValidationError(normalized);
   if (invalid) {
     throw new TemplateBuildValidationError(invalid);
   }
   return normalized;
 }
 
-function validateDockerfileSnippetForJob(value: unknown): { ok: true; snippet: string } | { ok: false; error: string } {
+function validateSetupScriptForJob(value: unknown): { ok: true; snippet: string } | { ok: false; error: string } {
   if (value === null || value === undefined) {
     return { ok: true, snippet: "" };
   }
   if (typeof value !== "string") {
-    return { ok: false, error: "dockerfile_snippet must be a string" };
+    return { ok: false, error: "setup_script must be a string" };
   }
   const snippet = value.trim();
   if (!snippet) {
     return { ok: true, snippet: "" };
   }
-  const invalid = dockerfileSnippetValidationError(snippet);
+  const invalid = setupScriptValidationError(snippet);
   return invalid ? { ok: false, error: invalid } : { ok: true, snippet };
 }
 
-function dockerfileSnippetValidationError(snippet: string): string | null {
-  if (snippet.length > dockerfileSnippetMaxLength) {
-    return `dockerfile_snippet is too long (max ${dockerfileSnippetMaxLength} chars)`;
+function setupScriptValidationError(snippet: string): string | null {
+  if (snippet.length > setupScriptMaxLength) {
+    return `setup_script is too long (max ${setupScriptMaxLength} chars)`;
   }
   for (const line of snippet.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -414,36 +386,11 @@ function dockerfileSnippetValidationError(snippet: string): string | null {
       continue;
     }
     const instruction = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
-    if (instruction && blockedDockerfileInstructions.has(instruction)) {
-      return `dockerfile_snippet cannot contain ${instruction.toUpperCase()} instructions`;
+    if (instruction && blockedSetupInstructions.has(instruction)) {
+      return `setup_script cannot contain Docker ${instruction.toUpperCase()} instructions`;
     }
   }
   return null;
-}
-
-async function createTemplateBuildDockerfile(input: {
-  sourceDockerfilePath: string;
-  snippet: string;
-}): Promise<{ path: string; cleanup: () => Promise<void> }> {
-  if (!input.snippet) {
-    return { path: input.sourceDockerfilePath, cleanup: async () => undefined };
-  }
-
-  const source = await readFile(input.sourceDockerfilePath, "utf8");
-  const marker = "RUN npm install -g pnpm@10.33.2";
-  const markerIndex = source.indexOf(marker);
-  const content = markerIndex >= 0
-    ? `${source.slice(0, markerIndex + marker.length)}\n\n# Kuuna template build customization\n${input.snippet}\n\n${source.slice(markerIndex + marker.length).trimStart()}`
-    : `${source}\n\n# Kuuna template build customization\n${input.snippet}\n`;
-  const dir = await mkdtemp(path.join(tmpdir(), "kuuna-template-build-"));
-  const generatedPath = path.join(dir, "Dockerfile");
-  await writeFile(generatedPath, content, "utf8");
-  return {
-    path: generatedPath,
-    cleanup: async () => {
-      await rm(dir, { recursive: true, force: true });
-    },
-  };
 }
 
 function extractAllowedTools(toolsConfig: unknown): string[] {
@@ -491,20 +438,24 @@ function objectRecord(value: unknown): Record<string, unknown> {
 }
 
 function extractRuntimeImageConfig(toolsConfig: unknown): {
-  dockerfileSnippet: string | null;
+  setupScript: string | null;
   piBashEnabled: boolean;
   piBashAllowlist: string[];
 } {
   const config = objectRecord(toolsConfig);
   const runtimeImage = objectRecord(config.runtime_image ?? config.runtimeImage);
   const snippet =
-    typeof runtimeImage.dockerfile_snippet === "string"
-      ? runtimeImage.dockerfile_snippet
-      : typeof runtimeImage.dockerfileSnippet === "string"
-        ? runtimeImage.dockerfileSnippet
+    typeof runtimeImage.setup_script === "string"
+      ? runtimeImage.setup_script
+      : typeof runtimeImage.setupScript === "string"
+        ? runtimeImage.setupScript
+        : typeof runtimeImage.dockerfile_snippet === "string"
+          ? runtimeImage.dockerfile_snippet
+          : typeof runtimeImage.dockerfileSnippet === "string"
+            ? runtimeImage.dockerfileSnippet
         : null;
   return {
-    dockerfileSnippet: snippet,
+    setupScript: snippet,
     piBashEnabled: runtimeImage.pi_bash_enabled === true || runtimeImage.piBashEnabled === true,
     piBashAllowlist: normalizeStringList(
       arrayOfStrings(runtimeImage.pi_bash_allowlist ?? runtimeImage.piBashAllowlist),
@@ -514,6 +465,113 @@ function extractRuntimeImageConfig(toolsConfig: unknown): {
 
 function arrayOfStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+async function buildGondolinRuntimeAssets(input: {
+  buildId: string;
+  templateKey: string;
+  templateVersionId: string;
+  baseImage: string;
+  setupScript: string;
+}): Promise<GondolinBuildResult> {
+  const { buildAssets, serializeBuildConfig, verifyAssets } = await import("@earendil-works/gondolin");
+  const settings = getSettings();
+  const assetLabel = buildImageTag(input.templateKey, input.buildId);
+  const outputDir = path.resolve(settings.RUNTIME_GONDOLIN_BUILD_ROOT, assetLabel);
+  await mkdir(outputDir, { recursive: true });
+  const config = await createGondolinBuildConfig({
+    contextPath: path.resolve(settings.TEMPLATE_BUILD_CONTEXT_PATH),
+    configPath: settings.TEMPLATE_BUILD_GONDOLIN_CONFIG_PATH,
+    templateVersionId: input.templateVersionId,
+    setupScript: input.setupScript,
+  });
+  assertNativeGondolinBuild(config);
+  await buildAssets(config, {
+    outputDir,
+    configDir: path.resolve(settings.TEMPLATE_BUILD_CONTEXT_PATH),
+    verbose: false,
+  });
+  if (!verifyAssets(outputDir)) {
+    throw new Error(`Gondolin asset verification failed for ${outputDir}`);
+  }
+  return {
+    assetRef: outputDir,
+    assetLabel,
+    logs: serializeBuildConfig(config),
+  };
+}
+
+async function createGondolinBuildConfig(input: {
+  contextPath: string;
+  configPath: string;
+  templateVersionId: string;
+  setupScript: string;
+}): Promise<BuildConfig> {
+  const { getDefaultBuildConfig, parseBuildConfig } = await import("@earendil-works/gondolin");
+  const config = input.configPath.trim()
+    ? parseBuildConfig(await readFile(input.configPath, "utf8"))
+    : getDefaultBuildConfig();
+  config.distro = "alpine";
+  config.oci = undefined;
+  config.container = undefined;
+  config.env = {
+    NODE_ENV: "production",
+    KUUNA_TEMPLATE_VERSION_ID: input.templateVersionId,
+  };
+  config.alpine = {
+    version: config.alpine?.version ?? "3.23.0",
+    ...config.alpine,
+    rootfsPackages: uniqueStrings([
+      ...(config.alpine?.rootfsPackages ?? []),
+      "bash",
+      "ca-certificates",
+      "coreutils",
+      "file",
+      "git",
+      "nodejs",
+      "npm",
+      "openssh-client",
+    ]),
+  };
+  config.postBuild = {
+    copy: [
+      { src: path.join(input.contextPath, "package.json"), dest: `${runtimeWorkspaceDest}/package.json` },
+      { src: path.join(input.contextPath, "pnpm-lock.yaml"), dest: `${runtimeWorkspaceDest}/pnpm-lock.yaml` },
+      { src: path.join(input.contextPath, "pnpm-workspace.yaml"), dest: `${runtimeWorkspaceDest}/pnpm-workspace.yaml` },
+      { src: path.join(input.contextPath, "packages"), dest: `${runtimeWorkspaceDest}/packages` },
+      { src: path.join(input.contextPath, "services/runtime-agent-ts"), dest: `${runtimeWorkspaceDest}/services/runtime-agent-ts` },
+    ],
+    commands: [
+      "npm install -g pnpm@10.33.2",
+      ...(input.setupScript ? [input.setupScript] : []),
+      `cd ${runtimeWorkspaceDest} && pnpm install --frozen-lockfile --filter @kuuna/runtime-agent-ts... --prod=false`,
+      `cd ${runtimeWorkspaceDest} && pnpm --filter @kuuna/runtime-agent-ts... build`,
+      `cd ${runtimeWorkspaceDest} && pnpm prune --prod`,
+    ],
+  };
+  config.runtimeDefaults = { rootfsMode: "cow", ...(config.runtimeDefaults ?? {}) };
+  return config;
+}
+
+function assertNativeGondolinBuild(config: BuildConfig): void {
+  if (config.container) {
+    throw new Error("AI runtime template builds must not use Gondolin container-backed build settings");
+  }
+  const postBuildCommands = config.postBuild?.commands ?? [];
+  if (platform() !== "linux" && postBuildCommands.length > 0) {
+    throw new Error(
+      "Native Gondolin post-build commands require a Linux host; run the AI runtime worker on a host with QEMU/Gondolin native build support instead of Docker/Podman-backed builds",
+    );
+  }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (normalized && !out.includes(normalized)) out.push(normalized);
+  }
+  return out;
 }
 
 async function markFailed(database: DbLike, build: TemplateBuildRow, error: string): Promise<void> {
@@ -541,42 +599,8 @@ async function markFailed(database: DbLike, build: TemplateBuildRow, error: stri
   });
 }
 
-async function runCommand(command: string, args: string[]): Promise<CommandResult> {
-  return new Promise((resolve, reject) => {
-    execFile(command, args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && typeof (error as NodeJS.ErrnoException).code === "string" && typeof (error as NodeJS.ErrnoException).errno === "number") {
-        reject(error);
-        return;
-      }
-      const maybeCode = error && typeof (error as { code?: unknown }).code === "number"
-        ? (error as { code: number }).code
-        : 0;
-      resolve({
-        returncode: maybeCode,
-        stdout: String(stdout ?? ""),
-        stderr: String(stderr ?? ""),
-      });
-    });
-  });
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function parseFirstDigest(result: CommandResult): string | null {
-  if (result.returncode !== 0 || !result.stdout.trim()) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(result.stdout.trim()) as unknown;
-    if (Array.isArray(parsed)) {
-      return parsed.find((item): item is string => typeof item === "string" && Boolean(item)) ?? null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 function tail(value: string, maxLen: number): string {
@@ -589,7 +613,7 @@ function tail(value: string, maxLen: number): string {
 function buildImageTag(templateKey: string, buildId: string): string {
   const safeKey = templateKey.replace(tagSafePattern, "-").replace(/^-+|-+$/g, "").toLowerCase() || "template";
   const short = buildId.replaceAll("-", "").slice(0, 12);
-  return `kuuna/template-${safeKey}:build-${short}`;
+  return `gondolin-template-${safeKey}-build-${short}`;
 }
 
 function jobToken(value: string): string {

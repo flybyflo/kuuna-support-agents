@@ -82,7 +82,7 @@ export default async function RuntimeRunDetailPage({ params }: { params: Params 
             <MonoRow label="Started" value={formatDateTime(run.startedAt)} />
             <MonoRow label="Finished" value={run.finishedAt ? formatDateTime(run.finishedAt) : "n/a"} />
             <MonoRow label="Duration" value={typeof run.durationMs === "number" ? `${run.durationMs}ms` : "n/a"} />
-            <MonoRow label="Image ref" value={run.imageRef} />
+            <MonoRow label="Asset ref" value={run.imageRef} />
             <MonoRow label="Error" value={run.error ?? "n/a"} />
           </CardContent>
         </Card>

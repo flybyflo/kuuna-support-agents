@@ -35,6 +35,7 @@ const queueBuildInput = z.object({
   baseImage: z.string().trim().min(1),
   allowedTools: z.array(z.string()).nullable().optional(),
   dockerfileSnippet: z.string().nullable().optional(),
+  setupScript: z.string().nullable().optional(),
   piBashEnabled: z.boolean().nullable().optional(),
   piBashAllowlist: z.array(z.string()).nullable().optional(),
 });
@@ -324,7 +325,7 @@ export const templatesRouter = createTRPCRouter({
           versionId: input.versionId,
           baseImage: input.baseImage,
           allowedTools: input.allowedTools ?? null,
-          dockerfileSnippet: input.dockerfileSnippet ?? undefined,
+          dockerfileSnippet: input.setupScript ?? input.dockerfileSnippet ?? undefined,
           piBashEnabled: input.piBashEnabled ?? undefined,
           piBashAllowlist: input.piBashAllowlist ?? undefined,
         }, { enqueueJob: ctx.enqueueJob }));
